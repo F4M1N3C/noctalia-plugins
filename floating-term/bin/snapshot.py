@@ -25,8 +25,10 @@ import sys
 import tempfile
 
 
-def output_scale(output: str) -> float:
+def output_scale(output: str, cache: dict[str, float]) -> float:
     """Factor de escala de la salida (Hyprland), 1.0 si no se puede saber."""
+    if output in cache:
+        return cache[output]
     try:
         result = subprocess.run(
             ["hyprctl", "monitors", "-j"],
@@ -36,19 +38,24 @@ def output_scale(output: str) -> float:
         )
         monitors = json.loads(result.stdout)
     except Exception:  # noqa: BLE001 - sin hyprctl se asume escala 1
+        cache[output] = 1.0
         return 1.0
     if not isinstance(monitors, list):
+        cache[output] = 1.0
         return 1.0
     for monitor in monitors:
         if isinstance(monitor, dict) and monitor.get("name") == output:
             try:
-                return float(monitor.get("scale") or 1.0)
+                scale = float(monitor.get("scale") or 1.0)
             except (TypeError, ValueError):
-                return 1.0
+                scale = 1.0
+            cache[output] = scale
+            return scale
+    cache[output] = 1.0
     return 1.0
 
 
-def capture(item: dict) -> None:
+def capture(item: dict, scales: dict[str, float]) -> None:
     out = str(item["out"])
     x = int(item["x"])
     y = int(item["y"])
@@ -87,7 +94,7 @@ def capture(item: dict) -> None:
             if output:
                 # Recorte manual: la captura viene a la escala de la salida,
                 # mientras que la zona está en coordenadas lógicas.
-                scale = output_scale(output)
+                scale = output_scale(output, scales)
                 box = (
                     int(round(x * scale)),
                     int(round(y * scale)),
@@ -123,9 +130,10 @@ def main() -> int:
         items = json.load(handle)
 
     failures = 0
+    scales: dict[str, float] = {}
     for item in items:
         try:
-            capture(item)
+            capture(item, scales)
         except Exception as exc:  # noqa: BLE001 - un fallo no debe parar el lote
             failures += 1
             print(f"snapshot: {item.get('out')}: {exc}", file=sys.stderr)

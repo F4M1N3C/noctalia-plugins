@@ -14,6 +14,7 @@ local M = {}
 
 local CAPTURE_WIDTH = 320
 local CAPTURE_HEIGHT = 190
+local batchCounter = 0
 
 -- FNV-1a de 32 bits (la multiplicación por 65599 cabe en un double de Luau).
 local function hashText(text)
@@ -164,7 +165,10 @@ function M.capture(entries, callback)
     return
   end
 
-  local batchPath = dir .. "/batch.json"
+  -- Cada captura usa su propio archivo de lote: si dos refrescos se cruzan,
+  -- uno no puede pisar el lote del otro.
+  batchCounter = batchCounter + 1
+  local batchPath = string.format("%s/batch-%d-%d.json", dir, os.time(), batchCounter)
   if not noctalia.writeFile(batchPath, encoded) then
     if callback ~= nil then
       callback()

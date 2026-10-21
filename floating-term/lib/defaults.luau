@@ -241,13 +241,20 @@ function M.load()
   local layouts = nil
 
   local manifestPath = util.pluginPath("plugin.toml")
+  local raw = nil
   if manifestPath ~= nil then
-    local raw = noctalia.readFile(manifestPath)
-    if raw ~= nil and raw ~= "" then
-      local parsed = parseManifest(raw)
-      commands = parsed.commands
-      layouts = parsed.layouts
-    end
+    raw = noctalia.readFile(manifestPath)
+  end
+  noctalia.log(string.format(
+    "floating-term: manifiesto %s (%s bytes)",
+    tostring(manifestPath),
+    raw ~= nil and tostring(#raw) or "ilegible"
+  ))
+
+  if raw ~= nil and raw ~= "" then
+    local parsed = parseManifest(raw)
+    commands = parsed.commands
+    layouts = parsed.layouts
   end
 
   if type(commands) ~= "table" or next(commands) == nil then

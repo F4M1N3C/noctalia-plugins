@@ -237,6 +237,8 @@ local function parseLayout(value)
         return { valid = false }
       end
       spec.anchor = anchor
+    elseif lower == "auto" or lower == "libre" or lower == "free" then
+      spec.auto = true
     elseif lower == "custom" or lower == "absolute" or lower == "abs" or lower == "at" then
       spec.custom = true
     else
@@ -248,7 +250,10 @@ local function parseLayout(value)
     end
   end
 
-  if spec.custom then
+  if spec.auto then
+    -- "auto" busca un hueco libre; opcionalmente "auto, 900x520".
+    spec.anchor = "center"
+  elseif spec.custom then
     if #numbers < 2 then
       return { valid = false }
     end
@@ -342,6 +347,7 @@ local function resolveGeometry(name)
   local dx = 0
   local dy = 0
   local anchor = nil
+  local auto = false
 
   if spec ~= nil and spec.valid then
     width = spec.width or width
@@ -350,6 +356,7 @@ local function resolveGeometry(name)
     dx = spec.dx or 0
     dy = spec.dy or 0
     anchor = spec.anchor
+    auto = spec.auto == true
   end
 
   width = math.max(100, math.floor(width))
@@ -381,6 +388,7 @@ local function resolveGeometry(name)
     output = outputName,
     anchor = anchor,
     custom = custom,
+    auto = auto,
   }
 end
 
@@ -397,6 +405,9 @@ local function layoutText(name)
 
   local width = spec.width or math.floor(cfg.width)
   local height = spec.height or math.floor(cfg.height)
+  if spec.auto then
+    return string.format("%s · %d×%d", tr("layout_auto"), width, height)
+  end
   if spec.custom then
     return string.format(
       "%s · %d×%d · %d,%d",
@@ -467,16 +478,17 @@ local function openTermWindows(callback)
 end
 
 -- Busca la posición más cercana a la deseada que no choque con ninguna
--- ventana ya abierta del plugin.
-local function avoidCollisions(geometry, occupied)
+-- ventana ya abierta del plugin. Con `auto` se recorre la pantalla de arriba
+-- abajo y de izquierda a derecha y se usa el primer hueco libre.
+local function avoidCollisions(geometry, occupied, auto)
   local screenWidth, screenHeight = outputGeometry()
   local margin = math.max(0, math.floor(cfg.margin))
 
   local function fits(x, y)
-    if x < margin or y < margin then
+    if x < 0 or y < 0 then
       return false
     end
-    if x + geometry.width > screenWidth - margin or y + geometry.height > screenHeight - margin then
+    if x + geometry.width > screenWidth or y + geometry.height > screenHeight then
       return false
     end
     for _, other in ipairs(occupied) do
@@ -487,20 +499,23 @@ local function avoidCollisions(geometry, occupied)
     return true
   end
 
-  if fits(geometry.x, geometry.y) then
+  if not auto and fits(geometry.x, geometry.y) then
     return geometry.x, geometry.y
   end
 
   local step = 48
   local best = nil
   local bestDistance = nil
-  local maxX = screenWidth - margin - geometry.width
-  local maxY = screenHeight - margin - geometry.height
+  local maxX = screenWidth - geometry.width
+  local maxY = screenHeight - geometry.height
   local y = margin
   while y <= maxY do
     local x = margin
     while x <= maxX do
       if fits(x, y) then
+        if auto then
+          return x, y
+        end
         local dx = x - geometry.x
         local dy = y - geometry.y
         local distance = dx * dx + dy * dy
@@ -637,7 +652,7 @@ local function spawn(name, class, command, geometry, callback)
   end)
 end
 
-local function launch(name)
+local function launch(name, keepOpen)
   local command = commands[name]
   if type(command) ~= "string" or command == "" then
     noctalia.notifyError(tr("title"), tr("missing_command", { name = tostring(name) }))
@@ -648,7 +663,7 @@ local function launch(name)
   local geometry = resolveGeometry(name)
 
   local function finish()
-    if cfg.closeOnLaunch then
+    if cfg.closeOnLaunch and not keepOpen then
       panel.close()
     end
   end
@@ -658,7 +673,7 @@ local function launch(name)
     -- Si la posición deseada choca con otra ventana del plugin ya abierta,
     -- se busca la posición libre más cercana.
     openTermWindows(function(occupied)
-      geometry.x, geometry.y = avoidCollisions(geometry, occupied)
+      geometry.x, geometry.y = avoidCollisions(geometry, occupied, geometry.auto)
       if cfg.reuseExisting then
         findExisting(class, function(existing)
           if existing ~= nil then
@@ -690,17 +705,21 @@ local function sortedNames()
 end
 
 -- Pares de comandos cuyas cajas se solapan con la geometría actual.
+-- Los comandos en modo "auto" se colocan en tiempo de ejecución, así que no
+-- se pueden comparar de antemano.
 local function detectOverlaps()
   local rects = {}
   for _, name in ipairs(sortedNames()) do
     local geometry = resolveGeometry(name)
-    table.insert(rects, {
-      name = name,
-      x = geometry.x,
-      y = geometry.y,
-      w = geometry.width,
-      h = geometry.height,
-    })
+    if not geometry.auto then
+      table.insert(rects, {
+        name = name,
+        x = geometry.x,
+        y = geometry.y,
+        w = geometry.width,
+        h = geometry.height,
+      })
+    end
   end
 
   local pairs = {}
@@ -768,7 +787,7 @@ local function render()
   local overlaps = detectOverlaps()
   local warnings = {}
   for _, pair in ipairs(overlaps) do
-    table.insert(warnings, pair[1] .. " ↔ " .. pair[2])
+    table.insert(warnings, pair[1] .. " + " .. pair[2])
   end
   local overlapWarning = nil
   if #warnings > 0 then
@@ -799,6 +818,17 @@ local function render()
   table.insert(children, ui.row({ align = "center", gap = 8 }, {
     ui.glyph({ name = "terminal-2", size = 18, color = "primary" }),
     ui.label({ text = tr("title"), fontSize = 16, fontWeight = "bold", color = "on_surface", flexGrow = 1 }),
+    ui.button({
+      key = "open-all",
+      glyph = "layout-grid",
+      variant = "ghost",
+      tooltip = tr("open_all"),
+      onClick = function()
+        for _, name in ipairs(sortedNames()) do
+          launch(name, true)
+        end
+      end,
+    }),
     ui.button({
       key = "open-settings",
       glyph = "settings",

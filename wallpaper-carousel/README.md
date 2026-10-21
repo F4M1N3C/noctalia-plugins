@@ -38,6 +38,9 @@ Keyboard:
 | `Esc` | Close the carousel |
 | `r` | Rescan the folder |
 
+The mouse wheel moves through the carousel as well: one notch per wallpaper, in
+both directions.
+
 The panel can also be opened directly:
 
 ```sh
@@ -54,7 +57,8 @@ Configure the plugin in **Settings → Plugins → Wallpaper Carousel**.
 | `glyph` | `glyph` | `wallpaper` | Bar icon. |
 | `card_scale` | `double` | `1.0` | Initial card size (also adjustable from the panel slider). |
 | `gap` | `int` | `18` | Horizontal space between cards, in pixels. |
-| `visible` | `int` | `9` | How many cards are shown at once. |
+| `visible` | `int` | `0` | How many cards are shown at once. `0` fills the screen. |
+| `minimal` | `bool` | `true` | Hide the header and footer for a minimal look. |
 | `parallax` | `double` | `1.0` | How much each thumbnail crop shifts with the card's position. |
 | `close_on_apply` | `bool` | `true` | Close the carousel after applying a wallpaper. |
 | `apply_all` | `bool` | `true` | Apply to every monitor; when off, only to the focused monitor. |
@@ -76,3 +80,8 @@ noctalia msg plugin faminec/wallpaper-carousel:panel all refresh
   handlers only, so a WebP preview would render as an empty placeholder.
 - The plugin only reads the wallpaper folder and writes its own cache directory; it
   makes no network requests.
+- The panel background is transparent, so the desktop wallpaper shows through the gaps
+  between the cards. The card row is centred and the cards fill the width of the
+  screen.
+- The selection eases towards its target instead of jumping, and the crop of every
+  card follows that movement, so the images visibly slide inside their frames.

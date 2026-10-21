@@ -5,6 +5,7 @@
   "hint": "Each row uses its entry in “Layouts”; if missing, the fallback geometry is used. Edit everything with the gear button.",
   "launch_failed": "Could not launch the terminal.",
   "layout_custom": "absolute",
+  "layout_auto": "auto",
   "layout_global": "global · {width}×{height}",
   "layout_invalid": "invalid layout",
   "missing_command": "No command configured for {name}.",
@@ -67,5 +68,6 @@
   },
   "subtitle": "{terminal} · {margin} px margin · {output}",
   "title": "Floating Terminal",
-  "tooltip": "Floating terminal apps"
+  "tooltip": "Floating terminal apps",
+  "open_all": "Open all"
 }

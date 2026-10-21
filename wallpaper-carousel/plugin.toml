@@ -51,9 +51,16 @@ key = "visible"
 type = "int"
 label_key = "settings.visible.label"
 description_key = "settings.visible.description"
-default = 9
-min = 3
+default = 0
+min = 0
 max = 11
+
+[[setting]]
+key = "minimal"
+type = "bool"
+label_key = "settings.minimal.label"
+description_key = "settings.minimal.description"
+default = true
 
 [[setting]]
 key = "parallax"

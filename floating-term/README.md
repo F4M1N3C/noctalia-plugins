@@ -29,6 +29,10 @@ Add the `launcher` widget from Noctalia's widget picker. Clicking it opens the l
 panel, where every configured command is a row. Clicking a row starts the command in a
 floating terminal window.
 
+The **grid button** in the panel header launches every configured command at once.
+Pressing it again re-arranges the windows that are already open, so the whole set can
+be re-positioned in one click.
+
 The panel can also be opened directly:
 
 ```sh

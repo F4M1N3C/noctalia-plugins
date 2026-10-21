@@ -46,9 +46,13 @@
       "description": "Show the selected file name in the panel footer.",
       "label": "Show filenames"
     },
+    "minimal": {
+      "label": "Minimal mode",
+      "description": "Hide the header and footer for a minimal look."
+    },
     "visible": {
-      "description": "How many cards to try to show at once.",
-      "label": "Visible cards"
+      "label": "Visible cards",
+      "description": "How many cards to show at once. 0 fills the screen."
     }
   },
   "size": "Size",

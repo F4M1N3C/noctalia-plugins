@@ -24,6 +24,7 @@ local cfg = {
   gap = 18,
   visible = 9,
   parallax = 1.0,
+  minimal = true,
   closeOnApply = true,
   applyAll = true,
   showFilenames = true,
@@ -124,9 +125,16 @@ local function cacheDirectory()
   return path
 end
 
+local thumbPathCache = {}
 local function thumbPath(source, bucket)
+  local cacheKey = source .. "|" .. tostring(bucket)
+  local cached = thumbPathCache[cacheKey]
+  if cached ~= nil then
+    return cached
+  end
   local cacheDir = cacheDirectory()
   if not cacheDir then
+    thumbPathCache[cacheKey] = source
     return source
   end
   local info = fileInfoFor(source)
@@ -139,7 +147,9 @@ local function thumbPath(source, bucket)
     string.format("%.2f", bucket),
     THUMB_VERSION,
   }, "|")
-  return cacheDir .. "/" .. hashText(key) .. ".jpg"
+  local path = cacheDir .. "/" .. hashText(key) .. ".jpg"
+  thumbPathCache[cacheKey] = path
+  return path
 end
 
 local function imagePathFor(source, bucket)
@@ -163,7 +173,8 @@ local function loadConfig()
   cfg.glyph = noctalia.getConfig("glyph") or "wallpaper"
   cfg.cardScale = clamp(tonumber(noctalia.getConfig("card_scale")) or 1.0, 0.7, 1.4)
   cfg.gap = math.floor(clamp(tonumber(noctalia.getConfig("gap")) or 18, 4, 48))
-  cfg.visible = math.floor(clamp(tonumber(noctalia.getConfig("visible")) or 9, 3, 11))
+  cfg.visible = math.floor(clamp(tonumber(noctalia.getConfig("visible")) or 0, 0, 11))
+  cfg.minimal = noctalia.getConfig("minimal") ~= false
   cfg.parallax = clamp(tonumber(noctalia.getConfig("parallax")) or 1.0, 0.0, 1.5)
   cfg.closeOnApply = noctalia.getConfig("close_on_apply") ~= false
   cfg.applyAll = noctalia.getConfig("apply_all") ~= false
@@ -267,8 +278,15 @@ local function cardLayout()
   local normalHeight = math.floor(cardHeight * 0.94)
   local gap = cfg.gap
 
-  local desiredHalf = math.floor(cfg.visible / 2)
-  desiredHalf = math.max(1, math.min(5, desiredHalf))
+  local desiredHalf
+  if (cfg.visible or 0) <= 0 then
+    -- Modo automático: tantas tarjetas como quepan en la pantalla.
+    desiredHalf = math.max(1, math.floor((width / 2 - selectedWidth / 2) / (normalWidth + gap)))
+    desiredHalf = math.min(desiredHalf, 6)
+  else
+    desiredHalf = math.floor(cfg.visible / 2)
+    desiredHalf = math.max(1, math.min(5, desiredHalf))
+  end
 
   local half = desiredHalf
   while half > 1 do
@@ -329,7 +347,9 @@ local function ensureThumbs()
     return
   end
 
-  local half = math.max(2, math.min(5, math.floor(cfg.visible / 2)))
+  -- Se generan las miniaturas de todas las tarjetas visibles, no solo las
+  -- cercanas a la seleccionada.
+  local half = cardLayout().half
   local first = selected - half
   local last = selected + half
   local items = {}
@@ -715,25 +735,54 @@ render = function()
     }),
   })
 
-  panel.render(ui.column({
+  local rootChildren = {}
+  if not cfg.minimal then
+    table.insert(rootChildren, header)
+    table.insert(rootChildren, ui.separator({ color = "outline/0.35" }))
+  end
+  table.insert(rootChildren, ui.column({
     flexGrow = 1,
-    fill = "surface",
-    padding = 24,
-    gap = 14,
+    justify = "center",
     align = "stretch",
   }, {
-    header,
-    ui.separator({ color = "outline/0.35" }),
-    ui.column({
-      flexGrow = 1,
-      justify = "center",
-      align = "stretch",
-    }, {
-      carousel,
-    }),
-    ui.separator({ color = "outline/0.25" }),
-    footer,
+    carousel,
   }))
+  if not cfg.minimal then
+    table.insert(rootChildren, ui.separator({ color = "outline/0.25" }))
+    table.insert(rootChildren, footer)
+  else
+    -- Modo minimalista: solo un pie compacto con el botón de aplicar.
+    table.insert(rootChildren, ui.row({
+      gap = 8,
+      align = "center",
+      justify = "end",
+      paddingH = 2,
+      paddingV = 4,
+    }, {
+      footerPreview,
+      ui.label({
+        text = footerText,
+        fontSize = 11,
+        color = "on_surface_variant",
+        maxLines = 1,
+      }),
+      ui.button({
+        text = tr("apply"),
+        glyph = "check",
+        variant = "primary",
+        enabled = selectedPath ~= nil,
+        onClick = apply,
+      }),
+    }))
+  end
+
+  panel.render(ui.column({
+    flexGrow = 1,
+    fill = "#00000000",
+    padding = cfg.minimal and 12 or 24,
+    gap = cfg.minimal and 6 or 14,
+    align = "stretch",
+  }, rootChildren))
 end
 
 selectIndex = function(index)
@@ -848,7 +897,7 @@ function onFrameTick(deltaMs)
   end
   local dt = tonumber(deltaMs) or 16
   local difference = selected - viewPos
-  if math.abs(difference) < 0.015 then
+  if math.abs(difference) < 0.005 then
     viewPos = selected
     animating = false
     panel.setNeedsFrameTick(false)
@@ -856,7 +905,10 @@ function onFrameTick(deltaMs)
     ensureThumbs()
     return
   end
-  local factor = 1 - math.exp(-dt / 80)
+  -- Constante de tiempo mayor y proporcional a la distancia: el desplazamiento
+  -- se ve (y con él el movimiento interno de las miniaturas).
+  local timeConstant = 130 + math.min(420, math.abs(difference) * 10)
+  local factor = 1 - math.exp(-dt / timeConstant)
   viewPos = viewPos + difference * factor
   render()
 end
@@ -879,6 +931,27 @@ function onKey(chord, pressed)
     randomWallpaper()
   elseif chord == "Escape" then
     panel.close()
+  end
+end
+
+local lastWheelTime = 0
+
+function onScroll(axis, steps, _startsGesture)
+  if #wallpapers == 0 then
+    return
+  end
+  if axis ~= "vertical" and axis ~= "horizontal" then
+    return
+  end
+  local now = os.clock()
+  if now - lastWheelTime < 0.07 then
+    return
+  end
+  lastWheelTime = now
+  if (steps or 0) > 0 then
+    move(1)
+  else
+    move(-1)
   end
 end
 

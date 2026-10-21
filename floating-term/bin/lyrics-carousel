@@ -27,6 +27,13 @@ import tempfile
 import threading
 import time
 import unicodedata
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib
+    except ImportError:
+        tomllib = None
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -365,7 +372,9 @@ class LyricLine:
     __slots__ = ("start", "duration", "text", "chars")
 
     def __init__(self, start: float, duration: float, text: str, chars=None):
-        self.start = max(0.0, float(start))
+        self.start = float(start)
+        if self.start < 0:
+            self.start = -1.0
         self.duration = max(0.0, float(duration or 0))
         self.text = normalize_text(text)
         self.chars = chars or []
@@ -506,16 +515,16 @@ def fetch_lrclib(track: Track, log):
         params["album_name"] = track.album
     url = "https://lrclib.net/api/search?" + urllib.parse.urlencode(params)
     try:
-        data = _http_json(url, timeout=12.0)
+        data = _http_json(url, timeout=3.0)
     except urllib.error.HTTPError as error:
         log(f"lrclib HTTP {error.code}")
-        return []
+        return [], f"http {error.code}"
     except Exception as error:  # noqa: BLE001
         log(f"lrclib error: {error!r}")
-        return []
+        return [], "red"
     if not isinstance(data, list) or not data:
         log("lrclib sin resultados")
-        return []
+        return [], None
 
     wanted_title = _normalize_match(track.title)
     wanted_artist = _normalize_match(track.artist)
@@ -555,20 +564,20 @@ def fetch_lrclib(track: Track, log):
             best = candidate
 
     if best is None:
-        return []
+        return [], None
     lrc = best.get("syncedLyrics") or ""
     if lrc:
         lines = parse_lrc(lrc)
         if lines:
             log(f"lrclib: {best.get('trackName')} / {best.get('artistName')} (sync)")
-            return lines
+            return lines, None
     plain = best.get("plainLyrics") or ""
     if plain:
         lines = plain_lines(plain, track.duration)
         if lines:
             log(f"lrclib: {best.get('trackName')} / {best.get('artistName')} (plain)")
-            return lines
-    return []
+            return lines, None
+    return [], None
 
 
 def fetch_netease(track: Track, log):
@@ -582,11 +591,11 @@ def fetch_netease(track: Track, log):
         data = _http_json(search_url, headers={"Referer": "https://music.163.com"}, timeout=10.0)
     except Exception as error:  # noqa: BLE001
         log(f"netease búsqueda: {error!r}")
-        return []
+        return [], "red"
     songs = (((data or {}).get("result") or {}).get("songs") or []) if isinstance(data, dict) else []
     if not songs:
         log("netease sin resultados")
-        return []
+        return [], None
 
     wanted_title = _normalize_match(track.title)
     wanted_artist = _normalize_match(track.artist)
@@ -612,10 +621,10 @@ def fetch_netease(track: Track, log):
             best_score = score
             chosen = song
     if not chosen:
-        return []
+        return [], None
     song_id = str(chosen.get("id") or "")
     if not song_id.isdigit():
-        return []
+        return [], None
     lyric_url = "https://music.163.com/api/song/lyric?" + urllib.parse.urlencode(
         {"id": song_id, "lv": 1, "kv": 1, "tv": -1}
     )
@@ -623,20 +632,20 @@ def fetch_netease(track: Track, log):
         data = _http_json(lyric_url, headers={"Referer": "https://music.163.com"}, timeout=10.0)
     except Exception as error:  # noqa: BLE001
         log(f"netease letra: {error!r}")
-        return []
+        return [], "red"
     lrc = (((data or {}).get("lrc") or {}).get("lyric") or "") if isinstance(data, dict) else ""
     lines = parse_lrc(lrc)
     if lines:
         log(f"netease: {chosen.get('name')} (sync)")
-        return lines
+        return lines, None
     # Algunas canciones solo traen la letra "traducida" o texto plano.
     text = ENHANCED_TAG.sub("", lrc).strip()
     if text:
         lines = plain_lines(text, track.duration)
         if lines:
             log(f"netease: {chosen.get('name')} (plain)")
-            return lines
-    return []
+            return lines, None
+    return [], None
 
 
 def find_lyric_adapter():
@@ -656,9 +665,10 @@ def find_lyric_adapter():
 def fetch_adapter(track: Track, log):
     script = find_lyric_adapter()
     if not script:
-        return []
+        return [], None
     workdir = os.path.dirname(script)
     sources = ("splayer", "qqmusic", "kugou")
+    failed = False
     for source in sources:
         request = {
             "source": source,
@@ -685,6 +695,7 @@ def fetch_adapter(track: Track, log):
             )
             if not result.stdout.strip():
                 log(f"{source}: sin salida")
+                failed = True
                 continue
             data = json.loads(result.stdout)
             raw = data.get("lines") if isinstance(data, dict) else None
@@ -714,19 +725,149 @@ def fetch_adapter(track: Track, log):
                 lines.append(LyricLine(start, duration, text, chars))
             if lines:
                 log(f"{source}: {len(lines)} líneas")
-                return lines
+                return lines, None
         except subprocess.TimeoutExpired:
             log(f"{source}: timeout")
+            failed = True
         except Exception as error:  # noqa: BLE001
             log(f"{source}: {error!r}")
+            failed = True
         finally:
             if path and os.path.exists(path):
                 try:
                     os.remove(path)
                 except OSError:
                     pass
-    return []
+    return [], ("red" if failed else None)
 
+
+def load_lyrics_settings():
+    """Lee los ajustes del plugin Lyrics de Noctalia si están disponibles."""
+    result = {
+        "sources": ["lrclib", "netease", "splayer", "qqmusic", "kugou"],
+        "credentials": {},
+        "translation": "zh-Hans",
+    }
+    path = os.path.expanduser(
+        "~/.local/state/noctalia/settings.toml"
+    )
+    if not os.path.isfile(path) or tomllib is None:
+        return result
+    try:
+        with open(path, "rb") as handle:
+            data = tomllib.load(handle)
+    except Exception:  # noqa: BLE001
+        return result
+    section = (data.get("plugin_settings") or {}).get('h465855hgg/lyrics') or {}
+    sources = section.get("lyrics_sources")
+    if isinstance(sources, list) and sources:
+        result["sources"] = [str(item).strip().lower() for item in sources if str(item).strip()]
+    result["translation"] = str(section.get("translation_language") or result["translation"])
+    for key in (
+        "spotify_sp_dc", "spotify_access_token", "apple_developer_token",
+        "apple_user_token", "apple_storefront", "musixmatch_token",
+        "qishui_token", "qishui_api_url", "splayer_api_url",
+    ):
+        value = section.get(key)
+        if value is not None:
+            result["credentials"][key] = str(value)
+    return result
+
+
+def adapter_track(track: Track, art_url: str = ""):
+    return {
+        "title": track.title,
+        "artist": track.artist,
+        "album": track.album,
+        "duration": int(track.duration * 1_000_000),
+        "artUrl": art_url,
+    }
+
+
+def adapter_request(source: str, track: Track, settings: dict):
+    creds = dict(settings.get("credentials", {}))
+    if source == "splayer":
+        creds.setdefault(
+            "splayer_api_url",
+            settings.get("credentials", {}).get("splayer_api_url", "http://127.0.0.1:25884"),
+        )
+    request = {
+        "source": source,
+        "track": adapter_track(track),
+        "credentials": creds,
+        "options": {"translation_language": settings.get("translation", "zh-Hans")},
+    }
+    return request
+
+
+def run_adapter(source: str, track: Track, settings: dict, log):
+    script = find_lyric_adapter()
+    if not script:
+        return [], None
+    workdir = os.path.dirname(script)
+    request = adapter_request(source, track, settings)
+    path = ""
+    try:
+        fd, path = tempfile.mkstemp(prefix="lyrics-", suffix=".json", dir=CACHE_DIR)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(request, handle)
+        result = subprocess.run(
+            [sys.executable, script, path],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        if not result.stdout.strip():
+            log(f"{source}: sin salida")
+            return [], "red"
+        data = json.loads(result.stdout)
+        if not isinstance(data, dict):
+            return [], None
+        raw = data.get("lines")
+        if not raw:
+            diag = data.get("diag") if isinstance(data.get("diag"), list) else []
+            log(f"{source}: {diag}")
+            return [], None
+        lines = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            text = normalize_text(item.get("text", ""))
+            if not text and item.get("translation"):
+                text = normalize_text(item.get("translation", ""))
+            if not text:
+                continue
+            start = float(item.get("time", -1))
+            duration = float(item.get("duration", 0))
+            # El adaptador siempre devuelve milisegundos (-1 = sin tiempo).
+            if start < 0:
+                start = -1.0
+            else:
+                start /= 1000.0
+            if duration > 0:
+                duration /= 1000.0
+            chars = item.get("chars") or []
+            if chars and isinstance(chars, list):
+                chars = [float(value) / 1000.0 for value in chars]
+            lines.append(LyricLine(start, duration, text, chars))
+        if lines:
+            log(f"{source}: {len(lines)} líneas")
+            return lines, None
+        return [], None
+    except subprocess.TimeoutExpired:
+        log(f"{source}: timeout")
+        return [], "red"
+    except Exception as error:  # noqa: BLE001
+        log(f"{source}: {error!r}")
+        return [], "red"
+    finally:
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
 def cache_key(track: Track) -> str:
     raw = "\n".join(
@@ -787,7 +928,7 @@ def mark_missing(track: Track):
         pass
 
 
-def missing_recent(track: Track, hours=10) -> bool:
+def missing_recent(track: Track, hours=0.4) -> bool:
     path = os.path.join(CACHE_DIR, cache_key(track) + ".none")
     try:
         if not os.path.isfile(path):
@@ -798,6 +939,27 @@ def missing_recent(track: Track, hours=10) -> bool:
     except (OSError, ValueError):
         return False
 
+
+def estimate_times(lines, duration: float):
+    """Asigna tiempos estimados a líneas sin marca temporal (letra plain)."""
+    usable = [line for line in lines if line.text]
+    if not usable or any(line.start >= 0 for line in usable[:3]):
+        return lines
+    if duration and duration > 20:
+        start = min(6.0, duration * 0.05)
+        end = max(start + 1, duration - 4.0)
+        step = (end - start) / max(1, len(usable))
+    else:
+        start = 1.0
+        step = 4.0
+    index = 0
+    for line in lines:
+        if line.text:
+            line.start = start + index * step
+            if line.duration <= 0:
+                line.duration = step * 0.92
+            index += 1
+    return lines
 
 def fetch_lyrics(track: Track, force: bool, log):
     if not force:
@@ -810,21 +972,107 @@ def fetch_lyrics(track: Track, force: bool, log):
             log("sin letra (caché negativa)")
             return [], "cache", False
 
-    providers = (
-        ("lrclib", lambda: fetch_lrclib(track, log)),
-        ("netease", lambda: fetch_netease(track, log)),
-        ("adapter", lambda: fetch_adapter(track, log)),
-    )
-    for name, provider in providers:
-        try:
-            lines = clean_lyric_lines(provider())
-        except Exception as error:  # noqa: BLE001
-            log(f"{name}: excepción {error!r}")
+    settings = load_lyrics_settings()
+    sources = list(settings.get("sources") or ["lrclib", "netease"])
+    # Filtra las fuentes que necesitan credenciales ausentes.
+    available = []
+    for source in sources:
+        source = source.strip().lower()
+        if source in ("spotify",) and not (
+            settings.get("credentials", {}).get("spotify_sp_dc")
+            or settings.get("credentials", {}).get("spotify_access_token")
+        ):
             continue
-        if lines:
-            synced = len(lines) > 1 and any(line.start > 0 for line in lines)
-            save_cache(track, lines, name, synced)
-            return lines, name, synced
+        if source in ("apple_music",) and not (
+            settings.get("credentials", {}).get("apple_developer_token")
+            or settings.get("credentials", {}).get("apple_user_token")
+        ):
+            continue
+        if source in ("musixmatch",) and not settings.get("credentials", {}).get("musixmatch_token"):
+            continue
+        if source in ("qishui",) and not settings.get("credentials", {}).get("qishui_api_url"):
+            continue
+        if source not in available:
+            available.append(source)
+
+    # Trabajadores en paralelo: el primero que encuentra letra gana.
+    result = {"lines": None, "source": "", "synced": False}
+    result_lock = threading.Lock()
+    result_event = threading.Event()
+
+    def publish(lines, source):
+        lines = clean_lyric_lines(lines)
+        if not lines:
+            return False
+        lines = estimate_times(lines, track.duration)
+        synced = len(lines) > 1 and any(line.start >= 0 for line in lines)
+        with result_lock:
+            if result["lines"] is None:
+                result["lines"] = lines
+                result["source"] = source
+                result["synced"] = synced
+                result_event.set()
+        # Guardamos la caché la primera vez (el resto se ignora).
+        try:
+            save_cache(track, lines, source, synced)
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+
+    def worker_builtin_lrclib():
+        for attempt in (0, 1):
+            try:
+                lines, error = fetch_lrclib(track, log)
+            except Exception as exc:  # noqa: BLE001
+                log(f"lrclib: excepción {exc!r}")
+                return
+            if lines:
+                publish(lines, "lrclib")
+                return
+            if error is None:
+                return
+            if attempt == 0:
+                time.sleep(1.0)
+
+    def worker_adapter(source):
+        try:
+            lines, error = run_adapter(source, track, settings, log)
+            if lines:
+                publish(lines, source)
+        except Exception as exc:  # noqa: BLE001
+            log(f"{source}: excepción {exc!r}")
+
+    threads = []
+    for source in available:
+        if source == "lrclib":
+            t = threading.Thread(target=worker_builtin_lrclib, daemon=True)
+        else:
+            t = threading.Thread(target=worker_adapter, args=(source,), daemon=True)
+        threads.append(t)
+
+    if not threads:
+        mark_missing(track)
+        return [], "", False
+
+    for t in threads:
+        t.start()
+
+    # Espera al primer éxito o a que todos terminen (máx. 18 s).
+    deadline = time.monotonic() + 4.0
+    while not result_event.is_set() and time.monotonic() < deadline:
+        if not any(t.is_alive() for t in threads):
+            break
+        time.sleep(0.1)
+    result_event.wait(timeout=0.05)
+
+    # Cancelación best-effort: se dejan terminar los hilos (daemon).
+    with result_lock:
+        lines = result["lines"]
+        source = result["source"]
+        synced = result["synced"]
+
+    if lines:
+        return lines, source, synced
     mark_missing(track)
     return [], "", False
 
@@ -904,6 +1152,7 @@ class LyricsCarousel:
         self.last_active = -1
         self.last_draw = 0.0
         self.last_reload = 0.0
+        self.last_fetch = 0.0
         self.status_message = ""
         self.dirty = True
         self.stop_requested = False
@@ -1012,6 +1261,7 @@ class LyricsCarousel:
             self.source = ""
             self.synced = False
             self.fetcher.start(track, force=force)
+            self.last_fetch = time.monotonic()
             self.log(f"tema: {track.title} — {track.artist} (buscando)")
         self.dirty = True
 
@@ -1052,6 +1302,17 @@ class LyricsCarousel:
                 self._snap_scroll()
                 self.dirty = True
                 self.log(f"resultado: {len(lines)} líneas ({source})")
+
+        if (
+            self.state == "empty"
+            and self.track.title
+            and time.monotonic() - self.last_fetch > 180
+        ):
+            # La letra puede no estar disponible la primera vez (API caída o
+            # canción recién añadida): se reintenta cada pocos minutos.
+            self.last_fetch = time.monotonic()
+            self.fetcher.start(self.track, force=True)
+            self.log("reintento automático de la letra")
 
         if time.monotonic() - self.last_reload > 15:
             self.last_reload = time.monotonic()

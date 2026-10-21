@@ -204,10 +204,13 @@ local function resolveGeometry(name)
     auto = spec.auto == true
   end
 
-  width = math.max(100, math.floor(width))
-  height = math.max(50, math.floor(height))
-
   local screenWidth, screenHeight, outputName = outputGeometry()
+
+  -- Un tamaño mayor que la pantalla (un descuido al escribir el layout)
+  -- dejaría la ventana fuera de la vista, así que se recorta.
+  width = math.max(100, math.min(math.floor(width), screenWidth))
+  height = math.max(50, math.min(math.floor(height), screenHeight))
+
   local x
   local y
 
@@ -363,12 +366,13 @@ end
 
 -- ------------------------------------------------------------- miniaturas --
 
--- `hyprctl clients` devuelve las ventanas de la más alta a la más baja, así que
--- se puede saber si otra ventana tapa a la del widget. Si está tapada, la
--- captura mostraría otra cosa y es mejor no capturar.
+-- `hyprctl clients` devuelve las ventanas de la más baja a la más alta, así
+-- que las que están ENCIMA de una dada son las que van después en la lista.
+-- Si otra ventana la tapa, la captura mostraría otra cosa y es mejor no
+-- capturar.
 local function isMostlyCovered(clients, index, rect)
   local covered = 0
-  for position = 1, index - 1 do
+  for position = index + 1, #clients do
     local other = clients[position]
     local overlapX = math.min(rect.x + rect.w, other.x + other.w) - math.max(rect.x, other.x)
     local overlapY = math.min(rect.y + rect.h, other.y + other.h) - math.max(rect.y, other.y)

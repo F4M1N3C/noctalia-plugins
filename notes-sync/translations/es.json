@@ -1,0 +1,54 @@
+{
+  "errors": {
+    "bad_name": "Nombre de nota inválido",
+    "cannot_read": "No se pudo leer la nota",
+    "empty": "El mensaje está vacío",
+    "no_note_open": "No hay ninguna nota abierta en el panel",
+    "push_failed": "No se pudo enviar el mensaje al celular"
+  },
+  "label_last_seen": "Última conexión",
+  "label_notes": "Notas",
+  "label_pending": "Mensajes en cola",
+  "label_phone": "Celular",
+  "label_server": "Servidor",
+  "label_url": "Dirección",
+  "push_sent": "Mensaje enviado al celular",
+  "push_title": "Del computador",
+  "settings": {
+    "glyph": {
+      "label": "Glifo de la barra"
+    },
+    "notes_plugin": {
+      "description": "Id del plugin de notas que este plugin controla",
+      "label": "Plugin de notas"
+    },
+    "poll_interval": {
+      "description": "Segundos entre comprobaciones del estado del servidor",
+      "label": "Intervalo de sondeo"
+    },
+    "server_url": {
+      "description": "Dirección del servidor de notas (notes-mobile)",
+      "label": "Dirección del servidor"
+    },
+    "show_text": {
+      "label": "Mostrar el estado como texto"
+    },
+    "token": {
+      "description": "Token de acceso del servidor; si se deja vacío se lee de ~/notes-mobile/config.json",
+      "label": "Token de acceso"
+    }
+  },
+  "title": "Notas · sincronización",
+  "tooltip_disconnected": "Notas: el celular no está conectado",
+  "tooltip_offline": "Notas: el servidor no responde",
+  "tooltip_online": "Notas: el celular está conectado",
+  "tooltip_pending": "Notas: {count} mensaje(s) en cola para el celular",
+  "value_connected": "conectado",
+  "value_disconnected": "sin conectar",
+  "value_hours": "hace {count} h",
+  "value_just_now": "ahora mismo",
+  "value_minutes": "hace {count} min",
+  "value_never": "nunca",
+  "value_offline": "sin respuesta",
+  "value_online": "en línea"
+}

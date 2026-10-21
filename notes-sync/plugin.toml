@@ -1,0 +1,72 @@
+# Plugin de sincronizacion entre el computador y el celular.
+#
+# El plugin `faminec/notes` se ocupa de las notas; este se ocupa del puente:
+# estado del servidor, estado del celular, envio de mensajes al telefono y un
+# contrato IPC estable para que otras herramientas controlen el panel.
+
+id = "faminec/notes-sync"
+name = "Notes Sync"
+version = "1.0.0"
+plugin_api = 26
+author = "faminec"
+license = "MIT"
+dependencies = []
+tags = ["productivity", "utility"]
+icon = "notes"
+description = "Bridge between the Noctalia notes panel and the phone: status, push messages and a stable IPC contract."
+
+[[setting]]
+key = "server_url"
+type = "string"
+label_key = "settings.server_url.label"
+description_key = "settings.server_url.description"
+default = "http://127.0.0.1:8787"
+
+[[setting]]
+key = "token"
+type = "password"
+label_key = "settings.token.label"
+description_key = "settings.token.description"
+default = ""
+
+[[setting]]
+key = "notes_plugin"
+type = "string"
+label_key = "settings.notes_plugin.label"
+description_key = "settings.notes_plugin.description"
+default = "faminec/notes"
+
+[[setting]]
+key = "poll_interval"
+type = "int"
+label_key = "settings.poll_interval.label"
+description_key = "settings.poll_interval.description"
+default = 10
+
+[[panel]]
+id = "panel"
+entry = "panel.luau"
+width = 400
+height = "fill"
+placement = "floating"
+position = "center_right"
+
+[[service]]
+id = "service"
+entry = "service.luau"
+
+[[widget]]
+id = "widget"
+entry = "widget.luau"
+
+  [[widget.setting]]
+  key = "glyph"
+  type = "glyph"
+  label_key = "settings.glyph.label"
+  default = "notes"
+
+  [[widget.setting]]
+  key = "show_text"
+  type = "bool"
+  label_key = "settings.show_text.label"
+  default = false

@@ -122,6 +122,13 @@ description_key = "settings.show_filenames.description"
 default = true
 
 [[setting]]
+key = "wheel"
+type = "bool"
+label_key = "settings.wheel.label"
+description_key = "settings.wheel.description"
+default = true
+
+[[setting]]
 key = "chrome"
 type = "bool"
 label_key = "settings.chrome.label"

@@ -70,6 +70,18 @@ noctalia msg plugin faminec/notes:service all open-home
 | `open-note` | Queues the given note file and opens the panel on it. |
 | `open-home` | Opens the panel on the note list. |
 
+## Open note channel
+
+The plugin writes the note that is currently open to
+`~/.local/state/noctalia/plugins/data/faminec/notes/current.json`:
+
+```json
+{ "name": "my note.md", "content": "…", "at": "2026-10-21 17:22:23" }
+```
+
+It is rewritten whenever a note is opened or saved. `faminec/notes-sync` reads
+it to know which note is open, and any other tool can read it too.
+
 ## Notes
 
 - Notes are plain files in `notes_dir`; the scratchpad is a special note called

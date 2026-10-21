@@ -1,0 +1,54 @@
+{
+  "errors": {
+    "bad_name": "Invalid note name",
+    "cannot_read": "Could not read the note",
+    "empty": "The message is empty",
+    "no_note_open": "No note is open in the panel",
+    "push_failed": "Could not send the message to the phone"
+  },
+  "label_last_seen": "Last seen",
+  "label_notes": "Notes",
+  "label_pending": "Queued messages",
+  "label_phone": "Phone",
+  "label_server": "Server",
+  "label_url": "Address",
+  "push_sent": "Message sent to the phone",
+  "push_title": "From the computer",
+  "settings": {
+    "glyph": {
+      "label": "Bar Glyph"
+    },
+    "notes_plugin": {
+      "description": "Id of the notes plugin this plugin controls",
+      "label": "Notes plugin"
+    },
+    "poll_interval": {
+      "description": "Seconds between server status checks",
+      "label": "Poll interval"
+    },
+    "server_url": {
+      "description": "Address of the notes server (notes-mobile)",
+      "label": "Server address"
+    },
+    "show_text": {
+      "label": "Show the status as text"
+    },
+    "token": {
+      "description": "Server access token; when empty it is read from ~/notes-mobile/config.json",
+      "label": "Access token"
+    }
+  },
+  "title": "Notes · sync",
+  "tooltip_disconnected": "Notes: the phone is not connected",
+  "tooltip_offline": "Notes: the server is not responding",
+  "tooltip_online": "Notes: the phone is connected",
+  "tooltip_pending": "Notes: {count} message(s) queued for the phone",
+  "value_connected": "connected",
+  "value_disconnected": "not connected",
+  "value_hours": "{count} h ago",
+  "value_just_now": "just now",
+  "value_minutes": "{count} min ago",
+  "value_never": "never",
+  "value_offline": "no response",
+  "value_online": "online"
+}

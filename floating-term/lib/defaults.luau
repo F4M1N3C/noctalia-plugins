@@ -207,9 +207,9 @@ function M.load()
   local commands = nil
   local layouts = nil
 
-  local dir = noctalia.pluginDir()
-  if dir ~= nil then
-    local raw = noctalia.readFile(dir .. "/plugin.toml")
+  local manifestPath = util.pluginPath("plugin.toml")
+  if manifestPath ~= nil then
+    local raw = noctalia.readFile(manifestPath)
     if raw ~= nil and raw ~= "" then
       local parsed = parseManifest(raw)
       commands = parsed.commands

@@ -24,6 +24,17 @@ function M.classFor(name)
   return "noctalia-term-" .. M.slug(name)
 end
 
+-- Ruta de un archivo del plugin, tolerando que el directorio venga con
+-- barra final.
+function M.pluginPath(name)
+  local dir = noctalia.pluginDir()
+  if dir == nil then
+    return nil
+  end
+  dir = tostring(dir):gsub("/+$", "")
+  return dir .. "/" .. name
+end
+
 function M.shellQuote(value)
   return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
 end

@@ -579,6 +579,37 @@ end
 
 -- ------------------------------------------------------------- edición --
 
+-- Aplica los cambios de un widget (los usa el formulario del panel y el IPC).
+local function applyWidget(name, command, layout)
+  name = util.trim(name)
+  command = util.trim(command)
+  layout = util.trim(layout)
+
+  if name == "" then
+    return false, tr("need_name")
+  end
+
+  storeLib.upsert(state.store, name, command ~= "" and command or nil, layout ~= "" and layout or nil)
+  local saved, err = storeLib.save(state.store)
+  if not saved then
+    return false, tr("save_failed", { detail = tostring(err or "") })
+  end
+
+  loadWidgets()
+  return true, nil
+end
+
+-- Borra un widget (los usa el panel y el IPC).
+local function removeWidget(name)
+  storeLib.remove(state.store, name)
+  local saved, err = storeLib.save(state.store)
+  if not saved then
+    return false, tr("save_failed", { detail = tostring(err or "") })
+  end
+  loadWidgets()
+  return true, nil
+end
+
 startEditing = function(name)
   state.editing = true
   state.editTarget = name
@@ -607,28 +638,25 @@ saveForm = function()
 
   local target = state.editTarget
   if target ~= nil and target ~= name then
-    storeLib.remove(state.store, target)
+    removeWidget(target)
   end
-  storeLib.upsert(state.store, name, command ~= "" and command or nil, layout ~= "" and layout or nil)
 
-  local saved, err = storeLib.save(state.store)
-  if not saved then
-    noctalia.notifyError(tr("title"), tr("save_failed", { detail = tostring(err or "") }))
+  local applied, err = applyWidget(name, command, layout)
+  if not applied then
+    noctalia.notifyError(tr("title"), err)
     return
   end
 
   state.editing = false
   state.editTarget = nil
   state.form = { name = "", command = "", layout = "" }
-  loadWidgets()
   render()
 end
 
 deleteWidget = function(name)
-  storeLib.remove(state.store, name)
-  local saved, err = storeLib.save(state.store)
-  if not saved then
-    noctalia.notifyError(tr("title"), tr("save_failed", { detail = tostring(err or "") }))
+  local removed, err = removeWidget(name)
+  if not removed then
+    noctalia.notifyError(tr("title"), err)
     return
   end
 
@@ -640,7 +668,6 @@ deleteWidget = function(name)
     end)
   end
 
-  loadWidgets()
   render()
 end
 
@@ -1014,6 +1041,33 @@ function onIpc(event, payload)
     rotateWindows()
   elseif event == "close-all" then
     closeAllWindows()
+  elseif event == "add" then
+    -- "nombre|comando|posición"
+    loadConfig()
+    loadWidgets()
+    local parts = {}
+    for part in tostring(payload or ""):gmatch("[^|]+") do
+      parts[#parts + 1] = part
+    end
+    local applied, err = applyWidget(parts[1] or "", parts[2] or "", parts[3] or "")
+    if not applied then
+      noctalia.notifyError(tr("title"), err)
+      return
+    end
+    if state.open then
+      render()
+    end
+  elseif event == "remove" then
+    loadConfig()
+    loadWidgets()
+    local removed, err = removeWidget(tostring(payload or ""))
+    if not removed then
+      noctalia.notifyError(tr("title"), err)
+      return
+    end
+    if state.open then
+      render()
+    end
   elseif event == "refresh" then
     loadConfig()
     loadWidgets()

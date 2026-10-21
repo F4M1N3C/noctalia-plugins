@@ -69,6 +69,10 @@
     "skew": {
       "description": "How much the cards lean to the right. 0 gives straight cards.",
       "label": "Card skew"
+    },
+    "wheel": {
+      "label": "Scroll with the mouse wheel",
+      "description": "Move the carousel with the mouse wheel. Off disables the wheel."
     }
   },
   "size": "Size",

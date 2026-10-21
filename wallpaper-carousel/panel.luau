@@ -18,7 +18,7 @@
 -- se mueva de sitio, y su delta mueve el carrusel horizontalmente.
 
 local THUMB_VERSION = "v5"
-local SCROLL_STEP = 56 -- px lógicos por dentado de la rueda
+local SCROLL_STEP = 56 -- px de superficie por dentado de la rueda
 local SCROLL_TAIL = 300 -- relleno final del contenido del scroll
 local SCROLL_JUMP = 1500 -- px que salta el scroll al recentrarse
 local KEY_REPEAT_DELAY = 380 -- ms antes de empezar a repetir
@@ -49,6 +49,7 @@ local cfg = {
   applyAll = true,
   showFilenames = true,
   chrome = false,
+  wheel = true,
 }
 
 local wallpapers = {}
@@ -70,10 +71,14 @@ local thumbRequested = {}
 local scrollOffset = 0.0
 local scrollSeen = 0.0
 local scrollAccum = 0.0
-local scrollSettled = true
 local scrollResetting = false
 local scrollReveal = 0
 local scrollComp = nil -- relleno previsto para el siguiente salto del scroll
+local anchorOffset = nil -- distancia real del ancla (medida, px de superficie)
+-- Correccion del hueco hasta el ancla. El valor inicial está medido sobre la
+-- maquina de referencia; a partir de ahi se ajusta solo con cada salto.
+local anchorGapAdjust = 438
+local lastRecenterComp = nil -- relleno usado en el ultimo recentrado
 local pendingRecenter = false
 local pendingThumbs = false
 
@@ -194,16 +199,7 @@ local thumbPathCache = {}
 -- entra en la clave de caché: si el usuario lo cambia, las tarjetas se
 -- regeneran al tamaño correcto.
 local function thumbPath(source, bucket)
-  local info = fileInfoFor(source)
-  -- La clave incluye mtime y tamaño: si el wallpaper se edita, la ruta de la
-  -- miniatura cambia y no se queda la imagen vieja cacheada.
-  local cacheKey = table.concat({
-    source,
-    tostring(bucket),
-    string.format("%.2f", uiScale()),
-    tostring(info.mtime or 0),
-    tostring(info.size or 0),
-  }, "|")
+  local cacheKey = source .. "|" .. tostring(bucket) .. "|" .. tostring(uiScale())
   local cached = thumbPathCache[cacheKey]
   if cached ~= nil then
     return cached
@@ -213,6 +209,7 @@ local function thumbPath(source, bucket)
     thumbPathCache[cacheKey] = source
     return source
   end
+  local info = fileInfoFor(source)
   local key = table.concat({
     source,
     tostring(info.mtime or 0),
@@ -260,6 +257,7 @@ local function loadConfig()
   cfg.applyAll = noctalia.getConfig("apply_all") ~= false
   cfg.showFilenames = noctalia.getConfig("show_filenames") ~= false
   cfg.chrome = noctalia.getConfig("chrome") == true
+  cfg.wheel = noctalia.getConfig("wheel") ~= false
 end
 
 local function scanWallpapers()
@@ -267,7 +265,6 @@ local function scanWallpapers()
   fileInfoCache = {}
   thumbReady = {}
   thumbRequested = {}
-  thumbPathCache = {}
   scanError = nil
 
   local configured = cfg.directory
@@ -393,31 +390,19 @@ local function metrics()
   -- Distancia desde la cinta hasta el ancla del scroll. El ancla tiene que
   -- quedar por debajo de la ventana (para que al revelarla el scroll salte
   -- hacia arriba) y a la vez el salto tiene que dejar la cinta en el mismo
-  -- sitio de la pantalla. La segunda condición fija esta distancia: el
-  -- relleno del scroll se mueve lo mismo que el desplazamiento, así que hace
-  -- falta que el ancla quede a `viewport - relleno - alto` del borde.
-  local anchorGap = viewport - 1 - pad + 8 / uiScale() - 2 * ribbonHeight
-  if anchorGap < 0 then
-    anchorGap = 0
-  end
-  -- La fila se centra en la pantalla, así que el grupo entero (las tarjetas
-  -- más el relleno que genera el desplazamiento) tiene que caber: si no, el
-  -- centro se sale de sitio. De ahí el margen de dos ranuras.
-  -- Cuántas tarjetas caben a cada lado. La cinta se coloca con un relleno
-  -- inicial, así que la tarjeta seleccionada tiene que caber entre el borde
-  -- izquierdo y el centro: de ahí el margen de una ranura y media.
+  -- sitio de la pantalla. La segunda condición fija esta distancia: hace
+  -- falta que el ancla quede a `viewport - pad - 1` del borde del contenido.
+  -- El ajuste fino se mide sobre el salto real y se corrige solo.
+  local anchorGap = math.max(0, viewport - pad - 1 + anchorGapAdjust)
+  -- Cuántas tarjetas caben a cada lado del centro.
   local slots = viewportWidth() / cfg.cardWidth
   local half = math.max(1, math.floor((slots - 3) / 2))
-  -- Desplazamiento inicial: deja la tarjeta seleccionada en el centro de la
-  -- pantalla. El relleno se encoge a medida que la cinta avanza.
-  local lead = viewportWidth() / 2 - half * cfg.cardWidth - cfg.cardWidth / 2
   return {
     half = half,
     viewport = viewport,
     ribbonHeight = ribbonHeight,
     pad = pad,
     anchorGap = anchorGap,
-    lead = lead,
   }
 end
 
@@ -662,12 +647,17 @@ render = function()
     end
   end
 
-  -- Desplazamiento fraccionario de la cinta: la fila se alinea al principio y
-  -- un relleno inicial coloca la tarjeta seleccionada en el centro. Al
+  -- Desplazamiento de la cinta: la fila se alinea al principio y un relleno
+  -- inicial coloca la tarjeta seleccionada en el centro de la pantalla. Al
   -- avanzar, el relleno se encoge y la cinta se desliza hacia la izquierda.
-  table.insert(nodes, 1, ui.spacer({
+  --
+  -- Cerca del principio y del final de la lista no hay tarjetas a un lado,
+  -- asi que el relleno tiene que contar solo las que si existen.
+  local firstIndex = math.max(1, center - m.half)
+  local lead = viewportWidth() / 2 - cfg.cardWidth / 2 - (center - firstIndex) * cfg.cardWidth
+  table.insert(nodes, 2, ui.spacer({
     key = "lead",
-    width = math.max(0, math.floor(m.lead - fraction * cfg.cardWidth + 0.5)),
+    width = math.max(0, math.floor(lead - fraction * cfg.cardWidth + 0.5)),
     height = 1,
   }))
 
@@ -687,7 +677,7 @@ render = function()
     -- turnando para poder recentrar el scroll tantas veces como haga falta.
     ui.box({ key = "anchor-0", width = 1, height = 1 }),
     ui.box({ key = "anchor-1", width = 1, height = 1 }),
-    ui.spacer({ key = "tail", width = 1, height = SCROLL_TAIL }),
+    ui.spacer({ key = "tail", width = 1, height = cfg.wheel and SCROLL_TAIL or 0 }),
   }
 
   -- El relleno vertical del scroll compensa su propio desplazamiento: la
@@ -697,6 +687,9 @@ render = function()
   local compensation = scrollComp
   if compensation == nil then
     compensation = scrollOffset / uiScale() + m.pad
+  end
+  if not cfg.wheel then
+    compensation = m.pad
   end
 
   local scroll = ui.scroll({
@@ -868,23 +861,24 @@ end
 -- salta SCROLL_JUMP px hacia arriba, dejando sitio para seguir subiendo. El
 -- relleno se adelanta al salto para que la cinta no dé un tirón.
 local function recenterScroll()
-  noctalia.log(string.format("wc-dbg recenter desde %.1f", scrollOffset))
   local m = metrics()
   local scale = uiScale()
   -- El scroll salta hacia arriba para reabrir el recorrido. El salto se
   -- calcula con el relleno que Noctalia va a dejar puesto (revealKey apunta
   -- al ancla), de modo que la cinta no se mueve ni un píxel.
-  local target = scrollOffset + SCROLL_JUMP * scale
-  -- Distancia del ancla al inicio del contenido (en px de la superficie).
-  local anchorOffset = (2 * m.ribbonHeight + m.anchorGap) * scale
-  local viewport = panelHeight() - VIEWPORT_PADDING * 2
-  scrollComp = (target - anchorOffset - scale + viewport) / scale
+  -- Objetivo del salto, en px lógicos.
+  local target = scrollOffset / scale + SCROLL_JUMP
+  -- Distancia del ancla al inicio del contenido, en px lógicos. La primera
+  -- vez se estima; a partir de ahi se mide con el salto real.
+  local offset = anchorOffset or (m.viewport - m.pad - 1)
+  scrollComp = target - offset - 1 + m.viewport
   scrollResetting = true
   scrollReveal = scrollReveal + 1
-  scrollOffset = target
-  scrollSeen = target
+  -- El scroll mide en px de la superficie: el objetivo va escalado.
+  scrollOffset = target * scale
+  scrollSeen = scrollOffset
   scrollAccum = 0
-  scrollSettled = true
+  lastRecenterComp = scrollComp
   render()
   scrollComp = nil
 end
@@ -903,7 +897,6 @@ function onOpen(_context)
   scrollOffset = 0
   scrollSeen = 0
   scrollAccum = 0
-  scrollSettled = true
   scrollResetting = false
   thumbErrorShown = false
   -- El frame tick se queda activo siempre: sirve para la animación de la
@@ -931,19 +924,37 @@ function onConfigChanged()
   end
 end
 
--- Desplazamiento vertical del scroll. No mueve el carrusel directamente: se
--- acumula el delta y se aplica cuando el scroll se estabiliza, para que un
--- solo dentado mueva un solo fondo aunque la animación dure varios frames.
+-- Desplazamiento vertical del scroll. El scroll se usa solo como sensor de la
+-- rueda: su desplazamiento se compensa con el relleno del propio scroll (para
+-- que la cinta no se mueva de sitio) y el salto accumulated mueve el carrusel.
 function onScroll(offset, _maxOffset)
   local newOffset = tonumber(offset) or 0
-  noctalia.log(string.format("wc-dbg onScroll off=%.1f reset=%s scrollOffset=%.1f", newOffset, tostring(scrollResetting), scrollOffset))
 
   if scrollResetting then
     scrollResetting = false
     scrollOffset = newOffset
     scrollSeen = newOffset
     scrollAccum = 0
-    scrollSettled = true
+    -- El salto real mide donde está el ancla. Con ese dato el relleno del
+    -- scroll se calcula al milimetro y el recentrado no mueve la cinta.
+    if lastRecenterComp then
+      local scale = uiScale()
+      local viewport = panelHeight() - VIEWPORT_PADDING * 2
+      -- Distancia real del ancla dentro del contenido (px lógicos).
+      local measured = (newOffset - lastRecenterComp * scale - scale + viewport) / scale
+      local ideal = viewport / scale - metrics().pad - 1
+      anchorOffset = measured
+      -- Y el hueco hasta el ancla se ajusta para que el salto deje la cinta
+      -- en el mismo sitio de la pantalla.
+      local correction = measured - ideal
+      if correction > 60 then
+        correction = 60
+      elseif correction < -60 then
+        correction = -60
+      end
+      anchorGapAdjust = anchorGapAdjust - correction
+      lastRecenterComp = nil
+    end
     render()
     return
   end
@@ -958,37 +969,33 @@ function onScroll(offset, _maxOffset)
   scrollOffset = newOffset
 end
 
-local fc = 0
 function onFrameTick(deltaMs)
   local dt = tonumber(deltaMs) or 16
-  fc = fc + 1
-  if fc % 60 == 0 then noctalia.log(string.format("wc-dbg fc=%d off=%.1f seen=%.1f acc=%.1f settled=%s", fc, scrollOffset, scrollSeen, scrollAccum, tostring(scrollSettled))) end
 
   -- 0. El primer frame recentra el scroll, para que la rueda tenga recorrido
   --    hacia arriba desde el principio, y pide las miniaturas.
   if pendingRecenter then
     pendingRecenter = false
-    recenterScroll()
+    if cfg.wheel then
+      recenterScroll()
+    end
   end
   if pendingThumbs then
     pendingThumbs = false
     ensureThumbs()
   end
 
-  -- 1. Rueda del ratón: se acumula mientras el scroll se mueve y se aplica
-  --    el salto cuando se para.
+  -- 1. Rueda del ratón: el scroll se mueve en saltos de 56 px (un dentado),
+  --    así que se acumula el desplazamiento y se avanza la cinta en cuanto hay
+  --    un paso completo. El resto se guarda para el siguiente.
   if math.abs(scrollOffset - scrollSeen) > 0.5 then
     scrollAccum = scrollAccum + (scrollOffset - scrollSeen)
     scrollSeen = scrollOffset
-    scrollSettled = false
-  elseif not scrollSettled then
-    scrollSettled = true
-    local accumulated = scrollAccum
-    scrollAccum = 0
-    local steps = math.floor(math.abs(accumulated) / SCROLL_STEP + 0.5)
-    noctalia.log(string.format("wc-dbg wheel accumulated=%.1f steps=%d", accumulated, steps))
+    local steps = math.floor(math.abs(scrollAccum) / SCROLL_STEP)
     if steps > 0 then
-      move(accumulated > 0 and steps or -steps)
+      local direction = scrollAccum > 0 and 1 or -1
+      scrollAccum = scrollAccum - direction * steps * SCROLL_STEP
+      move(direction * steps)
     end
   end
 
@@ -1066,12 +1073,6 @@ function onKey(chord, pressed)
 end
 
 function onIpc(event, _payload)
-  noctalia.log(string.format("wc-dbg onIpc event=%s opened=%s", tostring(event), tostring(opened)))
-  if event == "wheeltest" and opened then
-    -- TEST: simula un dentado de rueda
-    onScroll(scrollOffset + 56, scrollOffset + 1000)
-    return
-  end
   if event == "refresh" and opened then
     reload(true)
   elseif event == "next" and opened then

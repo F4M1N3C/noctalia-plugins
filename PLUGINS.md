@@ -47,6 +47,7 @@
 | Floating Term | `faminec/floating-term` | Listo (v2.0.0 "Term Deck") | Sí | `feat/floating-term` | ☐ 0/17 |
 | Wallpaper Carousel | `faminec/wallpaper-carousel` | Listo (v2.0.0, inclinada) | Sí | `feat/wallpaper-carousel` | ☐ 0/16 |
 | Notes | `faminec/notes` | Listo | Sí | `feat/notes` | ☐ 0/14 |
+| Notes Sync | `faminec/notes-sync` | Listo (nuevo) | No | — | ☐ 0/9 |
 | CMF Buds | `faminec/cmf-buds` | Listo | Sí | `feat/cmf-buds` | ☐ 0/20 |
 | Lyrics Carousel | `faminec/lyrics-carousel` | Listo | Sí | `feat/lyrics-carousel` | ☐ 0/18 |
 | Equalizer | `faminec/equalizer` | Listo pero **retirado** | Sí | `feat/equalizer` | ☑ **8/8** |
@@ -56,7 +57,7 @@
 | Utilidad | Qué es | Dónde | Estado |
 | --- | --- | --- | --- |
 | `ntimer` | CLI del timer de Noctalia + visor `tty-clock` | `~/.local/bin/ntimer` | Listo |
-| `notes-mobile` | App web (PWA + SSE) para editar las notas desde el móvil | `~/notes-mobile` | En curso |
+| `notes-mobile` | App web (PWA + SSE) para editar las notas desde el móvil | `~/notes-mobile` | **Listo** (repo git propio) |
 | Tema navegador | Colores de Edge/Monkeytype según el wallpaper | `~/.local/bin/monkeytype-wallpaper-server` | En curso |
 
 ---
@@ -69,9 +70,10 @@
 | 2 | `floating-term` v2 "Term Deck" | Falta commitear, corregir el tag `terminal` y probar | Alta |
 | 3 | `wallpaper-carousel` v2 (inclinada) | Falta commitear, regenerar miniatura y README, y probar | Alta |
 | 4 | `lyrics-carousel` | Copiar al repo la versión instalada (fix de `overrides.json` + `render_mode="image"`) | Media |
-| 5 | App móvil de las notas | Falta probarla en el móvil y decidir el túnel (Funnel pide un clic en la consola de Tailscale; alternativa `adb reverse`) | Media |
+| 5 | App móvil de las notas | **Hecho**: PWA instalada en el celular, sincronización en vivo verificada, push PC→celular, conflictos y respaldos. Falta decidir la URL pública estable (Funnel pide un clic en la consola de Tailscale) | Media |
 | 6 | Tema del navegador según el wallpaper | Decidir el enfoque (Edge + Monkeytype) | Media |
 | 7 | `pipes.sh` vs `pipies.sh` | Confirmar el nombre real del script | Baja |
+| 8 | `faminec/notes-sync` | **Hecho**: plugin nuevo con widget de estado, panel y contrato IPC. Falta probarlo a mano y decidir si se sube a GitHub | Media |
 
 ---
 
@@ -271,16 +273,38 @@ ntimer 1h --no-display
 - [ ] `q` o `Esc` cierran solo el visor (el temporizador sigue)
 - [ ] `--no-display` arranca el widget sin abrir la ventana
 
-### 4.8 App móvil de las notas (`notes-mobile`) — **0/8**
+### 4.8 App móvil de las notas (`notes-mobile`) — **8/14** ✅
 
-- [ ] La PWA se instala de verdad en el Galaxy S22 (icono, sin barra de navegador)
-- [ ] La app carga con el token correcto
-- [ ] Se ven las notas con vista previa
-- [ ] Se crea una nota desde el móvil
-- [ ] Se edita una nota desde el móvil
-- [ ] Se borra o renombra una nota desde el móvil
-- [ ] El panel del PC refleja los cambios al instante (SSE)
-- [ ] El móvil refleja al instante los cambios del PC
+- [x] La PWA se instala de verdad en el Galaxy S22 (icono "Notas" en el launcher, ventana propia)
+- [x] La app carga con el token correcto
+- [x] Se ven las notas con vista previa
+- [x] Se crea una nota desde el móvil
+- [x] Se edita una nota desde el móvil
+- [x] Se borra o renombra una nota desde el móvil
+- [x] El panel del PC refleja los cambios al instante (SSE)
+- [x] El móvil refleja al instante los cambios del PC
+- [x] Funciona con **datos móviles** (WiFi apagado, red `rmnet_data7`): las 3 rutas responden 200
+- [x] Se instala sobre `127.0.0.1` (contexto seguro: `adb reverse`), sin depender de HTTPS
+- [x] Conflictos: si el PC cambia la nota mientras se edita, avisa y deja elegir
+- [x] Push del PC al celular: el banner sale en el móvil
+- [x] Hay respaldos de cada nota antes de sobrescribirla
+- [ ] La URL pública con **HTTPS estable** (Tailscale Funnel) → falta tu clic en la consola
+
+### 4.9 Notes Sync (`faminec/notes-sync`) — **6/9**
+
+- [x] El plugin carga sin errores (`noctalia plugins lint` → 0 errores)
+- [x] El panel muestra servidor, celular, cola, notas y última conexión
+- [x] El widget cambia de color según el estado
+- [x] Abre el panel de notas del PC
+- [x] Abre una nota concreta en el panel del PC
+- [x] Manda al celular la nota que está abierta (push)
+- [ ] El botón "enviar" del panel se ve bien con la nota abierta
+- [ ] El widget se ve bien en la barra (icono + color)
+- [ ] Decidir si se sube a GitHub o se queda local
+
+> **Descubrimiento clave**: `noctalia.state` está **aislado por plugin** (una clave
+> publicada por `faminec/notes` no la ve `faminec/notes-sync`). El canal entre
+> plugins es un fichero: `~/.local/state/noctalia/plugins/data/faminec/notes/current.json`.
 
 ---
 

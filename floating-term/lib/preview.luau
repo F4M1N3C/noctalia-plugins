@@ -77,11 +77,11 @@ function M.toolsAvailable()
   if not noctalia.commandExists("python3") then
     return false
   end
-  local dir = noctalia.pluginDir()
-  if dir == nil then
+  local script = util.pluginPath("bin/snapshot.py")
+  if script == nil then
     return false
   end
-  return noctalia.fileExists(dir .. "/bin/snapshot.py")
+  return noctalia.fileExists(script)
 end
 
 -- Limpia las capturas antiguas de un widget (mismo nombre, otra geometría).
@@ -115,8 +115,8 @@ function M.capture(entries, callback)
   end
 
   local dir = M.cacheDir()
-  local pluginDir = noctalia.pluginDir()
-  if dir == nil or pluginDir == nil then
+  local script = util.pluginPath("bin/snapshot.py")
+  if dir == nil or script == nil then
     if callback ~= nil then
       callback()
     end
@@ -167,7 +167,7 @@ function M.capture(entries, callback)
 
   local started = noctalia.runAsync({
     "python3",
-    pluginDir .. "/bin/snapshot.py",
+    script,
     batchPath,
   }, function(result)
     if result.exitCode ~= 0 then

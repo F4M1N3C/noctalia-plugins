@@ -134,6 +134,30 @@ local function refreshFiles()
   end)
 end
 
+-- Publica la nota abierta en un fichero del directorio de datos del plugin.
+--
+-- `noctalia.state` esta aislado por plugin: otro plugin no puede leer estas
+-- claves. El fichero es el canal entre `faminec/notes` y `faminec/notes-sync`
+-- (y sirve de pista para cualquier otra herramienta).
+local function publishCurrent()
+  local dir = noctalia.pluginDataDir()
+  if dir == nil or dir == "" then
+    return
+  end
+  local payload = noctalia.json.encode({
+    name = current or "",
+    content = current ~= nil and buffer or "",
+    at = noctalia.formatTime("%Y-%m-%d %H:%M:%S"),
+  })
+  if payload == nil then
+    return
+  end
+  local ok = noctalia.writeFile(dir .. "/current.json", payload)
+  if not ok then
+    noctalia.log("notes: no se pudo publicar la nota actual")
+  end
+end
+
 local function flush()
   if not dirty or current == nil then
     return
@@ -145,6 +169,10 @@ local function flush()
   end
   loadedContent = buffer
   dirty = false
+  -- El contenido guardado se publica para que otros plugins puedan usarlo
+  -- (por ejemplo, para mandarlo al celular).
+  noctalia.state.set("notes_content", buffer)
+  publishCurrent()
 end
 
 local function openNote(file)
@@ -157,6 +185,11 @@ local function openNote(file)
   dirty = false
   idleTicks = 0
   pendingDelete = nil
+  -- Se publica la nota abierta para que otros plugins (por ejemplo
+  -- faminec/notes-sync) puedan actuar sobre ella sin adivinar.
+  noctalia.state.set("notes_current", file)
+  noctalia.state.set("notes_content", buffer)
+  publishCurrent()
   render()
 end
 
@@ -540,6 +573,8 @@ function onBack()
   current = nil
   buffer = ""
   pendingDelete = nil
+  noctalia.state.set("notes_current", "")
+  publishCurrent()
   refreshFiles()
   render()
 end

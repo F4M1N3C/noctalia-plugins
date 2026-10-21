@@ -1,0 +1,84 @@
+{
+  "applied": "Fondo aplicado",
+  "apply": "Aplicar fondo",
+  "apply_failed": "No se pudo aplicar el fondo.",
+  "close": "Cerrar",
+  "empty": "No se encontraron imágenes en {directory}.",
+  "empty_hint": "Elige otra carpeta en Ajustes → Plugins.",
+  "filename": "{name}",
+  "folder": "Abrir carpeta",
+  "hint": "← → navegar · rueda navegar · Enter aplicar · Esc cerrar",
+  "missing_file": "El archivo ya no existe.",
+  "next": "Fondo siguiente",
+  "prev": "Fondo anterior",
+  "random": "Aleatorio",
+  "refresh": "Volver a escanear",
+  "settings": {
+    "apply_all": {
+      "description": "Aplica el fondo a todos los monitores; si se desactiva, solo al monitor enfocado.",
+      "label": "Aplicar a todas las pantallas"
+    },
+    "base_scale": {
+      "description": "Tamaño de las tarjetas que rodean a la seleccionada.",
+      "label": "Escala de las tarjetas laterales"
+    },
+    "card_height": {
+      "description": "Alto de la tarjeta seleccionada, en píxeles lógicos.",
+      "label": "Alto de la tarjeta"
+    },
+    "card_width": {
+      "description": "Ancho de la tarjeta seleccionada, en píxeles lógicos.",
+      "label": "Ancho de la tarjeta"
+    },
+    "chrome": {
+      "description": "Muestra el pie con el nombre del archivo y el botón de aplicar.",
+      "label": "Mostrar el pie"
+    },
+    "close_on_apply": {
+      "description": "Cierra el carrusel después de aplicar un fondo.",
+      "label": "Cerrar al aplicar"
+    },
+    "directory": {
+      "description": "Déjalo vacío para usar la carpeta configurada en Noctalia.",
+      "label": "Carpeta de fondos"
+    },
+    "glyph": {
+      "description": "Icono que se muestra en la barra.",
+      "label": "Icono de barra"
+    },
+    "hover_boost": {
+      "description": "Cuánto crece y brilla la tarjeta que está bajo el puntero.",
+      "label": "Realce al pasar el ratón"
+    },
+    "parallax": {
+      "description": "Cuánto se desplaza el recorte de cada miniatura según su posición.",
+      "label": "Intensidad del parallax"
+    },
+    "scrim": {
+      "description": "Velo oscuro sobre el escritorio. 0 deja el fondo totalmente transparente.",
+      "label": "Opacidad del velo"
+    },
+    "selected_scale": {
+      "description": "Tamaño de la tarjeta seleccionada respecto a las laterales.",
+      "label": "Escala de la tarjeta seleccionada"
+    },
+    "show_filenames": {
+      "description": "Muestra el nombre del archivo seleccionado en el pie del panel.",
+      "label": "Mostrar nombres"
+    },
+    "skew": {
+      "description": "Cuánto se inclinan las tarjetas hacia la derecha. 0 las deja rectas.",
+      "label": "Inclinación de las tarjetas"
+    },
+    "wheel": {
+      "label": "Desplazar con la rueda",
+      "description": "Mueve el carrusel con la rueda del ratón. Desactivado la rueda no hace nada."
+    }
+  },
+  "size": "Tamaño",
+  "subtitle": "{count} fondos · {directory}",
+  "thumb_error": "No se pudieron generar las miniaturas. Se muestran los fondos originales.",
+  "title": "Fondos de pantalla",
+  "tooltip": "Abrir el carrusel de fondos",
+  "tooltip_close": "Cerrar el carrusel de fondos"
+}

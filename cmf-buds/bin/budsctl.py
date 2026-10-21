@@ -1023,18 +1023,32 @@ class BudsDaemon:
             raise RuntimeError("Auriculares no conectados por RFCOMM")
 
     # -- volumen -------------------------------------------------------------
-    def _sink(self):
+    def _buds_sink(self):
+        """Sink Bluetooth de los auriculares, o "" si no estan conectados.
+
+        No cae al sink por defecto: el motor de atajos solo debe vigilar el
+        volumen de los auriculares, no el del sistema.
+        """
         mac = self.state["device"].get("mac", "").replace(":", "_")
+        if not mac:
+            return ""
+        res = run(["pactl", "list", "sinks", "short"], 6)
+        for line in (res.stdout or "").splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 2 and f"bluez_output.{mac}" in parts[1]:
+                return parts[1]
+        return ""
+
+    def _sink(self):
+        sink = self._buds_sink()
+        if sink:
+            return sink
         res = run(["pactl", "list", "sinks", "short"], 6)
         sinks = []
         for line in (res.stdout or "").splitlines():
             parts = line.split("\t")
             if len(parts) >= 2:
                 sinks.append(parts[1])
-        if mac:
-            for name in sinks:
-                if f"bluez_output.{mac}" in name:
-                    return name
         res = run(["pactl", "get-default-sink"], 5)
         return (res.stdout or "").strip() or (sinks[0] if sinks else "")
 
@@ -1204,6 +1218,16 @@ class BudsDaemon:
     def run(self):
         os.makedirs(os.path.dirname(self.state_path), exist_ok=True)
         os.makedirs(os.path.dirname(self.socket_path), exist_ok=True)
+        # Cargar el estado previo: asi el motor de atajos conoce la MAC del
+        # dispositivo desde el primer momento y no espera al enlace RFCOMM.
+        try:
+            if os.path.exists(self.state_path):
+                with open(self.state_path, "r", encoding="utf-8") as fh:
+                    saved = json.load(fh)
+                if isinstance(saved, dict) and saved.get("device"):
+                    self.state["device"] = saved["device"]
+        except Exception as exc:
+            self.log("No se pudo leer el estado previo: %s" % exc)
         # lock exclusivo
         lock_path = self.socket_path + ".lock"
         self._lock_file = open(lock_path, "a+")
@@ -1258,7 +1282,7 @@ class BudsDaemon:
         threading.Thread(target=self.monitor, name="buds-monitor", daemon=True).start()
         if self.local is not None:
             try:
-                self.local.start(self._sink)
+                self.local.start(self._buds_sink)
             except Exception as exc:
                 self.log("No se pudo iniciar el motor de acciones locales: %s" % exc)
         try:

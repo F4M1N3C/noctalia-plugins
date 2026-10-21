@@ -1,126 +1,203 @@
-# CMF Buds
+# CMF Buds — plugin de Noctalia
 
-Native control of the **Nothing CMF Buds Pro 2** (model `B172`) from the Noctalia bar,
-without the Nothing X mobile app. The plugin talks the vendor's **RFCOMM** protocol
-through a small Python daemon and exposes everything the earbuds can change: noise
-cancellation, volume, equalizer, Ultra Bass, case-dial gestures, spatial audio, in-ear
-detection, low-latency mode, multipoint, battery, "ring my buds" and the ear-fit test.
+Control nativo de los **Nothing CMF Buds Pro 2** (modelo `B172`) desde la barra de
+Noctalia, sin depender de la app Nothing X del móvil.
 
-## Plugin
+El plugin habla directamente el protocolo **RFCOMM** del fabricante a través de un
+demonio en Python, y expone todo lo que se puede cambiar en los auriculares:
+cancelación de ruido, volumen, ecualizador, Ultra Bass, gestos del dial del
+estuche, audio espacial, detección in-ear, modo de baja latencia, multipunto,
+batería, "ring my buds" y test de ajuste.
 
-| Field | Value |
-| --- | --- |
-| ID | `faminec/cmf-buds` |
-| Entries | Bar widget: `widget`; panels: `panel-sound`, `panel-controls`, `panel-actions`, `panel-system`; service: `service` |
+## Requisitos
 
-## Requirements
+| Dependencia | Para qué |
+|---|---|
+| `python3` | demonio y cliente |
+| `bluetoothctl` | descubrimiento del dispositivo |
+| `pactl` (pipewire-pulse) | volumen del sistema |
+| BlueZ con el dispositivo ya emparejado | canal RFCOMM |
 
-The following executables must be installed and available on `PATH`:
+El plugin se instala en `~/.local/share/noctalia/plugins/cmf-buds` y se activa con:
 
-- `python3` — runs the RFCOMM daemon and its client.
-- `bluetoothctl` — device discovery over BlueZ.
-- `pactl` — system volume on the headphone's PipeWire sink.
-
-Hardware and system requirements:
-
-- The earbuds must already be paired with BlueZ and connected over Bluetooth audio.
-- You must be in the `input` group to read `/dev/input/event*` for the local shortcut
-  macros.
-- The Nothing X app on your phone keeps the RFCOMM channel busy; close it before using
-  the panel, otherwise the daemon cannot connect.
-
-Enable the plugin with:
-
-```sh
+```bash
 noctalia msg plugins enable faminec/cmf-buds
 ```
 
-## Usage
+## Widget de barra
 
-Add the `widget` entry to a bar, then click it to open the control panel (it reopens the
-last tab you used).
+Se añade como `faminec/cmf-buds:widget` en la lista de widgets de una barra
+(por defecto en la barra vertical izquierda, junto al ecualizador y al Bluetooth):
 
-```sh
-noctalia msg panel-toggle faminec/cmf-buds:panel-sound
-noctalia msg panel-toggle faminec/cmf-buds:panel-controls
-noctalia msg panel-toggle faminec/cmf-buds:panel-actions
-noctalia msg panel-toggle faminec/cmf-buds:panel-system
+```toml
+[bar.Left-utility-bar]
+center = [ ..., "cmf_buds", ... ]
+
+[widget.cmf_buds]
+type = "faminec/cmf-buds:widget"
+color = "on_surface"
 ```
 
-| Panel | Size | Contents |
-| --- | --- | --- |
-| `panel-sound` | 600×910 | ANC (off / transparency / cancellation plus adaptive, high, mid, low levels), system volume and the EQ (Balanced, Rock, Electronic, Pop, Vocals, Classical and a custom bass/mid/treble curve from -6 to +6, plus five Ultra Bass levels) |
-| `panel-controls` | 600×560 | Touch gestures for each bud and for the case (single, double, triple, hold, double hold, dial) and a per-bud "ring my buds" button |
-| `panel-actions` | 600×1010 | Local shortcut macros: which shell command runs when the case dial is turned |
-| `panel-system` | 600×930 | Spatial audio, in-ear detection, low latency, dual connection, ear-fit test, device information and reconnect |
+- **Clic**: abre el panel de control (en la pestaña que se usó la última vez).
+- **Rueda**: sube/baja el volumen (5 % por paso, configurable).
+- **Clic derecho**: cicla el modo de ANC (apagado → transparencia → cancelación).
+- **Tooltip**: conexión, ANC, batería, EQ y volumen.
 
-Switching tabs closes the current panel and opens the new one, so the window resizes to
-match the section.
+## Panel
 
-### Widget gestures
+Cuatro pestañas, cada una en su propia entrada `[[panel]]` para que la ventana
+se ajuste al tamaño del contenido de la sección (sin barras de desplazamiento):
 
-| Gesture | Effect |
-| --- | --- |
-| Click | Open the control panel |
-| Scroll | Volume up/down by `volume_step` percent |
-| Right click | Cycle the ANC mode (off → transparency → cancellation) |
-| Hover | Tooltip with connection, ANC, battery, EQ and volume |
+| Pestaña | Entrada | Tamaño | Contenido |
+|---|---|---|---|
+| Sonido | `panel-sound` | 600×910 | ANC (apagado / transparencia / cancelación + nivel adaptativo, alto, medio, bajo), volumen del sistema y EQ (Balanced, Rock, Electronic, Pop, Vocals, Classical, Custom con graves/medios/agudos de -6 a +6, Ultra Bass con 5 niveles) |
+| Controles | `panel-controls` | 600×560 | Gestos de toque de cada auricular y del estuche (doble, triple, mantener, doble mantener y dial), búsqueda "ring my buds" por auricular |
+| Atajos | `panel-actions` | 600×1010 | Atajos locales: qué comando se ejecuta al mover el dial del estuche |
+| Sistema | `panel-system` | 600×930 | Audio espacial, detección in-ear, baja latencia, conexión dual, test de ajuste, información del dispositivo y reconexión |
 
-### Local shortcut macros
+Al cambiar de pestaña, el panel cierra y se abre el de la sección nueva, así que
+la ventana cambia de alto.
 
-The earbuds do not store commands: their firmware only accepts a fixed set of actions
-(play, next, volume, ANC, …). What reaches the PC is the resulting *action*, not the raw
-press, so the macros are built on the PC side:
+## Ajustes
 
-1. The case dial is mapped to the volume-control action, so turning it changes the
-   volume of the headphone sink. That change is the signal.
-2. The daemon watches the sink with `pactl subscribe` and detects it.
-3. Modifiers (SUPER, CTRL, ALT, SHIFT) are read from `/dev/input/event*`, so
-   "SUPER + dial" is distinguishable from a plain "dial".
-4. When a rule matches, the command runs; if `restore` is enabled the volume is put
-   back so the dial does not change it when it is acting as a shortcut.
+En *Ajustes → Plugins → CMF Buds*:
 
-Two rules ship by default: **dial up + SUPER** goes to the next workspace and
-**dial down + SUPER** to the previous one. Without SUPER the dial keeps behaving like
-a volume knob.
+| Ajuste | Por defecto | Descripción |
+|---|---|---|
+| `device_name` | `CMF Buds Pro 2` | nombre Bluetooth a buscar |
+| `device_mac` | *(vacío)* | MAC fija si hay varios auriculares |
+| `glyph` | `headphones` | icono del widget |
+| `volume_step` | `5` | paso de volumen con la rueda |
+| `poll_seconds` | `60` | frecuencia de lectura del estado |
+| `wheel_adjust` | `true` | pedir a Noctalia que las barras se ajusten con la rueda (requiere el parche) |
 
-## Settings
+## Atajos locales (comandos en el PC)
 
-Settings live in *Settings → Plugins → CMF Buds*.
+Los auriculares no guardan comandos: su firmware solo acepta una lista fija de
+acciones (reproducir, siguiente, volumen, ANC...). Lo que llega al PC es la
+**acción resultante**, no la pulsación cruda. Por eso las macros se construyen
+en el PC:
 
-| Setting | Type | Default | Description |
-| --- | --- | --- | --- |
-| `device_name` | `string` | `CMF Buds Pro 2` | Bluetooth name to look for. |
-| `device_mac` | `string` | *(empty)* | Pin the MAC address when several headsets are around. |
-| `glyph` | `glyph` | `headphones` | Bar widget icon. |
-| `volume_step` | `int` | `5` | Percent changed per scroll step (1–25). |
-| `poll_seconds` | `int` | `60` | How often the device state is polled (20–300). |
+1. El dial del estuche tiene asignada la acción *Control de volumen*, así que
+   al girarlo el PC recibe una tecla de volumen y el volumen del sink de los
+   auriculares cambia solo: ese cambio es la señal.
+2. El daemon vigila el sink con `pactl subscribe` y detecta la señal.
+3. Los modificadores (SUPER, CTRL, ALT, SHIFT) se leen de `/dev/input/event*`,
+   así que "SUPER + dial" es distinguible de "dial" a secas.
+4. Si una regla encaja, se ejecuta el comando y, si está activated, se restaura
+   el volumen (para que el dial no toque el volumen cuando hace de atajo).
 
-## Notes
+La pestaña **Atajos** del panel permite crear reglas:
 
-- `service` starts `bin/budsctl.py daemon` (a persistent daemon guarded by `flock` with
-  a Unix socket and a `state.json`) and pings it every 20 seconds.
-- The daemon speaks RFCOMM over the device's SDP channel 15, frames commands with the
-  `[0x55, 0x60, 0x01, cmd, len, fsn]` header and a CRC16-ARC, and publishes the state to
-  `state.json`.
-- `widget` and the panels read that state and send commands through the socket, so the UI
-  never blocks.
-- Volume is changed on the device's PipeWire sink (`bluez_output.<MAC>.1`).
-- State is persisted under `~/.local/state/noctalia/plugins/data/faminec/cmf-buds/`:
-  `state.json`, `local_actions.json`, `daemon.sock`, `daemon.sock.lock` and `daemon.log`.
-- The `fonts/` directory ships Doto and Space Grotesk with their OFL licences.
+| Campo | Valores |
+|---|---|
+| Gesto | Rueda del dial ↑ / ↓ |
+| Repeticiones | Cualquiera / 1 – 5 |
+| Modificador | Ninguno / SUPER / CTRL / ALT / SHIFT / Sin SUPER |
+| Comando | cualquier comando de shell (`hyprctl dispatch 'hl.dsp.focus({ workspace = "m+1" })'`) |
+| Notificar | muestra una notificación al ejecutar |
+| Restaurar volumen | deshace el cambio de volumen que causó el atajo |
 
-### Protocol credits
+El motor agrupa los eventos: un giro del dial es **una** acción (no una por
+muesca) y, tras disparar, ignora el eco que devuelve el auricular al restaurar
+el volumen (si no, el workspace iba +1 y -1 y no se movía nada).
 
-- [SoaOaoS/something-x](https://github.com/SoaOaoS/something-x) — the desktop Nothing X
-  app, the base of the reverse engineering work.
-- [maniacx/BudsLink](https://github.com/maniacx/BudsLink) — reference implementation of
-  the Nothing earbud RFCOMM commands.
+En los comandos se puede usar el marcador `{output}`, que se sustituye por el
+nombre del monitor enfocado (por ejemplo `DP-1`).
 
-### Limitations
+De serie hay dos reglas (con la sintaxis de dispatch de Hyprland 0.56):
 
-- The RFCOMM channel is busy while the Nothing X app is connected to the same device.
-- There is no firmware update support.
-- Some devices only report the battery of one side, or none; the UI shows `—`.
-- The case dial does not expose the "double hold" action.
-- Nothing X on the phone still overrides the settings while it is connected.
+| Gesto | Modificador | Comando |
+|---|---|---|
+| Rueda del dial ↑ | SUPER | `hyprctl dispatch 'hl.dsp.focus({ workspace = "m+1" })'` |
+| Rueda del dial ↓ | SUPER | `hyprctl dispatch 'hl.dsp.focus({ workspace = "m-1" })'` |
+
+Sin SUPER el dial se comporta como siempre (sube/baja el volumen); con SUPER
+cambia de workspace y el volumen se restaura solo.
+
+La puerta queda abierta para más atajos: basta con añadir reglas con otro
+comando, otro modificador o más repeticiones.
+
+Requisitos: el usuario debe estar en el grupo `input` (para leer
+`/dev/input`) y los auriculares deben estar conectados al PC por Bluetooth de
+audio.
+
+## Cómo funciona
+
+- `service.luau` arranca `bin/budsctl.py daemon` (demonio persistente con
+  `flock`, socket Unix y `state.json`) y lo mantiene vivo con un ping cada 20 s.
+- El demonio habla RFCOMM por el canal 15 del SDP del dispositivo, envía los
+  comandos con cabecera `[0x55, 0x60, 0x01, cmd, len, fsn]` y CRC16-ARC, y
+  publica el estado en `state.json`.
+- `widget.luau` y `panel.luau` leen ese estado y mandan comandos vía el socket
+  (`rpc`), sin bloquear la interfaz.
+- El volumen se controla sobre el sink de PipeWire del dispositivo
+  (`bluez_output.<MAC>.1`).
+
+Datos persistentes:
+
+```
+~/.local/state/noctalia/plugins/data/faminec/cmf-buds/
+├── state.json         # estado actual del dispositivo
+├── local_actions.json # reglas de atajos locales
+├── daemon.sock        # socket del demonio
+├── daemon.sock.lock
+└── daemon.log         # log del demonio
+```
+
+## Tipografía
+
+- **Doto** (dot matrix) para títulos, cifras grandes y etiquetas.
+- **Space Grotesk** para el resto del texto.
+- Ambas fuentes están empaquetadas en `fonts/` con su licencia OFL.
+
+## Créditos del protocolo
+
+- [SoaOaoS/something-x](https://github.com/SoaOaoS/something-x) — app Nothing X
+  de escritorio, base del trabajo inverso del protocolo.
+- [maniacx/BudsLink](https://github.com/maniacx/BudsLink) — implementación de
+  referencia de los comandos RFCOMM de los Nothing Ear/CMF.
+
+## Detalles de comportamiento
+
+- **Un giro = una acción.** Varias muescas seguidas se agrupan en un solo
+  gesto (ventana de 0,5 s).
+- **El eco del auricular se ignora.** Al restaurar el volumen, los auriculares
+  devuelven el suyo y generan otro evento; el motor ignora los eventos hasta
+  que el volumen se estabiliza (1,2 s) y luego vuelve a armarse solo.
+- **El restore espera 0,8 s** y comprueba el resultado: PipeWire aplica el
+  volumen con una rampa de ~0,5 s y descarta un cambio emitido durante la
+  rampa.
+- **Si no hay ninguna ventana enfocada**, Hyprland ignora el cambio de
+  workspace (afecta igual a sus propios atajos de teclado). Con una ventana
+  activa funciona siempre.
+- **La rueda del ratón en las barras del panel** (volumen y EQ) necesita un
+  parche en Noctalia: el control `Slider` ya soporta la rueda, pero el árbol
+  declarativo `ui.*` no expone la propiedad. El plugin la pide siempre
+  (`wheelAdjustEnabled`); hasta que el shell tenga el parche aparece un aviso
+  en el log y la rueda no hace nada. Se puede desactivar con el ajuste
+  `wheel_adjust` para no ensuciar el log.
+
+  **Noctalia parcheado: ya instalado y funcionando.** El parche (6 líneas sobre
+  `src/ui/ui_tree_reconciler.cpp`, aplica limpio sobre v5.3.0) expone la
+  propiedad `wheelAdjustEnabled` en los sliders declarativos, igual que hace el
+  centro de control. Está en `patch.diff` (este mismo directorio) y el binario
+  compilado quedó en `/opt/noctalia-patched/`:
+  - `sudo /opt/noctalia-patched/instalar.sh` → reinstala el binario parcheado
+    (hace copia de seguridad del original).
+  - `sudo /opt/noctalia-patched/revertir.sh` → vuelve al binario del paquete.
+  - Con el shell parcheado, la rueda ajusta el volumen y las barras de EQ
+    directamente sobre el panel; el ajuste `wheel_adjust` del plugin permite
+    dejar de pedirlo.
+- Si el usuario cambia el volumen a mano justo después de un atajo, ese cambio
+  se respeta (no se restaura).
+
+## Limitaciones
+
+- El canal RFCOMM está ocupado si la app Nothing X del móvil está conectada al
+  mismo dispositivo: cierra la app en el móvil antes de usar el panel.
+- No hay actualización de firmware.
+- Algunos auriculares solo informan de la batería de un lado o de ninguno; la
+  interfaz muestra `—` cuando el valor no existe.
+- El dial del estuche no expone la acción de doble pulsación mantenida.
+- `Nothing X` en el móvil sigue mandando sobre los ajustes si está conectado.

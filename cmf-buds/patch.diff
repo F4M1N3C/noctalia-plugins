@@ -1,0 +1,23 @@
+--- a/src/ui/ui_tree_reconciler.cpp
++++ b/src/ui/ui_tree_reconciler.cpp
+@@ -502,7 +502,7 @@
+       static const std::unordered_set<std::string> kSlider = {"width",      "height",  "flexGrow", "opacity",
+                                                               "visible",    "min",     "max",      "step",
+                                                               "value",      "enabled", "onChange", "onDragEnd",
+-                                                              "controlSize"};
++                                                              "controlSize", "wheelAdjustEnabled"};
+       static const std::unordered_set<std::string> kToggle = {"width",   "height",  "flexGrow", "opacity",
+                                                               "visible", "checked", "enabled",  "onChange"};
+       static const std::unordered_set<std::string> kScroll = {
+@@ -1661,6 +1661,11 @@
+       if (const bool* enabled = boolProp(desired, "enabled")) {
+         slider->setEnabled(*enabled);
+       }
++      // Ajuste con la rueda del raton: el control lo soporta (igual que el
++      // centro de control), solo faltaba exponerlo en el arbol declarativo.
++      if (const bool* wheelAdjust = boolProp(desired, "wheelAdjustEnabled")) {
++        slider->setWheelAdjustEnabled(*wheelAdjust);
++      }
+       if (const std::string* onChange = strProp(desired, "onChange");
+           onChange != nullptr && *onChange != slot.callbackName) {
+         slot.callbackName = *onChange;

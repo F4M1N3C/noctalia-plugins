@@ -6,6 +6,9 @@ local socketPath = nil
 local logPath = nil
 local pluginPath = noctalia.pluginDir() or ""
 local started = false
+-- Se activa al apagar el plugin: impide que un ping en vuelo (o una
+-- reconfiguracion) vuelva a levantar el demonio despues de pararlo.
+local stopped = false
 
 local function ensurePaths()
   local dir = noctalia.pluginDataDir()
@@ -50,6 +53,9 @@ local function stopDaemon()
 end
 
 local function startDaemon()
+  if stopped then
+    return
+  end
   ensurePaths()
   if statePath == nil then
     return
@@ -73,6 +79,10 @@ local function ping()
     "--log", logPath,
   }, function(result)
     -- Si el demonio murió (por ejemplo tras un crash), hay que relanzarlo.
+    -- Pero si el plugin se ha apagado mientras tanto, no hay que tocar nada.
+    if stopped then
+      return
+    end
     local code = result.exitCode or 0
     if code ~= 0 then
       startDaemon()
@@ -88,6 +98,7 @@ function update()
 end
 
 function onEnable()
+  stopped = false
   startDaemon()
 end
 
@@ -98,6 +109,8 @@ function onConfigChanged()
 end
 
 function onExit(_signal, _reason)
+  stopped = true
+  started = false
   stopDaemon()
 end
 

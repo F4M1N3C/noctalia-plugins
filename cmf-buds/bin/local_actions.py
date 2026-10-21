@@ -36,6 +36,22 @@ REPEAT_GAP = 0.12
 SELF_CHANGE_GRACE = 1.0
 # Separacion minima entre dos eventos del mismo tipo (evita dobles).
 EVENT_GAP = 0.2
+# Dos eventos del mismo tipo dentro de esta ventana son el mismo gesto.
+GESTURE_WINDOW = 0.5
+# Tras disparar un atajo se ignoran los eventos hasta que el volumen se
+# estabiliza: al restaurar el volumen, los auriculares devuelven el suyo y
+# generan un eco que dispararia el atajo otra vez (workspace +1 y -1).
+QUIET_STABLE = 1.2
+QUIET_MAX = 6.0
+# Margen (%%) para el ajuste final del volumen: si el usuario ha cambiado el
+# volumen a proposito durante la ventana de calma, no se toca.
+SETTLE_TOLERANCE = 8
+# Espera antes de restaurar el volumen: PipeWire aplica el volumen con una
+# rampa de ~0.5 s, y un cambio emitido durante la rampa se pierde (el
+# destino de la rampa gana). Hay que esperar a que termine.
+RESTORE_DELAY = 0.8
+# Reintentos del restore si el volumen no se queda donde debe.
+RESTORE_ATTEMPTS = 2
 
 MODIFIER_CODES = {
     125: "super",
@@ -87,9 +103,10 @@ def _list_event_devices():
 class ModifierTracker:
     """Estado de los modificadores del teclado leido de /dev/input/event*."""
 
-    def __init__(self):
+    def __init__(self, log=None):
         self.held = set()
         self.available = False
+        self.log = log or (lambda msg: None)
         self._fds = {}
         self._stop = threading.Event()
         self._lock = threading.Lock()
@@ -125,47 +142,59 @@ class ModifierTracker:
         self.available = bool(self._fds)
 
     def _loop(self):
-        self._open_devices()
+        try:
+            self._open_devices()
+        except Exception as exc:
+            self.log("No se pudieron abrir los dispositivos de entrada: %s" % exc)
+            return
         if not self._fds:
+            self.log("Sin dispositivos de entrada: no se detectaran modificadores")
             return
         buf_size = INPUT_EVENT_SIZE
         while not self._stop.is_set():
             try:
                 ready, _, _ = select.select(list(self._fds.keys()), [], [], 0.5)
-            except Exception:
-                break
-            for fd in ready:
-                try:
-                    data = os.read(fd, buf_size * 32)
-                except Exception:
-                    continue
-                for off in range(0, len(data) - buf_size + 1, buf_size):
+                for fd in ready:
                     try:
-                        _, _, etype, code, value = struct.unpack(
-                            INPUT_EVENT_FORMAT, data[off : off + buf_size]
-                        )
+                        data = os.read(fd, buf_size * 32)
                     except Exception:
                         continue
-                    if etype != 1:  # EV_KEY
-                        continue
-                    name = MODIFIER_CODES.get(code)
-                    if not name:
-                        continue
-                    with self._lock:
-                        if value == 1:
-                            self.held.add(name)
-                        elif value == 0:
-                            self.held.discard(name)
+                    # Solo eventos completos: si sobra un resto, se ignora.
+                    usable = len(data) - (len(data) % buf_size)
+                    for off in range(0, usable, buf_size):
+                        try:
+                            _, _, etype, code, value = struct.unpack(
+                                INPUT_EVENT_FORMAT, data[off : off + buf_size]
+                            )
+                        except Exception:
+                            continue
+                        if etype != 1:  # EV_KEY
+                            continue
+                        name = MODIFIER_CODES.get(code)
+                        if not name:
+                            continue
+                        with self._lock:
+                            if value == 1:
+                                self.held.add(name)
+                            elif value == 0:
+                                self.held.discard(name)
+            except Exception as exc:
+                # Nunca dejar morir el hilo: si pasara, los modificadores se
+                # quedarian congelados y los atajos dejarian de funcionar.
+                self.log("Lector de modificadores: %s" % exc)
+                time.sleep(0.1)
 
 
 class VolumeWatcher:
     """Detecta cambios de volumen del sink de los auriculares."""
 
-    def __init__(self, sink_resolver, on_change):
+    def __init__(self, sink_resolver, on_change, log=None):
         self.sink_resolver = sink_resolver
         self.on_change = on_change
+        self.log = log or (lambda msg: None)
         self._proc = None
         self._stop = threading.Event()
+        self._reported_no_sink = None
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
     def start(self):
@@ -194,9 +223,17 @@ class VolumeWatcher:
         while not self._stop.is_set():
             sink = self.sink_resolver()
             if not sink:
+                # Sin auriculares conectados no hay nada que vigilar: se avisa
+                # una sola vez para no llenar el log.
+                if self._reported_no_sink != sink:
+                    self._reported_no_sink = sink
+                    self.log("Watcher: todavia no hay sink de los auriculares")
                 self._stop.wait(2.0)
                 continue
             sink_id = self._sink_id(sink)
+            if self._reported_no_sink is not None:
+                self._reported_no_sink = None
+            self.log("Watcher: vigilando %s (id %s)" % (sink, sink_id))
             try:
                 self._proc = subprocess.Popen(
                     ["pactl", "subscribe"],
@@ -217,7 +254,13 @@ class VolumeWatcher:
                     if not match:
                         continue
                     if sink_id and match.group(1) != sink_id:
-                        continue
+                        # El sink se recrea cuando los auriculares se
+                        # reconectan y cambia su id: se resuelve de nuevo.
+                        refreshed = self._sink_id(sink)
+                        if not refreshed or refreshed != match.group(1):
+                            continue
+                        self.log("Watcher: el sink cambio de id a %s" % refreshed)
+                        sink_id = refreshed
                     self.on_change(sink)
             except Exception:
                 pass
@@ -241,14 +284,19 @@ class LocalActionEngine:
         self.log = log or (lambda msg: None)
         self.notify_enabled = notify
         self.rules = []
-        self.last = {}
+        self.last_event = {}
+        self.last_action = {}
         self._pending = None
         self._timer = None
         self._lock = threading.RLock()
         self._self_change_at = 0.0
         self._last_event = {}
         self._last_fire = {}
-        self.modifiers = ModifierTracker()
+        self._quiet_until = 0.0
+        self._quiet_last_event = 0.0
+        self._quiet_started = 0.0
+        self._restore_target = None
+        self.modifiers = ModifierTracker(self.log)
         self.watcher = None
         self._sink_provider = None
         self._last_volume = None
@@ -303,8 +351,15 @@ class LocalActionEngine:
     def start(self, sink_provider):
         self._sink_provider = sink_provider
         self.load()
+        # Valor inicial: sin esto el primer cambio no tiene con que restaurar.
+        try:
+            sink = sink_provider()
+            if sink:
+                self._last_volume = self._read_volume(sink)
+        except Exception:
+            pass
         self.modifiers.start()
-        self.watcher = VolumeWatcher(sink_provider, self._on_volume_change)
+        self.watcher = VolumeWatcher(sink_provider, self._on_volume_change, self.log)
         self.watcher.start()
         self.log("Motor de acciones locales activo")
 
@@ -335,11 +390,15 @@ class LocalActionEngine:
         return None
 
     def _on_volume_change(self, sink):
-        if time.time() - self._self_change_at < SELF_CHANGE_GRACE:
+        now = time.time()
+        if now - self._self_change_at < SELF_CHANGE_GRACE:
             self._last_volume = self._read_volume(sink)
             return
         value = self._read_volume(sink)
         if value is None:
+            # El sink ya no existe (auriculares desconectados): sin referencia
+            # de volumen no se puede calcular ningun cambio.
+            self._last_volume = None
             return
         previous = self._last_volume
         self._last_volume = value
@@ -348,12 +407,57 @@ class LocalActionEngine:
         delta = value - previous
         if delta == 0:
             return
+        with self._lock:
+            # Eco del restore: el auricular devuelve su volumen y genera otro
+            # cambio. Mientras siga OSCILANDO se ignoran los eventos; cuando el
+            # volumen se calma, los atajos vuelven a armarse.
+            if self._quiet_started:
+                if (
+                    now - self._quiet_last_event >= QUIET_STABLE
+                    or now - self._quiet_started >= QUIET_MAX
+                ):
+                    self._quiet_started = 0.0
+                    self._settle_volume()
+                else:
+                    self._quiet_last_event = now
+                    return
         self._register("volume_up" if delta > 0 else "volume_down", sink, previous)
+
+    def _settle_volume(self):
+        """Tras el eco, deja el volumen donde estaba antes del gesto."""
+        target = self._restore_target
+        self._restore_target = None
+        if target is None or not self._sink_provider:
+            return
+        try:
+            sink = self._sink_provider()
+            if not sink:
+                return
+            current = self._read_volume(sink)
+            if current is None or current == int(target):
+                return
+            if abs(current - int(target)) > SETTLE_TOLERANCE:
+                # Cambio grande: probablemente el usuario, no el eco.
+                self.log(
+                    "Volumen cambiado por el usuario (%s%% -> %s%%): no se restaura"
+                    % (target, current)
+                )
+                return
+            self._restore_volume_delayed(int(target))
+        except Exception as exc:
+            self.log("No se pudo ajustar el volumen: %s" % exc)
 
     # -- agrupacion de pulsaciones -----------------------------------------
     def _register(self, trigger, sink=None, previous_volume=None):
         now = time.time()
         with self._lock:
+            # Si el eco se ha calmado, volver a armar los atajos.
+            if self._quiet_started and (
+                now - self._quiet_last_event >= QUIET_STABLE
+                or now - self._quiet_started >= QUIET_MAX
+            ):
+                self._quiet_started = 0.0
+                self._settle_volume()
             # Una misma tecla puede generar varios eventos: ignorar repetidos.
             if now - self._last_event.get(trigger, 0.0) < EVENT_GAP:
                 return
@@ -362,8 +466,17 @@ class LocalActionEngine:
             # Reglas "cualquier numero de pulsaciones": se ejecutan al instante.
             any_rule = self._matching_rule(trigger, 0, modifiers, True)
             if any_rule is not None:
-                if now - self._last_fire.get(trigger, 0.0) >= EVENT_GAP:
+                # Un gesto = una accion (varias muescas seguidas = una).
+                if now - self._last_fire.get(trigger, 0.0) >= GESTURE_WINDOW:
+                    self.last_event = {
+                        "trigger": trigger,
+                        "presses": 1,
+                        "modifiers": modifiers,
+                        "at": int(time.time() * 1000),
+                    }
                     self._last_fire[trigger] = now
+                    self._quiet_started = now
+                    self._quiet_last_event = now
                     self._run_rule(any_rule, trigger, 1, modifiers, previous_volume)
                 return
             pending = self._pending
@@ -434,19 +547,19 @@ class LocalActionEngine:
         modifiers = self.modifiers.modifiers()
         rule = self._matching_rule(pending["trigger"], pending["count"], modifiers)
         if rule is None:
-            self.last = {
+            self.last_event = {
                 "trigger": pending["trigger"],
                 "presses": pending["count"],
                 "modifiers": modifiers,
                 "at": int(time.time() * 1000),
-                "command": None,
-                "ran": False,
             }
             return
         self._run_rule(rule, pending["trigger"], pending["count"], modifiers, pending.get("volume"))
 
     def _run_rule(self, rule, trigger, count, modifiers, previous_volume):
         command = (rule.get("command") or "").strip()
+        if rule.get("restore_volume") and previous_volume is not None:
+            self._restore_target = int(previous_volume)
         info = {
             "trigger": trigger,
             "presses": count,
@@ -460,16 +573,51 @@ class LocalActionEngine:
             self.run_command(command)
             info["ran"] = True
         if rule.get("restore_volume") and previous_volume is not None:
-            self._restore_volume(previous_volume)
-        self.last = info
+            self._restore_volume_delayed(previous_volume)
+        self.last_action = info
         self.log(
-            "Accion local: "
-            + ", ".join([trigger, "x%d" % count] + modifiers)
-            + " -> "
-            + (command or "(sin comando)")
+            "Accion local: %s | %s | mods=%s | vol=%s | -> %s"
+            % (
+                trigger,
+                "x%d" % count,
+                "+".join(modifiers) if modifiers else "-",
+                self._last_volume,
+                command or "(sin comando)",
+            )
         )
         if rule.get("notify", True) and command:
             self._notify(info, command)
+
+    def _restore_volume_delayed(self, percent):
+        """Restaura el volumen esperando a que termine la rampa de PipeWire y
+        comprueba que el valor se quedase; si no, reintenta."""
+
+        def _apply(attempts):
+            if not self._sink_provider:
+                return
+            sink = self._sink_provider()
+            if not sink:
+                return
+            self.note_self_change()
+            _run(["pactl", "set-sink-volume", sink, "%d%%" % int(percent)], 6)
+            time.sleep(0.3)
+            current = self._read_volume(sink)
+            self.log(
+                "Restore: %d%% -> %s%%" % (int(percent), current)
+            )
+            if current is None or current == int(percent):
+                return
+            if attempts > 0:
+                self.log(
+                    "El volumen no se quedo en %d%% (esta en %s%%): reintento"
+                    % (int(percent), current)
+                )
+                time.sleep(RESTORE_DELAY)
+                _apply(attempts - 1)
+
+        timer = threading.Timer(RESTORE_DELAY, _apply, args=(RESTORE_ATTEMPTS,))
+        timer.daemon = True
+        timer.start()
 
     def _restore_volume(self, percent):
         if not self._sink_provider:
@@ -478,19 +626,61 @@ class LocalActionEngine:
         if not sink:
             return
         self.note_self_change()
-        _run(["pactl", "set-sink-volume", sink, "%d%%" % int(percent)], 6)
+        res = _run(["pactl", "set-sink-volume", sink, "%d%%" % int(percent)], 6)
+        self.log(
+            "Restaurando volumen a %d%% en %s (rc=%s)"
+            % (int(percent), sink, res.returncode if res else "error")
+        )
+
+    def _output_name(self):
+        """Nombre del monitor enfocado (para el marcador {output})."""
+        res = _run(["hyprctl", "-j", "activeworkspace"], 5)
+        if res:
+            try:
+                data = json.loads(res.stdout or "{}")
+                if data.get("monitor"):
+                    return str(data["monitor"])
+            except Exception:
+                pass
+        res = _run(["hyprctl", "monitors", "-j"], 5)
+        if res:
+            try:
+                for mon in json.loads(res.stdout or "[]"):
+                    if mon.get("focused"):
+                        return str(mon.get("name", ""))
+            except Exception:
+                pass
+        return ""
 
     def run_command(self, command):
+        # Se ejecuta en un hilo aparte: el watcher no debe quedarse bloqueado
+        # esperando al comando, y asi podemos registrar si falla.
+        def _exec():
+            try:
+                cmd = command
+                if "{output}" in cmd:
+                    cmd = cmd.replace("{output}", self._output_name())
+                res = subprocess.run(
+                    ["/bin/sh", "-c", cmd],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=5,
+                )
+                err = (res.stderr or "").strip()
+                out = (res.stdout or "").strip()
+                self.log(
+                    "Comando: %s | rc=%s | out=%s | err=%s"
+                    % (cmd, res.returncode, out[:120], err[:200])
+                )
+            except Exception as exc:
+                self.log("No se pudo ejecutar '%s': %s" % (command, exc))
+
         try:
-            subprocess.Popen(
-                ["/bin/sh", "-c", command],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+            threading.Thread(target=_exec, daemon=True).start()
             return True
         except Exception as exc:
-            self.log("No se pudo ejecutar '%s': %s" % (command, exc))
+            self.log("No se pudo lanzar '%s': %s" % (command, exc))
             return False
 
     def _notify(self, info, command):
@@ -523,7 +713,8 @@ class LocalActionEngine:
     def snapshot(self):
         return {
             "rules": list(self.rules),
-            "last": self.last,
+            "last_event": self.last_event,
+            "last_action": self.last_action,
             "modifiers": self.modifiers.modifiers(),
             "modifiers_available": self.modifiers.available,
         }

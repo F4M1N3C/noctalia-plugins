@@ -1,18 +1,18 @@
-# Carrusel de fondos con tarjetas verticales y recorte parallax.
+# Carrusel de fondos con tarjetas inclinadas y efecto parallax.
 # El botón de la barra abre un panel a pantalla completa; las miniaturas se
-# generan en caché con Python/Pillow y se recortan según la posición de cada
-# tarjeta.
+# generan en caché con Python/Pillow como PNG con alfa, con el wallpaper
+# recortado dentro de un paralelogramo (la inclinación de la cinta).
 
 id = "faminec/wallpaper-carousel"
 name = "Wallpaper Carousel"
-version = "1.0.0"
+version = "2.0.0"
 plugin_api = 34
 author = "faminec"
 license = "MIT"
 dependencies = ["python3", "python-pillow"]
 tags = ["wallpaper", "utility", "panel", "desktop"]
 icon = "wallpaper"
-description = "Full-screen wallpaper carousel with vertical cards, a parallax crop and a bar button."
+description = "Full-screen wallpaper carousel with skewed cards, parallax crops and a bar button."
 
 [[setting]]
 key = "directory"
@@ -29,38 +29,31 @@ description_key = "settings.glyph.description"
 default = "wallpaper"
 
 [[setting]]
-key = "card_scale"
+key = "card_width"
+type = "int"
+label_key = "settings.card_width.label"
+description_key = "settings.card_width.description"
+default = 250
+min = 140
+max = 640
+
+[[setting]]
+key = "card_height"
+type = "int"
+label_key = "settings.card_height.label"
+description_key = "settings.card_height.description"
+default = 350
+min = 180
+max = 900
+
+[[setting]]
+key = "skew"
 type = "double"
-label_key = "settings.card_scale.label"
-description_key = "settings.card_scale.description"
-default = 1.0
-min = 0.7
-max = 1.4
-
-[[setting]]
-key = "gap"
-type = "int"
-label_key = "settings.gap.label"
-description_key = "settings.gap.description"
-default = 18
-min = 4
-max = 48
-
-[[setting]]
-key = "visible"
-type = "int"
-label_key = "settings.visible.label"
-description_key = "settings.visible.description"
-default = 0
-min = 0
-max = 11
-
-[[setting]]
-key = "minimal"
-type = "bool"
-label_key = "settings.minimal.label"
-description_key = "settings.minimal.description"
-default = true
+label_key = "settings.skew.label"
+description_key = "settings.skew.description"
+default = 0.35
+min = 0.0
+max = 0.8
 
 [[setting]]
 key = "parallax"
@@ -70,6 +63,42 @@ description_key = "settings.parallax.description"
 default = 1.0
 min = 0.0
 max = 1.5
+
+[[setting]]
+key = "selected_scale"
+type = "double"
+label_key = "settings.selected_scale.label"
+description_key = "settings.selected_scale.description"
+default = 1.08
+min = 1.0
+max = 1.6
+
+[[setting]]
+key = "base_scale"
+type = "double"
+label_key = "settings.base_scale.label"
+description_key = "settings.base_scale.description"
+default = 0.75
+min = 0.4
+max = 1.0
+
+[[setting]]
+key = "hover_boost"
+type = "double"
+label_key = "settings.hover_boost.label"
+description_key = "settings.hover_boost.description"
+default = 0.2
+min = 0.0
+max = 0.6
+
+[[setting]]
+key = "scrim"
+type = "double"
+label_key = "settings.scrim.label"
+description_key = "settings.scrim.description"
+default = 0.0
+min = 0.0
+max = 0.9
 
 [[setting]]
 key = "close_on_apply"
@@ -91,6 +120,13 @@ type = "bool"
 label_key = "settings.show_filenames.label"
 description_key = "settings.show_filenames.description"
 default = true
+
+[[setting]]
+key = "chrome"
+type = "bool"
+label_key = "settings.chrome.label"
+description_key = "settings.chrome.description"
+default = false
 
 [[widget]]
 id = "button"

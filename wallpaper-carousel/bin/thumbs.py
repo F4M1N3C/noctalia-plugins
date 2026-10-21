@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Generate parallax-cropped wallpaper cards for the Noctalia carousel.
+"""Generate skewed wallpaper cards for the Noctalia wallpaper carousel.
 
-The plugin passes one JSON file describing pending thumbnails. Keeping the
-whole batch in one process avoids paying Python/Pillow startup for every card
-and lets JPEGs decode through Pillow's draft mode at a useful size.
+The reference carousel (reddit.com/r/hyprland/comments/1vjqvrr, by
+u/HyperSpazdik, and github.com/motor-dev/wallpaperCarousel) draws every
+wallpaper as a parallelogram leaning to the right, so the row reads as a 3D
+ribbon.  Noctalia's declarative UI has no transform props, so the shear is
+baked into the thumbnail: the wallpaper is drawn upright and masked with the
+parallelogram, and the result is stored as an RGBA PNG.
+
+The plugin passes one JSON file describing the pending cards.  Keeping the
+whole batch in a single process avoids paying Python/Pillow startup for every
+card and lets JPEGs decode through Pillow's draft mode at a useful size.
 """
 from __future__ import annotations
 
@@ -14,7 +21,7 @@ import os
 import sys
 from typing import Any
 
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -29,7 +36,7 @@ def normalized_item(raw: dict[str, Any]) -> dict[str, Any] | None:
         height = int(raw["height"])
         offset = clamp(float(raw.get("offset", 0.0)), -1.0, 1.0)
         zoom = max(1.0, min(2.0, float(raw.get("zoom", 1.35))))
-        blur = max(0.0, float(raw.get("blur", 0.0)))
+        skew = clamp(float(raw.get("skew", 0.35)), -0.9, 0.9)
         darken = clamp(float(raw.get("darken", 0.0)), 0.0, 1.0)
     except (KeyError, TypeError, ValueError):
         return None
@@ -42,7 +49,7 @@ def normalized_item(raw: dict[str, Any]) -> dict[str, Any] | None:
         "height": height,
         "offset": offset,
         "zoom": zoom,
-        "blur": blur,
+        "skew": skew,
         "darken": darken,
     }
 
@@ -54,7 +61,7 @@ def render(item: dict[str, Any]) -> None:
     height = item["height"]
     offset = item["offset"]
     zoom = item["zoom"]
-    blur = item["blur"]
+    skew = item["skew"]
     darken = item["darken"]
 
     # Si la miniatura ya está en caché no se vuelve a generar: así el plugin
@@ -67,19 +74,17 @@ def render(item: dict[str, Any]) -> None:
 
     with Image.open(source) as opened:
         # Ask JPEG decoders for a smaller frame before loading the full 4K
-        # source. The final crop is at most a few hundred pixels wide.
+        # source.  The final crop is at most a few hundred pixels wide.
         try:
             opened.draft("RGB", (int(width * zoom * 1.5), int(height * zoom * 1.5)))
         except Exception:
             pass
         image = ImageOps.exif_transpose(opened)
-        if image.mode not in ("RGB", "L"):
-            image = image.convert("RGB")
-        else:
+        if image.mode != "RGB":
             image = image.convert("RGB")
 
         # Scale to cover a canvas slightly larger than the card, then slide the
-        # crop window horizontally according to the card's position. This is the
+        # crop window horizontally according to the card's position.  This is the
         # parallax: left cards reveal the left side, right cards the right side.
         virtual_width = width * zoom
         virtual_height = height * zoom
@@ -94,18 +99,38 @@ def render(item: dict[str, Any]) -> None:
         top = int(round(extra_y * 0.5))
         image = image.crop((left, top, left + width, top + height))
 
-        if blur > 0:
-            image = image.filter(ImageFilter.GaussianBlur(blur))
         if darken > 0:
             # Composite over black instead of using ImageEnhance so the result
             # is predictable and doesn't shift saturation.
             black = Image.new("RGB", image.size, (0, 0, 0))
             image = Image.blend(image, black, darken)
 
-        # JPEG y no WebP: el cargador de imágenes de Noctalia (Qt) solo trae
-        # los complementos jpeg/png/svg, así que un .webp se vería como
-        # un marcador de posición vacío.
-        image.save(temp, "JPEG", quality=88, optimize=True, progressive=True)
+        # The parallelogram.  The card leans to the right: its bottom edge is
+        # shifted left by `skew * height` pixels, so the shape is the sheared
+        # rectangle [skew*height, width] x [0, height]:
+        #
+        #     top-left  (skew*h, 0)      top-right    (width, 0)
+        #     bottom-left (0, height)    bottom-right (width - skew*h, height)
+        #
+        # Everything outside it is transparent, which is what makes the row
+        # read as a skewed ribbon instead of a plain strip of rectangles.
+        shift = skew * height
+        canvas = image.convert("RGBA")
+        mask = Image.new("L", (width, height), 0)
+        ImageDraw.Draw(mask).polygon(
+            [
+                (shift, 0.0),
+                (float(width), 0.0),
+                (float(width) - shift, float(height)),
+                (0.0, float(height)),
+            ],
+            fill=255,
+        )
+        canvas.putalpha(mask)
+
+        # PNG, not WebP: Noctalia's image loader only ships the JPEG, PNG and
+        # SVG handlers, so a WebP would render as an empty placeholder.
+        canvas.save(temp, "PNG", optimize=True)
     os.replace(temp, output)
 
 

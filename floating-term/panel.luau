@@ -1,19 +1,28 @@
 --!nonstrict
--- Panel de lanzamiento: una fila por comando configurado.
+-- Panel de lanzamiento: una tarjeta por widget de terminal.
 --
--- Cada comando puede tener su propia geometría en el ajuste `layouts`:
---   cava      = bottom-center, 1610x584
---   unimatrix = right-center, 869x1424
---   lavat     = bottom-left, 802x582
+-- Cada tarjeta abre (o enfoca) su terminal flotante. La cabecera trae las
+-- acciones: abrir todo, rotar las ventanas, cerrarlas todas y editar la
+-- lista de widgets.
 --
--- La ventana se abre con una regla de ejecución de Hyprland 0.56:
---   hl.dsp.exec_cmd("<terminal> ...", { float = true, move = {x,y}, size = {w,h} })
--- Las coordenadas de `move` son relativas al monitor, igual que en las
--- window rules de Hyprland.
+-- La posición y el tamaño de cada ventana salen de `layouts`; el botón de
+-- "abrir todo" además rota las ventanas ya abiertas entre sí.
 
-local commands = {}
-local layouts = {}
-local fonts = {}
+local util = require("./lib/util.luau")
+local defaults = require("./lib/defaults.luau")
+local layoutLib = require("./lib/layout.luau")
+local storeLib = require("./lib/store.luau")
+local win = require("./lib/windows.luau")
+local preview = require("./lib/preview.luau")
+
+local DEBOUNCE_MS = 700
+local PANEL_WIDTH = 620
+local PANEL_PADDING = 12
+local CARD_GAP = 10
+local CARD_PADDING = 8
+local DETAILS_HEIGHT = 32
+local PREVIEW_RATIO = 0.5
+
 local cfg = {
   terminal = "kitty",
   width = 900,
@@ -24,269 +33,95 @@ local cfg = {
   output = "",
   closeOnLaunch = true,
   reuseExisting = true,
+  rotation = "clockwise",
+  rotationSizes = false,
+  columns = 2,
+  cardPreview = "auto",
+  avoidCollisions = true,
+}
+
+local state = {
+  commands = {},
+  layouts = {},
+  store = nil,
+  windows = {},
+  hovered = nil,
+  editing = false,
+  editTarget = nil,
+  editSession = 0,
+  form = { name = "", command = "", layout = "" },
+  lastLaunch = {},
+  launching = {},
+  open = false,
 }
 
 local function tr(key, args)
   return noctalia.tr(key, args)
 end
 
-local function trim(value)
-  return (tostring(value):gsub("^%s+", ""):gsub("%s+$", ""))
+local function append(list, node)
+  if node ~= nil then
+    table.insert(list, node)
+  end
+  return list
 end
 
-local function loadConfig()
-  local rawCommands = noctalia.getConfig("commands")
-  commands = type(rawCommands) == "table" and rawCommands or {}
-  local rawLayouts = noctalia.getConfig("layouts")
-  layouts = type(rawLayouts) == "table" and rawLayouts or {}
-  local rawFonts = noctalia.getConfig("fonts")
-  fonts = type(rawFonts) == "table" and rawFonts or {}
+-- ---------------------------------------------------------------- ajustes --
 
+local function loadConfig()
   cfg.terminal = tostring(noctalia.getConfig("terminal") or "kitty")
   cfg.width = tonumber(noctalia.getConfig("width")) or 900
   cfg.height = tonumber(noctalia.getConfig("height")) or 520
   cfg.x = tonumber(noctalia.getConfig("x")) or 120
   cfg.y = tonumber(noctalia.getConfig("y")) or 140
   cfg.margin = tonumber(noctalia.getConfig("margin")) or 16
-  local output = trim(noctalia.getConfig("output") or "")
+
+  local output = util.trim(noctalia.getConfig("output") or "")
   if output:lower() == "focused" then
     output = ""
   end
   cfg.output = output
+
   cfg.closeOnLaunch = noctalia.getConfig("close_on_launch") ~= false
   cfg.reuseExisting = noctalia.getConfig("reuse_existing") ~= false
+  cfg.rotation = tostring(noctalia.getConfig("rotation") or "clockwise")
+  cfg.rotationSizes = noctalia.getConfig("rotation_sizes") == true
+  cfg.columns = math.floor(util.clamp(tonumber(noctalia.getConfig("columns")) or 2, 1, 3))
+  cfg.cardPreview = tostring(noctalia.getConfig("card_preview") or "auto")
+  cfg.avoidCollisions = noctalia.getConfig("avoid_collisions") ~= false
 end
 
-local function shellQuote(value)
-  return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
+-- Fusiona defaults + Ajustes + store propio y aplica los borrados.
+local function loadWidgets()
+  local base = defaults.load()
+  state.store = state.store or storeLib.load()
+  state.commands = storeLib.merge(
+    base.commands,
+    noctalia.getConfig("commands"),
+    state.store.commands,
+    state.store.removed
+  )
+  state.layouts = storeLib.merge(
+    base.layouts,
+    noctalia.getConfig("layouts"),
+    state.store.layouts,
+    state.store.removed
+  )
 end
 
--- Cadena Lua entre comillas dobles, para incrustarla en la expresión que
--- recibe hyprctl dispatch.
-local function luaQuote(value)
-  local escaped = tostring(value)
-  escaped = escaped:gsub("\\", "\\\\")
-  escaped = escaped:gsub('"', '\\"')
-  escaped = escaped:gsub("\r", "\\r")
-  escaped = escaped:gsub("\n", "\\n")
-  return '"' .. escaped .. '"'
+local function widgetNames()
+  return util.sortedKeys(state.commands)
 end
 
-local function slug(name)
-  local result = tostring(name):lower():gsub("[^%w]+", "-")
-  result = result:gsub("^%-+", ""):gsub("%-+$", "")
-  if result == "" then
-    return "app"
+local function classMap()
+  local map = {}
+  for _, name in ipairs(widgetNames()) do
+    map[util.classFor(name)] = name
   end
-  return result
+  return map
 end
 
--- "Familia, 22" o solo "Familia". Devuelve familia y tamaño opcional.
-local function parseFont(value)
-  if type(value) ~= "string" then
-    return nil
-  end
-  local raw = trim(value)
-  if raw == "" then
-    return nil
-  end
-  local family, size = raw:match("^(.-)%s*,%s*(%d+)%s*$")
-  if family == nil or trim(family) == "" then
-    return raw, nil
-  end
-  local number = tonumber(size)
-  if number == nil or number <= 0 then
-    return trim(family), nil
-  end
-  return trim(family), math.floor(number)
-end
-
--- Solo kitty permite elegir tipografía por ventana con -o.
-local function fontFlags(name)
-  if cfg.terminal:find("kitty", 1, true) == nil then
-    return ""
-  end
-  local family, size = parseFont(fonts[name])
-  if family == nil then
-    return ""
-  end
-  local flags = " -o font_family=" .. shellQuote(family)
-  if size ~= nil then
-    flags = flags .. " -o font_size=" .. tostring(size)
-  end
-  return flags
-end
-
-local function fontLabel(name)
-  local family, size = parseFont(fonts[name])
-  if family == nil then
-    return nil
-  end
-  if size ~= nil then
-    return string.format("%s %dpx", family, size)
-  end
-  return family
-end
-
--- Anclas aceptadas. Se normalizan espacios, guiones y guiones bajos.
-local ANCHORS = {
-  ["top-left"] = true,
-  ["top-center"] = true,
-  ["top-right"] = true,
-  ["left-center"] = true,
-  ["center"] = true,
-  ["right-center"] = true,
-  ["bottom-left"] = true,
-  ["bottom-center"] = true,
-  ["bottom-right"] = true,
-}
-
-local ANCHOR_ALIASES = {
-  ["topleft"] = "top-left",
-  ["topcenter"] = "top-center",
-  ["topright"] = "top-right",
-  ["left"] = "left-center",
-  ["leftcenter"] = "left-center",
-  ["middle"] = "center",
-  ["centre"] = "center",
-  ["centro"] = "center",
-  ["medio"] = "center",
-  ["right"] = "right-center",
-  ["rightcenter"] = "right-center",
-  ["bottomleft"] = "bottom-left",
-  ["bottomcenter"] = "bottom-center",
-  ["bottomright"] = "bottom-right",
-  ["top"] = "top-center",
-  ["bottom"] = "bottom-center",
-  ["arriba"] = "top-center",
-  ["abajo"] = "bottom-center",
-  ["izquierda"] = "left-center",
-  ["derecha"] = "right-center",
-  ["arriba-izquierda"] = "top-left",
-  ["arriba-centro"] = "top-center",
-  ["arriba-derecha"] = "top-right",
-  ["izquierda-centro"] = "left-center",
-  ["derecha-centro"] = "right-center",
-  ["abajo-izquierda"] = "bottom-left",
-  ["abajo-centro"] = "bottom-center",
-  ["abajo-derecha"] = "bottom-right",
-}
-
-local function normalizeAnchor(token)
-  local key = trim(token):lower()
-  key = key:gsub("%s+", "-"):gsub("_", "-")
-  key = key:gsub("%-+", "-"):gsub("^%-", ""):gsub("%-$", "")
-  if ANCHORS[key] then
-    return key
-  end
-  return ANCHOR_ALIASES[key]
-end
-
--- Formatos admitidos:
---   bottom-center
---   bottom-center, 1610x584
---   right-center 869x1424
---   bottom-left, 802x582, 0, -24      (desplazamiento desde el ancla)
---   custom, 900x520, 120, 140         (coordenadas absolutas del monitor)
---   x=120 y=140 w=900 h=520
---   120,140 900x520
-local function parseLayout(value)
-  if type(value) ~= "string" then
-    return nil
-  end
-  local raw = trim(value)
-  if raw == "" then
-    return nil
-  end
-  raw = raw:gsub("×", "x")
-
-  local spec = { dx = 0, dy = 0, valid = true }
-
-  -- Formato explícito con clave=valor.
-  local kv = {}
-  for key, number in raw:gmatch("([%a_]+)%s*=%s*(-?%d+)") do
-    kv[key:lower()] = tonumber(number)
-  end
-  if kv.x ~= nil or kv.y ~= nil or kv.w ~= nil or kv.h ~= nil then
-    if kv.x == nil or kv.y == nil then
-      return { valid = false }
-    end
-    spec.custom = true
-    spec.dx = kv.x
-    spec.dy = kv.y
-    spec.width = kv.w
-    spec.height = kv.h
-    return spec
-  end
-
-  local width, height = raw:match("(%d+)%s*[xX]%s*(%d+)")
-  if width ~= nil then
-    spec.width = tonumber(width)
-    spec.height = tonumber(height)
-  end
-
-  -- Quita el tamaño para quedarnos con ancla y desplazamientos.
-  local cleaned = raw:gsub("%d+%s*[xX]%s*%d+", " ")
-  local numbers = {}
-
-  for token in cleaned:gmatch("[^,%s]+") do
-    local lower = token:lower()
-    local anchor = normalizeAnchor(token)
-    if anchor ~= nil then
-      if spec.anchor ~= nil then
-        return { valid = false }
-      end
-      spec.anchor = anchor
-    elseif lower == "auto" or lower == "libre" or lower == "free" then
-      spec.auto = true
-    elseif lower == "custom" or lower == "absolute" or lower == "abs" or lower == "at" then
-      spec.custom = true
-    else
-      local number = tonumber(token)
-      if number == nil then
-        return { valid = false }
-      end
-      table.insert(numbers, number)
-    end
-  end
-
-  if spec.auto then
-    -- "auto" busca un hueco libre; opcionalmente "auto, 900x520".
-    spec.anchor = "center"
-  elseif spec.custom then
-    if #numbers < 2 then
-      return { valid = false }
-    end
-    spec.dx = numbers[1]
-    spec.dy = numbers[2]
-  elseif spec.anchor ~= nil then
-    if #numbers >= 2 then
-      spec.dx = numbers[1]
-      spec.dy = numbers[2]
-    elseif #numbers == 1 then
-      spec.dx = numbers[1]
-    end
-  elseif #numbers >= 2 then
-    -- "120, 140" sin ancla: coordenadas absolutas.
-    spec.custom = true
-    spec.dx = numbers[1]
-    spec.dy = numbers[2]
-  elseif spec.width ~= nil then
-    spec.anchor = "center"
-  else
-    return { valid = false }
-  end
-
-  return spec
-end
-
-local function layoutSpec(name)
-  local raw = layouts[name]
-  if type(raw) ~= "string" or trim(raw) == "" then
-    return nil
-  end
-  return parseLayout(raw)
-end
+-- --------------------------------------------------------------- geometría --
 
 local function outputGeometry()
   local outputs = noctalia.outputs() or {}
@@ -315,32 +150,8 @@ local function outputGeometry()
   return 1920, 1080, ""
 end
 
-local function anchorPosition(anchor, width, height, screenWidth, screenHeight)
-  local margin = math.max(0, math.floor(cfg.margin))
-  local x
-  local y
-
-  if anchor == "top-left" or anchor == "left-center" or anchor == "bottom-left" then
-    x = margin
-  elseif anchor == "top-right" or anchor == "right-center" or anchor == "bottom-right" then
-    x = screenWidth - width - margin
-  else
-    x = math.floor((screenWidth - width) / 2)
-  end
-
-  if anchor == "top-left" or anchor == "top-center" or anchor == "top-right" then
-    y = margin
-  elseif anchor == "bottom-left" or anchor == "bottom-center" or anchor == "bottom-right" then
-    y = screenHeight - height - margin
-  else
-    y = math.floor((screenHeight - height) / 2)
-  end
-
-  return x, y
-end
-
 local function resolveGeometry(name)
-  local spec = layoutSpec(name)
+  local spec = layoutLib.parseLayout(state.layouts[name])
   local width = cfg.width
   local height = cfg.height
   local custom = false
@@ -371,7 +182,7 @@ local function resolveGeometry(name)
     y = math.floor(dy)
   else
     if anchor ~= nil then
-      x, y = anchorPosition(anchor, width, height, screenWidth, screenHeight)
+      x, y = layoutLib.anchorPosition(anchor, width, height, screenWidth, screenHeight, cfg.margin)
     else
       x = math.floor(cfg.x)
       y = math.floor(cfg.y)
@@ -393,12 +204,12 @@ local function resolveGeometry(name)
 end
 
 local function layoutText(name)
-  local raw = layouts[name]
-  if type(raw) ~= "string" or trim(raw) == "" then
+  local raw = state.layouts[name]
+  if type(raw) ~= "string" or util.trim(raw) == "" then
     return tr("layout_global", { width = math.floor(cfg.width), height = math.floor(cfg.height) })
   end
 
-  local spec = parseLayout(raw)
+  local spec = layoutLib.parseLayout(raw)
   if spec == nil or not spec.valid then
     return tr("layout_invalid")
   end
@@ -422,64 +233,33 @@ local function layoutText(name)
   return string.format("%s · %d×%d", spec.anchor, width, height)
 end
 
-local function dispatch(expression, callback)
-  local started = noctalia.runAsync({ "hyprctl", "dispatch", expression }, function(result)
-    if result.exitCode ~= 0 then
-      local detail = result.stderr or result.stdout or ""
-      detail = trim(detail)
-      if detail ~= "" then
-        noctalia.log("floating-term: " .. detail)
-      end
-    end
-    if callback ~= nil then
-      callback(result.exitCode == 0)
-    end
-  end)
-  if not started and callback ~= nil then
-    callback(false)
-  end
-end
-
-local function windowSelector(class)
-  return "class:^" .. class .. "$"
-end
+-- ------------------------------------------------------------- ventanas --
 
 local function rectsOverlap(a, b)
   return a.x < b.x + b.w and b.x < a.x + a.w and a.y < b.y + b.h and b.y < a.y + a.h
 end
 
--- Rectángulos de las ventanas del plugin que ya están abiertas.
-local function openTermWindows(callback)
-  local started = noctalia.runAsync({ "hyprctl", "clients", "-j" }, function(result)
-    local rects = {}
-    if result.exitCode == 0 and type(result.stdout) == "string" and result.stdout ~= "" then
-      local ok, clients = pcall(noctalia.json.decode, result.stdout)
-      if ok and type(clients) == "table" then
-        for _, client in ipairs(clients) do
-          local class = client.class
-          if type(class) == "string" and class:find("noctalia%-term%-") then
-            local at = client.at or {}
-            local size = client.size or {}
-            table.insert(rects, {
-              x = tonumber(at[1]) or 0,
-              y = tonumber(at[2]) or 0,
-              w = tonumber(size[1]) or 0,
-              h = tonumber(size[2]) or 0,
-            })
-          end
-        end
+-- Zonas ocupadas por las ventanas del plugin en el monitor de destino.
+local function collectOccupied(clients, monitors, targetOutput)
+  local occupied = {}
+  local map = classMap()
+  for _, client in ipairs(clients or {}) do
+    if win.isPluginClass(client.class) then
+      local monitor = (monitors or {})[client.monitor]
+      if monitor ~= nil and (targetOutput == "" or monitor.name == targetOutput) then
+        table.insert(occupied, {
+          x = client.x - monitor.x,
+          y = client.y - monitor.y,
+          w = client.w,
+          h = client.h,
+        })
       end
     end
-    callback(rects)
-  end)
-  if not started then
-    callback({})
   end
+  return occupied
 end
 
--- Busca la posición más cercana a la deseada que no choque con ninguna
--- ventana ya abierta del plugin. Con `auto` se recorre la pantalla de arriba
--- abajo y de izquierda a derecha y se usa el primer hueco libre.
+-- Posición más cercana a la deseada que no choque con otra ventana abierta.
 local function avoidCollisions(geometry, occupied, auto)
   local screenWidth, screenHeight = outputGeometry()
   local margin = math.max(0, math.floor(cfg.margin))
@@ -535,356 +315,737 @@ local function avoidCollisions(geometry, occupied, auto)
   return best.x, best.y
 end
 
-local function focusExisting(class, geometry, callback)
-  local selector = windowSelector(class)
-  local quoted = luaQuote(selector)
+local function findByClass(clients, class)
+  for _, client in ipairs(clients or {}) do
+    if client.class == class then
+      return client
+    end
+  end
+  return nil
+end
 
-  local move = string.format(
-    "hl.dsp.window.move({ x = %d, y = %d, window = %s })",
-    geometry.x,
-    geometry.y,
-    quoted
-  )
-  local resize = string.format(
-    "hl.dsp.window.resize({ x = %d, y = %d, window = %s })",
-    geometry.width,
-    geometry.height,
-    quoted
-  )
-  local focus = string.format("hl.dsp.focus({ window = %s })", quoted)
+-- ------------------------------------------------------------- miniaturas --
 
-  local function resizeAndMove()
-    dispatch(resize, function()
-      dispatch(move, function()
-        dispatch(focus, function()
-          if callback ~= nil then
-            callback()
-          end
-        end)
+local function captureThumbs()
+  if cfg.cardPreview == "mock" then
+    return
+  end
+  if not preview.toolsAvailable() then
+    return
+  end
+
+  local entries = {}
+  for _, name in ipairs(widgetNames()) do
+    local window = state.windows[name]
+    if window ~= nil and window.w > 0 and window.h > 0 then
+      table.insert(entries, {
+        name = name,
+        output = window.monitor.name,
+        x = window.x,
+        y = window.y,
+        w = window.w,
+        h = window.h,
+      })
+    end
+  end
+
+  if #entries == 0 then
+    return
+  end
+
+  preview.capture(entries, function()
+    if state.open then
+      render()
+    end
+  end)
+end
+
+-- ------------------------------------------------------------- acciones --
+
+local function refreshWindows(callback)
+  win.list(function(clients)
+    win.monitors(function(monitors)
+      local map = classMap()
+      local windows = win.pluginWindows(clients, monitors, function(class)
+        return map[class]
       end)
-    end)
-  end
 
-  if cfg.output ~= "" then
-    local toMonitor = string.format(
-      "hl.dsp.window.move({ monitor = %s, window = %s })",
-      luaQuote(cfg.output),
-      quoted
-    )
-    dispatch(toMonitor, resizeAndMove)
-  else
-    resizeAndMove()
-  end
-end
-
-local function findExisting(class, callback)
-  local started = noctalia.runAsync({ "hyprctl", "clients", "-j" }, function(result)
-    if result.exitCode ~= 0 or type(result.stdout) ~= "string" or result.stdout == "" then
-      callback(nil)
-      return
-    end
-
-    local ok, clients = pcall(noctalia.json.decode, result.stdout)
-    if not ok or type(clients) ~= "table" then
-      callback(nil)
-      return
-    end
-
-    for _, client in ipairs(clients) do
-      if client.class == class then
-        callback(client)
-        return
+      state.windows = {}
+      for _, window in ipairs(windows) do
+        if window.name ~= nil then
+          state.windows[window.name] = window
+        end
       end
-    end
-    callback(nil)
-  end)
 
-  if not started then
-    callback(nil)
-  end
-end
+      captureThumbs()
 
--- Hyprland aplica `persistent_size` al mapear la ventana, así que el tamaño
--- pedido en exec_cmd puede ser pisado. Reaplicamos la geometría un instante
--- después de crear la ventana.
-local function enforceGeometry(class, geometry, callback)
-  local started = noctalia.runAsync({ "sleep", "0.6" }, function()
-    focusExisting(class, geometry, callback)
-  end)
-  if not started and callback ~= nil then
-    callback()
-  end
-end
-
-local function spawn(name, class, command, geometry, callback)
-  -- Kitty pregunta antes de cerrar una ventana con un proceso vivo; para un
-  -- lanzador de apps de terminal es más cómodo que cierre sin confirmación.
-  local closeOpt = cfg.terminal:find("kitty", 1, true) ~= nil and " -o confirm_os_window_close=0" or ""
-  local full = string.format(
-    "%s%s%s --class %s --title %s -e sh -lc %s",
-    cfg.terminal,
-    closeOpt,
-    fontFlags(name),
-    shellQuote(class),
-    shellQuote(name),
-    shellQuote(command)
-  )
-
-  local monitorRule = ""
-  if cfg.output ~= "" then
-    monitorRule = string.format(", monitor = %s", luaQuote(cfg.output))
-  end
-
-  local rules = string.format(
-    "{ float = true%s, move = { %d, %d }, size = { %d, %d } }",
-    monitorRule,
-    geometry.x,
-    geometry.y,
-    geometry.width,
-    geometry.height
-  )
-  local expression = string.format("hl.dsp.exec_cmd(%s, %s)", luaQuote(full), rules)
-  dispatch(expression, function(success)
-    if not success then
-      noctalia.notifyError(tr("title"), tr("launch_failed"))
-    end
-    enforceGeometry(class, geometry, callback)
+      if callback ~= nil then
+        callback()
+      end
+    end)
   end)
 end
 
-local function launch(name, keepOpen)
-  local command = commands[name]
+-- Abre (o enfoca) un widget. El debounce evita que un doble clic rápido
+-- abra dos ventanas iguales.
+local function launch(name, opts)
+  opts = opts or {}
+  local command = state.commands[name]
   if type(command) ~= "string" or command == "" then
     noctalia.notifyError(tr("title"), tr("missing_command", { name = tostring(name) }))
     return
   end
 
-  local class = "noctalia-term-" .. slug(name)
+  local class = util.classFor(name)
+  local now = noctalia.nowMs()
+  local last = state.lastLaunch[class]
+  if last ~= nil and (now - last) < DEBOUNCE_MS then
+    return
+  end
+  if state.launching[class] then
+    return
+  end
+  state.lastLaunch[class] = now
+  state.launching[class] = true
+
   local geometry = resolveGeometry(name)
 
-  local function finish()
-    if cfg.closeOnLaunch and not keepOpen then
-      panel.close()
+  local function done()
+    state.launching[class] = nil
+    if opts.onDone ~= nil then
+      opts.onDone()
+      return
+    end
+    if not opts.quiet then
+      refreshWindows(function()
+        if state.open then
+          render()
+        end
+      end)
     end
   end
 
-  local hyprland = noctalia.getenv("HYPRLAND_INSTANCE_SIGNATURE")
-  if hyprland ~= nil and noctalia.commandExists("hyprctl") then
-    -- Si la posición deseada choca con otra ventana del plugin ya abierta,
-    -- se busca la posición libre más cercana.
-    openTermWindows(function(occupied)
-      geometry.x, geometry.y = avoidCollisions(geometry, occupied, geometry.auto)
-      if cfg.reuseExisting then
-        findExisting(class, function(existing)
-          if existing ~= nil then
-            focusExisting(class, geometry, finish)
-          else
-            spawn(name, class, command, geometry, finish)
-          end
-        end)
+  win.list(function(clients)
+    win.monitors(function(monitors)
+      if cfg.avoidCollisions then
+        local occupied = collectOccupied(clients, monitors, geometry.output)
+        geometry.x, geometry.y = avoidCollisions(geometry, occupied, geometry.auto)
+      end
+
+      local existing = findByClass(clients, class)
+      if existing ~= nil and cfg.reuseExisting then
+        win.focusExisting(class, geometry, done)
       else
-        spawn(name, class, command, geometry, finish)
+        win.spawn({
+          terminal = cfg.terminal,
+          class = class,
+          name = name,
+          command = command,
+          geometry = geometry,
+          monitor = cfg.output ~= "" and cfg.output or nil,
+          onError = function()
+            noctalia.notifyError(tr("title"), tr("launch_failed"))
+          end,
+        }, function()
+          done()
+          -- La miniatura se toma cuando la ventana ya está mapeada.
+          noctalia.runAsync({ "sleep", "1.2" }, function()
+            refreshWindows(function()
+              if state.open then
+                render()
+              end
+            end)
+          end)
+        end)
       end
     end)
-  else
-    -- Fuera de Hyprland no hay geometría, pero al menos se puede lanzar.
-    noctalia.runInTerminal(command)
-    finish()
-  end
-end
-
-local function sortedNames()
-  local names = {}
-  for name in pairs(commands) do
-    table.insert(names, name)
-  end
-  table.sort(names, function(a, b)
-    return a:lower() < b:lower()
   end)
-  return names
 end
 
--- Pares de comandos cuyas cajas se solapan con la geometría actual.
--- Los comandos en modo "auto" se colocan en tiempo de ejecución, así que no
--- se pueden comparar de antemano.
-local function detectOverlaps()
-  local rects = {}
-  for _, name in ipairs(sortedNames()) do
-    local geometry = resolveGeometry(name)
-    if not geometry.auto then
-      table.insert(rects, {
-        name = name,
-        x = geometry.x,
-        y = geometry.y,
-        w = geometry.width,
-        h = geometry.height,
-      })
-    end
-  end
+-- Rota las ventanas abiertas entre sí.
+local function rotateWindows()
+  win.list(function(clients)
+    win.monitors(function(monitors)
+      local map = classMap()
+      local windows = win.pluginWindows(clients, monitors, function(class)
+        return map[class]
+      end)
 
-  local pairs = {}
-  for i = 1, #rects do
-    for j = i + 1, #rects do
-      if rectsOverlap(rects[i], rects[j]) then
-        table.insert(pairs, { rects[i].name, rects[j].name })
+      if #windows < 2 then
+        noctalia.notify(tr("title"), tr("nothing_to_rotate"))
+        return
       end
-    end
-  end
-  return pairs
+
+      win.rotate(windows, cfg.rotation, cfg.rotationSizes, function()
+        refreshWindows(function()
+          if state.open then
+            render()
+          end
+        end)
+      end)
+    end)
+  end)
 end
 
-local function commandRow(name)
-  local layout = layoutText(name)
-  local font = fontLabel(name)
-  local tooltip = commands[name] .. "\n" .. layout
-  if font ~= nil then
-    tooltip = tooltip .. "\n" .. font
-  end
-  local lowered = tostring(name):lower()
-  local glyph = "terminal-2"
-  if lowered:find("lyric", 1, true) or lowered:find("music", 1, true) then
-    glyph = "music"
-  end
-  return ui.row({
-    key = "command-" .. name,
-    flexGrow = 1,
-    gap = 10,
-    align = "center",
-    padding = 10,
-    paddingH = 12,
-    fill = "surface_variant/0.35",
-    radius = 10,
-    tooltip = tooltip,
-    onClick = function()
-      launch(name)
-    end,
-  }, {
-    ui.glyph({ name = glyph, size = 16, color = "primary" }),
-    ui.column({ gap = 2, flexGrow = 1, align = "stretch" }, {
-      ui.row({ gap = 8, align = "center" }, {
-        ui.label({ text = name, fontWeight = "bold", color = "on_surface", maxLines = 1, flexGrow = 1 }),
-        ui.label({ text = layout, fontSize = 10, color = "on_surface_variant", maxLines = 1 }),
-      }),
-      ui.label({ text = commands[name], fontSize = 11, color = "on_surface_variant", maxLines = 1 }),
-    }),
-    ui.glyph({ name = "player-play", size = 14, color = "on_surface_variant" }),
-  })
-end
+-- Abre los widgets que falten. Si ya estaban todos abiertos, los rota.
+local function openAll()
+  win.list(function(clients)
+    win.monitors(function(monitors)
+      local map = classMap()
+      local windows = win.pluginWindows(clients, monitors, function(class)
+        return map[class]
+      end)
 
-local function render()
-  local rows = {}
-  for _, name in ipairs(sortedNames()) do
-    table.insert(rows, commandRow(name))
-  end
-  if #rows == 0 then
-    table.insert(rows, ui.label({
-      text = tr("empty"),
-      color = "on_surface_variant",
-      padding = 12,
-    }))
-  end
-
-  local overlaps = detectOverlaps()
-  local warnings = {}
-  for _, pair in ipairs(overlaps) do
-    table.insert(warnings, pair[1] .. " + " .. pair[2])
-  end
-  local overlapWarning = nil
-  if #warnings > 0 then
-    overlapWarning = ui.row({
-      key = "overlap-warning",
-      gap = 8,
-      align = "center",
-      padding = 8,
-      paddingH = 12,
-      fill = "error/0.12",
-      radius = 10,
-      tooltip = tr("overlap_tooltip"),
-    }, {
-      ui.glyph({ name = "alert-triangle", size = 14, color = "error" }),
-      ui.label({
-        text = tr("overlap_warning", { pairs = table.concat(warnings, ", ") }),
-        fontSize = 11,
-        color = "error",
-        flexGrow = 1,
-        maxLines = 3,
-      }),
-    })
-  end
-
-  local outputLabel = cfg.output ~= "" and cfg.output or tr("focused_output")
-
-  local children = {}
-  table.insert(children, ui.row({ align = "center", gap = 8 }, {
-    ui.glyph({ name = "terminal-2", size = 18, color = "primary" }),
-    ui.label({ text = tr("title"), fontSize = 16, fontWeight = "bold", color = "on_surface", flexGrow = 1 }),
-    ui.button({
-      key = "open-all",
-      glyph = "layout-grid",
-      variant = "ghost",
-      tooltip = tr("open_all"),
-      onClick = function()
-        for _, name in ipairs(sortedNames()) do
-          launch(name, true)
+      local open = {}
+      for _, window in ipairs(windows) do
+        if window.name ~= nil then
+          open[window.name] = true
         end
-      end,
-    }),
-    ui.button({
-      key = "open-settings",
-      glyph = "settings",
-      variant = "ghost",
-      tooltip = tr("open_settings"),
-      onClick = function()
-        noctalia.openSettings()
-      end,
-    }),
-    ui.button({
-      key = "close-panel",
-      glyph = "close",
-      variant = "ghost",
-      tooltip = tr("close"),
-      onClick = function()
-        panel.close()
-      end,
-    }),
-  }))
-  table.insert(children, ui.label({
-    text = tr("subtitle", {
-      terminal = cfg.terminal,
-      margin = math.floor(cfg.margin),
-      output = outputLabel,
-    }),
-    fontSize = 11,
-    color = "on_surface_variant",
-  }))
-  if overlapWarning ~= nil then
-    table.insert(children, overlapWarning)
-  end
-  table.insert(children, ui.scroll({ flexGrow = 1, gap = 8 }, rows))
-  table.insert(children, ui.label({ text = tr("hint"), fontSize = 11, color = "on_surface_variant" }))
+      end
 
-  panel.render(ui.column({ flexGrow = 1, gap = 12, align = "stretch" }, children))
+      local missing = {}
+      for _, name in ipairs(widgetNames()) do
+        if not open[name] then
+          table.insert(missing, name)
+        end
+      end
+
+      if #missing == 0 then
+        if #windows >= 2 then
+          win.rotate(windows, cfg.rotation, cfg.rotationSizes, function()
+            refreshWindows(function()
+              if state.open then
+                render()
+              end
+            end)
+          end)
+        else
+          noctalia.notify(tr("title"), tr("nothing_to_rotate"))
+        end
+        return
+      end
+
+      local pending = #missing
+      for _, name in ipairs(missing) do
+        launch(name, {
+          quiet = true,
+          onDone = function()
+            pending = pending - 1
+            if pending <= 0 then
+              refreshWindows(function()
+                if state.open then
+                  render()
+                end
+              end)
+            end
+          end,
+        })
+      end
+    end)
+  end)
 end
 
-function onOpen(_context)
-  loadConfig()
+local function closeAllWindows()
+  win.list(function(clients)
+    win.monitors(function(monitors)
+      local map = classMap()
+      local windows = win.pluginWindows(clients, monitors, function(class)
+        return map[class]
+      end)
+      win.closeAll(windows, function()
+        refreshWindows(function()
+          if state.open then
+            render()
+          end
+        end)
+      end)
+    end)
+  end)
+end
+
+-- ------------------------------------------------------------- edición --
+
+local function startEditing(name)
+  state.editing = true
+  state.editTarget = name
+  state.editSession = state.editSession + 1
+  if name ~= nil then
+    state.form = {
+      name = name,
+      command = state.commands[name] or "",
+      layout = state.layouts[name] or "",
+    }
+  else
+    state.form = { name = "", command = "", layout = "" }
+  end
   render()
 end
 
+local function saveForm()
+  local name = util.trim(state.form.name)
+  local command = util.trim(state.form.command)
+  local layout = util.trim(state.form.layout)
+
+  if name == "" then
+    noctalia.notifyError(tr("title"), tr("need_name"))
+    return
+  end
+
+  local target = state.editTarget
+  if target ~= nil and target ~= name then
+    storeLib.remove(state.store, target)
+  end
+  storeLib.upsert(state.store, name, command ~= "" and command or nil, layout ~= "" and layout or nil)
+
+  local saved, err = storeLib.save(state.store)
+  if not saved then
+    noctalia.notifyError(tr("title"), tr("save_failed", { detail = tostring(err or "") }))
+    return
+  end
+
+  state.editing = false
+  state.editTarget = nil
+  state.form = { name = "", command = "", layout = "" }
+  loadWidgets()
+  render()
+end
+
+local function deleteWidget(name)
+  storeLib.remove(state.store, name)
+  local saved, err = storeLib.save(state.store)
+  if not saved then
+    noctalia.notifyError(tr("title"), tr("save_failed", { detail = tostring(err or "") }))
+    return
+  end
+
+  -- Si la ventana estaba abierta, se cierra para no dejarla huérfana.
+  local window = state.windows[name]
+  if window ~= nil then
+    win.closeWindow(window.address, function()
+      refreshWindows(function()
+        if state.open then
+          render()
+        end
+      end)
+    end)
+  end
+
+  loadWidgets()
+  render()
+end
+
+-- ---------------------------------------------------------------- vista --
+
+local function cardWidth()
+  local columns = cfg.columns
+  local usable = PANEL_WIDTH - (2 * PANEL_PADDING) - ((columns - 1) * CARD_GAP)
+  return math.floor(usable / columns) - (2 * CARD_PADDING)
+end
+
+local function previewHeight()
+  return math.floor(cardWidth() * PREVIEW_RATIO)
+end
+
+-- Miniatura sintética: una terminal falsa con el nombre del widget.
+local function mockPreview(name)
+  local width = cardWidth()
+  local height = previewHeight()
+  local children = {}
+
+  append(children, ui.row({ gap = 4, align = "center", padding = 6 }, {
+    ui.box({ width = 7, height = 7, radius = 4, fill = "error/0.7" }),
+    ui.box({ width = 7, height = 7, radius = 4, fill = "primary/0.7" }),
+    ui.box({ width = 7, height = 7, radius = 4, fill = "primary/0.4" }),
+  }))
+  append(children, ui.row({ paddingH = 8, flexGrow = 1 }, {
+    ui.label({
+      text = name,
+      fontSize = 12,
+      fontFamily = "monospace",
+      color = "on_surface/0.85",
+      maxLines = 2,
+      flexGrow = 1,
+    }),
+  }))
+
+  -- Unas líneas de texto falsas para que la tarjeta parezca una terminal.
+  local ratios = { 0.62, 0.44, 0.78 }
+  for _, ratio in ipairs(ratios) do
+    append(children, ui.row({ paddingH = 12, paddingV = 3 }, {
+      ui.box({
+        width = math.floor((width - 24) * ratio),
+        height = 6,
+        radius = 3,
+        fill = "on_surface/0.12",
+      }),
+    }))
+  end
+
+  return ui.column({
+    width = width,
+    height = height,
+    fill = "#00000040",
+    radius = 8,
+    border = "outline/0.25",
+    borderWidth = 1,
+    justify = "start",
+    align = "stretch",
+  }, children)
+end
+
+local function cardPreview(name)
+  if cfg.cardPreview ~= "mock" then
+    local window = state.windows[name]
+    if window ~= nil then
+      local path = preview.cached(name, preview.signature(window))
+      if path ~= nil then
+        return ui.image({
+          path = path,
+          width = cardWidth(),
+          height = previewHeight(),
+          fit = "cover",
+          radius = 8,
+          border = "outline/0.25",
+          borderWidth = 1,
+        })
+      end
+    end
+  end
+  return mockPreview(name)
+end
+
+local function card(name)
+  local hovered = state.hovered == name
+  local running = state.windows[name] ~= nil
+  local command = state.commands[name] or ""
+  local layout = layoutText(name)
+
+  local details = {}
+  append(details, ui.label({
+    text = command,
+    fontSize = 10,
+    color = "on_surface_variant",
+    maxLines = 1,
+    visible = hovered,
+  }))
+  append(details, ui.label({
+    text = layout,
+    fontSize = 10,
+    color = "on_surface_variant",
+    maxLines = 1,
+    visible = hovered,
+  }))
+
+  local titleRow = {}
+  append(titleRow, ui.label({
+    text = name,
+    fontWeight = "bold",
+    color = "on_surface",
+    maxLines = 1,
+    flexGrow = 1,
+  }))
+  if running then
+    append(titleRow, ui.glyph({ name = "circle-dot", size = 10, color = "primary" }))
+  end
+  if state.editing then
+    append(titleRow, ui.button({
+      key = "edit-" .. name,
+      glyph = "pencil",
+      variant = "ghost",
+      tooltip = tr("edit_widget"),
+      onClick = function()
+        startEditing(name)
+      end,
+    }))
+    append(titleRow, ui.button({
+      key = "delete-" .. name,
+      glyph = "trash",
+      variant = "ghost",
+      tooltip = tr("delete_widget"),
+      onClick = function()
+        deleteWidget(name)
+      end,
+    }))
+  end
+
+  local cardProps = {
+    key = "card-" .. name,
+    flexGrow = 1,
+    gap = 6,
+    padding = CARD_PADDING,
+    radius = 12,
+    fill = "surface_variant/0.35",
+    border = hovered and "primary/0.6" or "outline/0.2",
+    borderWidth = 1,
+    tooltip = string.format("%s\n%s", command, layout),
+  }
+
+  if not state.editing then
+    cardProps.onClick = function()
+      launch(name)
+    end
+  end
+  cardProps.onHover = function(hoverState, _key)
+    local next = nil
+    if hoverState == "true" then
+      next = name
+    end
+    if next == state.hovered then
+      return
+    end
+    state.hovered = next
+    if state.open then
+      render()
+    end
+  end
+
+  local children = {}
+  append(children, cardPreview(name))
+  append(children, ui.row({ gap = 6, align = "center" }, titleRow))
+  append(children, ui.column({ height = DETAILS_HEIGHT, gap = 2, justify = "center" }, details))
+
+  return ui.column(cardProps, children)
+end
+
+local function editorCard()
+  local session = state.editSession
+  local children = {}
+
+  append(children, ui.label({
+    text = state.editTarget ~= nil and tr("edit_widget") or tr("add_widget"),
+    fontWeight = "bold",
+    color = "on_surface",
+  }))
+  append(children, ui.input({
+    key = "form-name-" .. session,
+    value = state.form.name,
+    placeholder = tr("field_name"),
+    controlSize = "sm",
+    onChange = function(value)
+      state.form.name = value
+    end,
+  }))
+  append(children, ui.input({
+    key = "form-command-" .. session,
+    value = state.form.command,
+    placeholder = tr("field_command"),
+    controlSize = "sm",
+    onChange = function(value)
+      state.form.command = value
+    end,
+  }))
+  append(children, ui.input({
+    key = "form-layout-" .. session,
+    value = state.form.layout,
+    placeholder = tr("field_layout"),
+    controlSize = "sm",
+    onChange = function(value)
+      state.form.layout = value
+    end,
+  }))
+  append(children, ui.button({
+    text = tr("save"),
+    glyph = "check",
+    variant = "primary",
+    onClick = saveForm,
+  }))
+
+  return ui.column({
+    key = "editor",
+    flexGrow = 1,
+    gap = 6,
+    padding = CARD_PADDING,
+    radius = 12,
+    fill = "surface_variant/0.35",
+    border = "primary/0.5",
+    borderWidth = 1,
+    align = "stretch",
+  }, children)
+end
+
+local function header()
+  local outputLabel = cfg.output ~= "" and cfg.output or tr("focused_output")
+  local subtitle = tr("subtitle", {
+    terminal = cfg.terminal,
+    margin = math.floor(cfg.margin),
+    output = outputLabel,
+  })
+
+  local title = ui.row({
+    gap = 8,
+    align = "center",
+    flexGrow = 1,
+    tooltip = subtitle,
+  }, {
+    ui.glyph({ name = "terminal-2", size = 18, color = "primary" }),
+    ui.label({ text = tr("title"), fontSize = 16, fontWeight = "bold", color = "on_surface" }),
+  })
+
+  local buttons = {}
+  append(buttons, ui.button({
+    key = "open-all",
+    glyph = "layout-grid",
+    variant = "ghost",
+    tooltip = tr("open_all"),
+    onClick = openAll,
+  }))
+  append(buttons, ui.button({
+    key = "rotate",
+    glyph = "rotate-clockwise",
+    variant = "ghost",
+    tooltip = tr("rotate"),
+    onClick = rotateWindows,
+  }))
+  append(buttons, ui.button({
+    key = "close-all",
+    glyph = "window-off",
+    variant = "ghost",
+    tooltip = tr("close_all"),
+    onClick = closeAllWindows,
+  }))
+  append(buttons, ui.button({
+    key = "edit",
+    glyph = state.editing and "check" or "pencil",
+    variant = "ghost",
+    tooltip = tr("edit_mode"),
+    onClick = function()
+      if state.editing then
+        state.editing = false
+        state.editTarget = nil
+        render()
+      else
+        startEditing(nil)
+      end
+    end,
+  }))
+  append(buttons, ui.button({
+    key = "open-settings",
+    glyph = "settings",
+    variant = "ghost",
+    tooltip = tr("open_settings"),
+    onClick = function()
+      noctalia.openSettings()
+    end,
+  }))
+  append(buttons, ui.button({
+    key = "close-panel",
+    glyph = "x",
+    variant = "ghost",
+    tooltip = tr("close"),
+    onClick = function()
+      panel.close()
+    end,
+  }))
+
+  return ui.row({ gap = 4, align = "center" }, { title, ui.row({ gap = 2, align = "center" }, buttons) })
+end
+
+local function render()
+  if not state.open then
+    return
+  end
+
+  local cards = {}
+  for _, name in ipairs(widgetNames()) do
+    table.insert(cards, card(name))
+  end
+
+  if state.editing then
+    table.insert(cards, editorCard())
+  end
+
+  if #cards == 0 then
+    table.insert(cards, ui.label({
+      text = tr("empty"),
+      color = "on_surface_variant",
+      padding = 12,
+      flexGrow = 1,
+    }))
+  end
+
+  -- Filas de `columns` tarjetas.
+  local rows = {}
+  local row = {}
+  local count = 0
+  for _, node in ipairs(cards) do
+    table.insert(row, node)
+    count = count + 1
+    if count == cfg.columns then
+      table.insert(rows, ui.row({ gap = CARD_GAP, align = "stretch" }, row))
+      row = {}
+      count = 0
+    end
+  end
+  if count > 0 then
+    table.insert(rows, ui.row({ gap = CARD_GAP, align = "stretch" }, row))
+  end
+
+  panel.render(ui.column({
+    flexGrow = 1,
+    gap = 10,
+    align = "stretch",
+    padding = PANEL_PADDING,
+  }, {
+    header(),
+    ui.scroll({ flexGrow = 1, gap = CARD_GAP }, rows),
+  }))
+end
+
+-- ------------------------------------------------------------- ciclo de vida --
+
+function onOpen(_context)
+  state.open = true
+  loadConfig()
+  loadWidgets()
+  state.hovered = nil
+  state.editing = false
+  state.editTarget = nil
+  render()
+  refreshWindows(function()
+    if state.open then
+      render()
+    end
+  end)
+end
+
 function onClose()
+  state.open = false
+  state.hovered = nil
 end
 
 function onConfigChanged()
   loadConfig()
-  render()
+  loadWidgets()
+  if state.open then
+    render()
+  end
 end
 
 function onIpc(event, payload)
   if event == "launch" then
     loadConfig()
+    loadWidgets()
     launch(payload)
+  elseif event == "open-all" then
+    loadConfig()
+    loadWidgets()
+    openAll()
+  elseif event == "rotate" then
+    loadConfig()
+    loadWidgets()
+    rotateWindows()
+  elseif event == "close-all" then
+    closeAllWindows()
   elseif event == "refresh" then
     loadConfig()
-    render()
+    loadWidgets()
+    if state.open then
+      render()
+    end
+    refreshWindows(function()
+      if state.open then
+        render()
+      end
+    end)
   end
 end

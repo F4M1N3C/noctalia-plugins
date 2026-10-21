@@ -1,38 +1,36 @@
-# Lanzador de apps de terminal en ventanas flotantes de Hyprland.
-# Cada comando del mapa se convierte en un botón del panel; al pulsarlo se
+# Lanzador de widgets de terminal en ventanas flotantes de Hyprland.
+#
+# Cada comando del mapa se convierte en una tarjeta del panel; al pulsarla se
 # abre kitty con clase/título propios y, si existe, su geometría en `layouts`.
+#
+# La lista de widgets se fusiona en runtime (defaults del manifiesto + lo que
+# haya en Ajustes + lo que se edite en el panel), así que añadir uno desde
+# Ajustes no borra los demás y se pueden borrar también los de por defecto.
 
 id = "faminec/floating-term"
-name = "Floating Term"
-version = "1.2.0"
-plugin_api = 26
+name = "Term Deck"
+version = "2.0.0"
+plugin_api = 32
 author = "faminec"
 license = "MIT"
 dependencies = ["kitty", "hyprland"]
-tags = ["utility", "hyprland", "bar", "panel"]
+tags = ["utility", "system", "hyprland", "music", "launcher"]
 icon = "terminal-2"
-description = "Launch terminal apps in floating windows with a per-command size, anchor and position."
+description = "Launch terminal apps in floating windows, with a card grid, per-command geometry and rotation."
 
 [[setting]]
 key = "commands"
 type = "string_map"
 label_key = "settings.commands.label"
 description_key = "settings.commands.description"
-default = { cava = "cava", cbonsai = "cbonsai -l -p", unimatrix = "unimatrix -s 96 -l o", pipes = "pipes.sh", lavat = "lavat -k green -c black", btop = "btop", lyrics = "lyrics-carousel" }
+default = { cava = "cava", cbonsai = "cbonsai -l -p", unimatrix = "unimatrix -s 96 -l o", pipes = "pipes.sh", lavat = "lavat -k green -c black", btop = "btop" }
 
 [[setting]]
 key = "layouts"
 type = "string_map"
 label_key = "settings.layouts.label"
 description_key = "settings.layouts.description"
-default = { cava = "bottom-center, 1610x584", cbonsai = "top-center, 801x582", unimatrix = "right-center, 869x1424", pipes = "bottom-right, 900x520", btop = "top-left, 928x800", lavat = "bottom-left, 802x582", lyrics = "center, 1200x820" }
-
-[[setting]]
-key = "fonts"
-type = "string_map"
-label_key = "settings.fonts.label"
-description_key = "settings.fonts.description"
-default = { lyrics = "Departure Mono, 22" }
+default = { cava = "bottom-center, 1610x584", cbonsai = "top-center, 801x582", unimatrix = "right-center, 869x1424", pipes = "bottom-right, 900x520", btop = "top-left, 928x800", lavat = "bottom-left, 802x582" }
 
 [[setting]]
 key = "margin"
@@ -114,6 +112,55 @@ label_key = "settings.close_on_launch.label"
 description_key = "settings.close_on_launch.description"
 default = true
 
+[[setting]]
+key = "rotation"
+type = "select"
+label_key = "settings.rotation.label"
+description_key = "settings.rotation.description"
+default = "clockwise"
+options = [
+  { value = "clockwise", label_key = "settings.rotation.options.clockwise" },
+  { value = "counterclockwise", label_key = "settings.rotation.options.counterclockwise" },
+  { value = "opposite", label_key = "settings.rotation.options.opposite" },
+  { value = "pairs", label_key = "settings.rotation.options.pairs" },
+  { value = "shuffle", label_key = "settings.rotation.options.shuffle" },
+]
+
+[[setting]]
+key = "rotation_sizes"
+type = "bool"
+label_key = "settings.rotation_sizes.label"
+description_key = "settings.rotation_sizes.description"
+default = false
+
+[[setting]]
+key = "columns"
+type = "int"
+label_key = "settings.columns.label"
+description_key = "settings.columns.description"
+default = 2
+min = 1
+max = 3
+
+[[setting]]
+key = "card_preview"
+type = "select"
+label_key = "settings.card_preview.label"
+description_key = "settings.card_preview.description"
+default = "auto"
+options = [
+  { value = "auto", label_key = "settings.card_preview.options.auto" },
+  { value = "screenshot", label_key = "settings.card_preview.options.screenshot" },
+  { value = "mock", label_key = "settings.card_preview.options.mock" },
+]
+
+[[setting]]
+key = "avoid_collisions"
+type = "bool"
+label_key = "settings.avoid_collisions.label"
+description_key = "settings.avoid_collisions.description"
+default = true
+
 [[widget]]
 id = "launcher"
 entry = "widget.luau"
@@ -121,7 +168,7 @@ entry = "widget.luau"
 [[panel]]
 id = "panel"
 entry = "panel.luau"
-width = 430
-height = 470
+width = 620
+height = 820
 placement = "attached"
 open_near_click = true

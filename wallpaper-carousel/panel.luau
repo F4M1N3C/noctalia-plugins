@@ -1,40 +1,61 @@
 --!nonstrict
--- Carrusel de fondos: panel a pantalla completa con tarjetas verticales.
--- Cada tarjeta usa una miniatura recortada con un desplazamiento distinto
--- (parallax) según su posición respecto a la tarjeta seleccionada.
+-- Carrusel de fondos: cinta horizontal de tarjetas inclinadas.
+--
+-- Reproduce el "Resizeable wallpaper carousel with parallax effect" de
+-- u/HyperSpazdik (reddit.com/r/hyprland/comments/1vjqvrr) y el plugin
+-- github.com/motor-dev/wallpaperCarousel: una fila de tarjetas verticales
+-- inclinadas (paralelogramos) que se solapan como una cinta 3D, con la
+-- seleccionada más grande y opaca y las vecinas desvaneciéndose.
+--
+-- Noctalia v5 no expone transformaciones (rotación/skew) en la UI declarativa,
+-- así que la inclinación va horneada en la miniatura: el helper de Python
+-- genera un PNG con alfa donde el wallpaper va recortado dentro del
+-- paralelogramo. La paralaje (el encuadre que se desplaza según la posición
+-- de la tarjeta) también se hornea, en tres posiciones por imagen.
+--
+-- El panel usa un `ui.scroll` como captura de la rueda: el desplazamiento
+-- vertical se compensa con el relleno del propio scroll para que la cinta no
+-- se mueva de sitio, y su delta mueve el carrusel horizontalmente.
 
-local CACHE_W = 360
-local CACHE_H = 600
-local THUMB_ZOOM = 1.35
-local THUMB_VERSION = "v4"
-local BUCKETS = { -1.0, -0.5, 0.0, 0.5, 1.0 }
+local THUMB_VERSION = "v5"
+local SCROLL_STEP = 56 -- px lógicos por dentado de la rueda
+local SCROLL_TAIL = 300 -- relleno final del contenido del scroll
+local SCROLL_JUMP = 1500 -- px que salta el scroll al recentrarse
+local KEY_REPEAT_DELAY = 380 -- ms antes de empezar a repetir
+local KEY_REPEAT_RATE = 55 -- ms entre repeticiones
+local VIEWPORT_PADDING = 8 -- relleno interno que Noctalia pone al scroll
+
 local IMAGE_EXTENSIONS = {
-  jpg = true,
-  jpeg = true,
-  png = true,
-  webp = true,
-  avif = true,
-  bmp = true,
+  [".jpg"] = true,
+  [".jpeg"] = true,
+  [".png"] = true,
+  [".webp"] = true,
+  [".avif"] = true,
+  [".bmp"] = true,
 }
 
 local cfg = {
   directory = "",
   glyph = "wallpaper",
-  cardScale = 1.0,
-  gap = 18,
-  visible = 9,
+  cardWidth = 250,
+  cardHeight = 350,
+  skew = 0.35,
   parallax = 1.0,
-  minimal = true,
+  selectedScale = 1.08,
+  baseScale = 0.75,
+  hoverBoost = 0.2,
+  scrim = 0.0,
   closeOnApply = true,
   applyAll = true,
   showFilenames = true,
+  chrome = false,
 }
 
 local wallpapers = {}
 local currentDir = ""
 local scanError = nil
 local selected = 1
-local viewPos = 1
+local viewPos = 1.0
 local animating = false
 local opened = false
 local generating = false
@@ -45,7 +66,24 @@ local fileInfoCache = {}
 local thumbReady = {}
 local thumbRequested = {}
 
--- Forward declarations: render and the navigation helpers call each other.
+-- Rueda del ratón (capturada por el ui.scroll)
+local scrollOffset = 0.0
+local scrollSeen = 0.0
+local scrollAccum = 0.0
+local scrollSettled = true
+local scrollResetting = false
+local scrollReveal = 0
+local scrollComp = nil -- relleno previsto para el siguiente salto del scroll
+local pendingRecenter = false
+local pendingThumbs = false
+
+-- Puntero y teclado
+local hovered = nil
+local heldKey = nil
+local heldElapsed = 0.0
+local heldRepeat = 0.0
+
+-- Forward declarations: render y los ayudantes de navegación se llaman entre sí.
 local render, selectIndex, move, randomWallpaper, apply, reload
 
 local function tr(key, args)
@@ -126,9 +164,37 @@ local function cacheDirectory()
   return path
 end
 
+local uiScaleCache = nil
+
+local function uiScale()
+  if uiScaleCache then
+    return uiScaleCache
+  end
+  local scale = tonumber(noctalia.getSetting("accessibility.ui_scale"))
+  if not scale or scale <= 0 then
+    scale = 1.0
+  end
+  uiScaleCache = scale
+  return scale
+end
+
+-- La miniatura se genera al tamaño de la tarjeta seleccionada (la mayor) y las
+-- demás se muestran reducidas, así que nunca hay que escalar hacia arriba.
+local function thumbPixelWidth()
+  return math.floor(cfg.cardWidth * cfg.selectedScale * uiScale() + 0.5)
+end
+
+local function thumbPixelHeight()
+  return math.floor(cfg.cardHeight * cfg.selectedScale * uiScale() + 0.5)
+end
+
 local thumbPathCache = {}
+
+-- El tamaño de la miniatura depende del escalado de la interfaz, así que
+-- entra en la clave de caché: si el usuario lo cambia, las tarjetas se
+-- regeneran al tamaño correcto.
 local function thumbPath(source, bucket)
-  local cacheKey = source .. "|" .. tostring(bucket)
+  local cacheKey = source .. "|" .. tostring(bucket) .. "|" .. tostring(uiScale())
   local cached = thumbPathCache[cacheKey]
   if cached ~= nil then
     return cached
@@ -143,12 +209,13 @@ local function thumbPath(source, bucket)
     source,
     tostring(info.mtime or 0),
     tostring(info.size or 0),
-    tostring(CACHE_W),
-    tostring(CACHE_H),
+    tostring(thumbPixelWidth()),
+    tostring(thumbPixelHeight()),
     string.format("%.2f", bucket),
+    string.format("%.2f", cfg.skew),
     THUMB_VERSION,
   }, "|")
-  local path = cacheDir .. "/" .. hashText(key) .. ".jpg"
+  local path = cacheDir .. "/" .. hashText(key) .. ".png"
   thumbPathCache[cacheKey] = path
   return path
 end
@@ -170,16 +237,21 @@ local function imagePathFor(source, bucket)
 end
 
 local function loadConfig()
+  uiScaleCache = nil
   cfg.directory = noctalia.getConfig("directory") or ""
   cfg.glyph = noctalia.getConfig("glyph") or "wallpaper"
-  cfg.cardScale = clamp(tonumber(noctalia.getConfig("card_scale")) or 1.0, 0.7, 1.4)
-  cfg.gap = math.floor(clamp(tonumber(noctalia.getConfig("gap")) or 18, 4, 48))
-  cfg.visible = math.floor(clamp(tonumber(noctalia.getConfig("visible")) or 0, 0, 11))
-  cfg.minimal = noctalia.getConfig("minimal") ~= false
+  cfg.cardWidth = clamp(tonumber(noctalia.getConfig("card_width")) or 250, 140, 640)
+  cfg.cardHeight = clamp(tonumber(noctalia.getConfig("card_height")) or 350, 180, 900)
+  cfg.skew = clamp(tonumber(noctalia.getConfig("skew")) or 0.35, 0.0, 0.8)
   cfg.parallax = clamp(tonumber(noctalia.getConfig("parallax")) or 1.0, 0.0, 1.5)
+  cfg.selectedScale = clamp(tonumber(noctalia.getConfig("selected_scale")) or 1.08, 1.0, 1.6)
+  cfg.baseScale = clamp(tonumber(noctalia.getConfig("base_scale")) or 0.75, 0.4, 1.0)
+  cfg.hoverBoost = clamp(tonumber(noctalia.getConfig("hover_boost")) or 0.2, 0.0, 0.6)
+  cfg.scrim = clamp(tonumber(noctalia.getConfig("scrim")) or 0.0, 0.0, 0.9)
   cfg.closeOnApply = noctalia.getConfig("close_on_apply") ~= false
   cfg.applyAll = noctalia.getConfig("apply_all") ~= false
   cfg.showFilenames = noctalia.getConfig("show_filenames") ~= false
+  cfg.chrome = noctalia.getConfig("chrome") == true
 end
 
 local function scanWallpapers()
@@ -207,11 +279,21 @@ local function scanWallpapers()
     return
   end
 
+  -- El filtrado va con sub() y tablas en vez de patrones: el VM de Noctalia
+  -- mide el presupuesto con un reloj por instruccion, asi que un `match` por
+  -- archivo (821 archivos) se comia 18 ms del presupuesto de 25 ms.
   local found = {}
-  for _, name in ipairs(names) do
-    local extension = tostring(name):match("%.([%w]+)$")
-    if extension and not tostring(name):match("^%.") and IMAGE_EXTENSIONS[extension:lower()] then
-      table.insert(found, joinPath(currentDir, name))
+  local count = 0
+  for index = 1, #names do
+    local name = names[index]
+    if type(name) == "string" then
+      local tail = name:sub(-5):lower()
+      if IMAGE_EXTENSIONS[tail:sub(-4)] or IMAGE_EXTENSIONS[tail] then
+        if name:sub(1, 1) ~= "." then
+          count = count + 1
+          found[count] = joinPath(currentDir, name)
+        end
+      end
     end
   end
 
@@ -248,96 +330,76 @@ local function indexOfPath(path)
   return nil
 end
 
-local function outputSize()
+local function focusedOutput()
   local outputs = noctalia.outputs() or {}
   local connector = focusedConnector()
-  local chosen = outputs[1]
   for _, output in ipairs(outputs) do
     if output.name == connector then
-      chosen = output
-      break
+      return output
     end
   end
-  local width = tonumber(chosen and chosen.width) or 1920
-  local height = tonumber(chosen and chosen.height) or 1080
-  if width < 320 then
-    width = 1920
-  end
+  return outputs[1]
+end
+
+-- El panel ocupa el output menos la barra (el shell reserva ese hueco), así
+-- que el alto visible se estima a partir del output. El panel mide en px de
+-- la superficie, pero sus props se escalan: de ahí los dos factores.
+local function panelHeight()
+  local output = focusedOutput()
+  local height = tonumber(output and output.height) or 1080
   if height < 240 then
     height = 1080
   end
-  return width, height
+  return math.max(240, height - 48)
 end
 
-local function cardLayout()
-  local width, height = outputSize()
-  local cardHeight = math.floor(math.min(height * 0.46, width * 0.30) * cfg.cardScale)
-  cardHeight = math.max(180, cardHeight)
+local function viewportHeight()
+  return (panelHeight() - VIEWPORT_PADDING * 2) / uiScale()
+end
 
-  -- El ancho de la tarjeta seleccionada es algo mayor, como en la referencia.
-  local selectedWidth = math.floor(cardHeight * 0.62)
-  local normalWidth = math.floor(cardHeight * 0.43)
-  local normalHeight = math.floor(cardHeight * 0.94)
-  local gap = cfg.gap
-
-  local desiredHalf
-  if (cfg.visible or 0) <= 0 then
-    -- Modo automático: tantas tarjetas como quepan en la pantalla.
-    desiredHalf = math.max(1, math.floor((width / 2 - selectedWidth / 2) / (normalWidth + gap)))
-    desiredHalf = math.min(desiredHalf, 6)
-  else
-    desiredHalf = math.floor(cfg.visible / 2)
-    desiredHalf = math.max(1, math.min(5, desiredHalf))
+local function viewportWidth()
+  local output = focusedOutput()
+  local width = tonumber(output and output.width) or 1920
+  if width < 320 then
+    width = 1920
   end
+  return math.max(320, width / uiScale())
+end
 
-  local half = desiredHalf
-  while half > 1 do
-    local before = 0
-    for _ = 1, half do
-      before = before + normalWidth + gap
-    end
-    local padding = width / 2 - selectedWidth / 2 - before
-    if padding >= 32 then
-      break
-    end
-    half = half - 1
+-- Métricas de la cinta: cuántas tarjetas entran en pantalla y cuánto relleno
+-- vertical necesita el scroll para compensar su propio desplazamiento.
+--
+-- El scroll coloca su contenido en `padding - desplazamiento`, y el relleno
+-- se mide en px de la superficie mientras que las props van en px lógicos:
+-- por eso el relleno tiene que llevar la cuenta de la escala.
+local function metrics()
+  local viewport = viewportHeight()
+  local ribbonHeight = cfg.cardHeight
+  -- Relleno que deja la cinta centrada: el scroll la sube lo mismo que la
+  -- baja, así que el desplazamiento y el relleno se cancelan.
+  local pad = (viewport - ribbonHeight) / 2
+  if pad < 0 then
+    pad = 0
   end
-
+  -- Distancia desde la cinta hasta el ancla. El ancla tiene que quedar por
+  -- debajo de la ventana para que al revelarla el scroll salte hacia arriba,
+  -- y a la vez el salto tiene que dejar la cinta en el mismo sitio.
+  local anchorGap = viewport - 1 - pad - ribbonHeight
+  if anchorGap < 0 then
+    anchorGap = 0
+  end
+  -- La fila se centra en la pantalla, así que el grupo entero (las tarjetas
+  -- más el relleno que genera el desplazamiento) tiene que caber: si no, el
+  -- centro se sale de sitio. De ahí el margen de dos ranuras.
+  local slots = viewportWidth() / cfg.cardWidth
+  local half = math.max(1, math.floor((slots - 3) / 2))
   return {
-    width = width,
-    height = height,
-    cardHeight = cardHeight,
-    selectedWidth = selectedWidth,
-    normalWidth = normalWidth,
-    normalHeight = normalHeight,
-    gap = gap,
     half = half,
+    viewport = viewport,
+    ribbonHeight = ribbonHeight,
+    pad = pad,
+    anchorGap = anchorGap,
   }
-end
-
-local function cardWidth(index, layout)
-  if index == selected then
-    return layout.selectedWidth
-  end
-  return layout.normalWidth
-end
-
-local function cardHeight(index, layout)
-  if index == selected then
-    return layout.cardHeight
-  end
-  return layout.normalHeight
-end
-
-local function bucketFor(index, layout)
-  if cfg.parallax <= 0 or layout.half <= 0 then
-    return 0.0
-  end
-  local relative = (index - viewPos) / layout.half
-  relative = clamp(relative * cfg.parallax, -1.0, 1.0)
-  -- Cinco posiciones discretas; la caché guarda todas para que el cambio sea
-  -- inmediato al navegar.
-  return math.floor(relative * 4 + 0.5) / 2
 end
 
 local function ensureThumbs()
@@ -352,7 +414,7 @@ local function ensureThumbs()
   -- Se encolan las miniaturas de un rango amplio alrededor de la seleccionada
   -- (para que al desplazarse siempre haya imágenes listas). El helper descarta
   -- las que ya existen, así que repetir el trabajo es barato.
-  local half = math.max(cardLayout().half, 6)
+  local half = math.max(metrics().half, 6)
   local first = selected - half
   local last = selected + half
   local items = {}
@@ -361,7 +423,7 @@ local function ensureThumbs()
   for index = first, last do
     local source = wallpapers[index]
     if source then
-      for _, bucket in ipairs(BUCKETS) do
+      for _, bucket in ipairs({ -1, 0, 1 }) do
         local output = thumbPath(source, bucket)
         if not seen[output] and not thumbRequested[output] then
           seen[output] = true
@@ -369,10 +431,11 @@ local function ensureThumbs()
           table.insert(items, {
             source = source,
             output = output,
-            width = CACHE_W,
-            height = CACHE_H,
-            offset = bucket,
-            zoom = THUMB_ZOOM,
+            width = thumbPixelWidth(),
+            height = thumbPixelHeight(),
+            offset = bucket * cfg.parallax,
+            zoom = 1.35,
+            skew = cfg.skew,
           })
         end
       end
@@ -414,6 +477,9 @@ local function ensureThumbs()
     if result.exitCode ~= 0 and not thumbErrorShown then
       thumbErrorShown = true
       local detail = (result.stderr or ""):gsub("%s+$", "")
+      if detail == "" then
+        detail = string.format("exit %d", result.exitCode)
+      end
       noctalia.log("wallpaper-carousel thumbnails: " .. detail)
       if detail ~= "" then
         noctalia.notifyError(tr("thumb_error"), detail)
@@ -430,11 +496,6 @@ local function ensureThumbs()
   if not started then
     generating = false
   end
-end
-
-local function releaseHeldKeys()
-  -- No hay estado que liberar; se deja la función por claridad del ciclo de
-  -- vida del panel y para poder ampliar la interacción más adelante.
 end
 
 local function renderEmpty()
@@ -481,294 +542,191 @@ local function renderEmpty()
   }))
 end
 
+-- ¿Está el puntero sobre esta tarjeta?
+function onCardHover(state, key)
+  local index = tonumber(key)
+  if index == nil then
+    return
+  end
+  local nextHovered = nil
+  if state == "true" then
+    nextHovered = index
+  end
+  if nextHovered ~= hovered then
+    hovered = nextHovered
+    render()
+  end
+end
+
+function onCardClick(key)
+  local index = tonumber(key)
+  if index == nil then
+    return
+  end
+  if index ~= selected then
+    selectIndex(index)
+  end
+  apply()
+end
+
 render = function()
   if #wallpapers == 0 then
     renderEmpty()
     return
   end
 
-  local layout = cardLayout()
-  local first = selected - layout.half
-  local last = selected + layout.half
+  local m = metrics()
+  local center = math.floor(viewPos)
+  local fraction = viewPos - center
   local nodes = {}
 
-  local beforeSelected = 0
-  for index = first, selected - 1 do
-    beforeSelected = beforeSelected + cardWidth(index, layout) + layout.gap
-  end
-  local basePadding = layout.width / 2 - layout.selectedWidth / 2 - beforeSelected
-  local shift = (selected - viewPos) * (layout.normalWidth + layout.gap)
-  local padding = math.max(0, basePadding + shift)
-
-  for index = first, last do
-    local width = cardWidth(index, layout)
-    local height = cardHeight(index, layout)
+  for offset = -m.half, m.half do
+    local index = center + offset
     local source = wallpapers[index]
-    if not source then
-      table.insert(nodes, ui.box({
-        key = "placeholder-" .. index,
-        width = width,
-        height = height,
-        fill = "#00000000",
-      }))
-    else
-      local isSelected = index == selected
-      local distance = math.abs(index - selected)
-      local opacity = 1.0
-      if not isSelected then
-        if distance == 1 then
-          opacity = 0.78
-        elseif distance == 2 then
-          opacity = 0.50
-        else
-          opacity = 0.28
-        end
+    if source then
+      -- Caída suave con la distancia: la seleccionada es la única opaca.
+      local distance = math.abs(index - viewPos)
+      local falloff = 1.0 / (1.0 + distance * distance)
+
+      local bucket = 0
+      if cfg.parallax > 0 then
+        bucket = offset > 0 and 1 or (offset < 0 and -1 or 0)
       end
 
-      local bucket = bucketFor(index, layout)
       local imagePath = imagePathFor(source, bucket)
-      local border = isSelected and "primary" or "outline/0.55"
-      local borderWidth = isSelected and 2 or 1
-      local radius = isSelected and 18 or 14
-      local onClick = function()
-        if not isSelected then
-          selectIndex(index)
-        end
+      local isHovered = hovered == index
+
+      local scale = cfg.baseScale + (cfg.selectedScale - cfg.baseScale) * falloff
+      if isHovered then
+        scale = cfg.baseScale + (cfg.selectedScale - cfg.baseScale + cfg.hoverBoost) * falloff
       end
+
+      local opacity = isHovered and 1.0 or (0.1 + 0.9 * falloff)
+      local cardWidth = math.floor(cfg.cardWidth * scale + 0.5)
+      local cardHeight = math.floor(cfg.cardHeight * scale + 0.5)
 
       local preview
       if imagePath then
         preview = ui.image({
+          key = tostring(index),
           path = imagePath,
-          width = width,
-          height = height,
+          width = cardWidth,
+          height = cardHeight,
           fit = "cover",
-          radius = radius,
-          border = border,
-          borderWidth = borderWidth,
+          onClick = "onCardClick",
+          onHover = "onCardHover",
           tooltip = basename(source),
-          onClick = onClick,
         })
       else
-        preview = ui.column({
-          width = width,
-          height = height,
-          fill = "surface_variant/0.65",
-          radius = radius,
-          border = border,
-          borderWidth = borderWidth,
-          align = "center",
-          justify = "center",
+        preview = ui.box({
+          key = tostring(index),
+          width = cardWidth,
+          height = cardHeight,
+          fill = "surface_variant/0.4",
+          radius = 6,
+          onClick = "onCardClick",
+          onHover = "onCardHover",
           tooltip = basename(source),
-          onClick = onClick,
-        }, {
-          ui.glyph({
-            name = "photo",
-            size = math.max(18, math.floor(width * 0.18)),
-            color = isSelected and "primary/0.8" or "on_surface_variant/0.55",
-          }),
         })
       end
 
-      local cardChildren = {
-        preview,
-        ui.label({
-          text = isSelected and string.format("%02d", index) or "",
-          fontSize = isSelected and 12 or 10,
-          fontWeight = isSelected and "bold" or "normal",
-          color = isSelected and "primary" or "on_surface_variant",
-          maxLines = 1,
-          textAlign = "center",
-        }),
-      }
-
       table.insert(nodes, ui.column({
-        key = source,
-        width = width,
-        gap = 5,
+        key = "card-" .. tostring(index),
+        width = cfg.cardWidth,
+        height = m.ribbonHeight,
         align = "center",
+        justify = "center",
         opacity = opacity,
-      }, cardChildren))
+      }, {
+        preview,
+      }))
     end
   end
 
-  local carousel = ui.row({
-    key = "carousel",
-    gap = layout.gap,
-    paddingH = padding,
+  -- Desplazamiento fraccionario de la cinta: la fila se centra en la
+  -- pantalla y el relleno final la empuja hacia la izquierda lo justo para
+  -- que la tarjeta seleccionada llegue al centro.
+  table.insert(nodes, ui.spacer({
+    key = "shift",
+    width = math.floor(2 * fraction * cfg.cardWidth + 0.5),
+    height = 1,
+  }))
+
+  local ribbon = ui.row({
+    key = "ribbon",
+    width = math.floor(viewportWidth()),
+    gap = 0,
     align = "center",
-    justify = "start",
+    justify = "center",
   }, nodes)
 
-  local selectedPath = wallpapers[selected]
-  local selectedThumb = selectedPath and imagePathFor(selectedPath, 0) or nil
-  local footerPreview
-  if selectedThumb then
-    footerPreview = ui.image({
-      path = selectedThumb,
-      width = 44,
-      height = 44,
-      fit = "cover",
-      radius = 9,
-      border = "outline/0.5",
-      borderWidth = 1,
-    })
-  else
-    footerPreview = ui.box({ width = 44, height = 44, radius = 9, fill = "surface_variant" })
-  end
-
-  local footerText = cfg.showFilenames and basename(selectedPath) or tr("title")
-  local headerButtons = {
-    ui.button({
-      glyph = "chevron-left",
-      variant = "ghost",
-      tooltip = tr("prev"),
-      onClick = function() move(-1) end,
-    }),
-    ui.button({
-      glyph = "chevron-right",
-      variant = "ghost",
-      tooltip = tr("next"),
-      onClick = function() move(1) end,
-    }),
-    ui.button({
-      glyph = "shuffle",
-      variant = "ghost",
-      tooltip = tr("random"),
-      onClick = randomWallpaper,
-    }),
-    ui.button({
-      glyph = "folder",
-      variant = "ghost",
-      tooltip = tr("folder"),
-      onClick = function()
-        if currentDir ~= "" then
-          noctalia.runAsync({ "xdg-open", currentDir })
-        end
-      end,
-    }),
-    ui.button({
-      glyph = "refresh",
-      variant = "ghost",
-      tooltip = tr("refresh"),
-      onClick = function() reload(true) end,
-    }),
-    ui.button({
-      glyph = "settings",
-      variant = "ghost",
-      tooltip = tr("settings"),
-      onClick = function() noctalia.openSettings() end,
-    }),
-    ui.button({
-      glyph = "close",
-      variant = "ghost",
-      tooltip = tr("close"),
-      onClick = function() panel.close() end,
-    }),
+  local children = {
+    ribbon,
+    ui.spacer({ key = "anchor-gap", width = 1, height = m.anchorGap }),
+    -- Dos anclas con claves alternas: Noctalia sólo vuelve a revelar un
+    -- descendente cuando la clave del `revealKey` cambia, así que se van
+    -- turnando para poder recentrar el scroll tantas veces como haga falta.
+    ui.box({ key = "anchor-0", width = 1, height = 1 }),
+    ui.box({ key = "anchor-1", width = 1, height = 1 }),
+    ui.spacer({ key = "tail", width = 1, height = SCROLL_TAIL }),
   }
 
-  local headerChildren = {
-    ui.column({ gap = 3, flexGrow = 1, align = "start" }, {
-      ui.label({
-        text = tr("title"),
-        fontSize = 23,
-        fontWeight = "bold",
-        color = "on_surface",
-      }),
-      ui.label({
-        text = tr("subtitle", {
-          count = #wallpapers,
-          directory = shortDirectory(currentDir),
-        }),
-        fontSize = 12,
-        color = "on_surface_variant",
-        maxLines = 1,
-      }),
-    }),
-  }
-  for _, button in ipairs(headerButtons) do
-    table.insert(headerChildren, button)
+  -- El relleno vertical del scroll compensa su propio desplazamiento: la
+  -- cinta se queda quieta en pantalla aunque el scroll se mueva. El scroll
+  -- mide en px de la superficie y el relleno se pasa en px lógicos, así que
+  -- el desplazamiento va dividido por la escala.
+  local compensation = scrollComp
+  if compensation == nil then
+    compensation = scrollOffset / uiScale() + m.pad
   end
-  local header = ui.row({ gap = 8, align = "center", paddingH = 2 }, headerChildren)
 
-  local footer = ui.row({
-    gap = 12,
-    align = "center",
-    paddingH = 2,
-    paddingV = 8,
-  }, {
-    footerPreview,
-    ui.column({ gap = 2, flexGrow = 1, align = "start" }, {
-      ui.label({
-        text = footerText,
-        fontSize = 12,
-        fontWeight = "bold",
-        color = "on_surface",
-        maxLines = 1,
-      }),
-      ui.label({
-        text = tr("hint"),
-        fontSize = 10,
-        color = "on_surface_variant",
-        maxLines = 1,
-      }),
-    }),
-    ui.column({ gap = 3, width = 150, align = "stretch" }, {
-      ui.label({
-        text = tr("size"),
-        fontSize = 10,
-        color = "on_surface_variant",
-      }),
-      ui.slider({
-        min = 0.7,
-        max = 1.4,
-        step = 0.05,
-        value = cfg.cardScale,
-        onChange = function(value)
-          cfg.cardScale = clamp(tonumber(value) or cfg.cardScale, 0.7, 1.4)
-          render()
-        end,
-      }),
-    }),
-    ui.button({
-      text = tr("apply"),
-      glyph = "check",
-      variant = "primary",
-      enabled = selectedPath ~= nil,
-      onClick = apply,
-    }),
-  })
-
-  local rootChildren = {}
-  if not cfg.minimal then
-    table.insert(rootChildren, header)
-    table.insert(rootChildren, ui.separator({ color = "outline/0.35" }))
-  end
-  table.insert(rootChildren, ui.column({
+  local scroll = ui.scroll({
+    key = "carousel-scroll",
     flexGrow = 1,
-    justify = "center",
-    align = "stretch",
-  }, {
-    carousel,
-  }))
-  if not cfg.minimal then
-    table.insert(rootChildren, ui.separator({ color = "outline/0.25" }))
-    table.insert(rootChildren, footer)
-  else
-    -- Modo minimalista: solo un pie compacto con el botón de aplicar.
+    fill = "#00000000",
+    paddingV = compensation,
+    onScroll = "onScroll",
+    revealKey = scrollReveal % 2 == 0 and "anchor-0" or "anchor-1",
+  }, children)
+
+  local rootChildren = { scroll }
+
+  if cfg.chrome then
+    local selectedPath = wallpapers[selected]
+    local selectedThumb = selectedPath and imagePathFor(selectedPath, 0) or nil
+    local footerPreview
+    if selectedThumb then
+      footerPreview = ui.image({
+        path = selectedThumb,
+        width = 40,
+        height = 40,
+        fit = "cover",
+        radius = 8,
+      })
+    else
+      footerPreview = ui.box({ width = 40, height = 40, radius = 8, fill = "surface_variant" })
+    end
     table.insert(rootChildren, ui.row({
-      gap = 8,
+      gap = 12,
       align = "center",
-      justify = "end",
-      paddingH = 2,
-      paddingV = 4,
+      paddingH = 12,
+      paddingV = 8,
     }, {
       footerPreview,
-      ui.label({
-        text = footerText,
-        fontSize = 11,
-        color = "on_surface_variant",
-        maxLines = 1,
+      ui.column({ gap = 2, flexGrow = 1, align = "start" }, {
+        ui.label({
+          text = cfg.showFilenames and basename(selectedPath) or tr("title"),
+          fontSize = 12,
+          fontWeight = "bold",
+          color = "on_surface",
+          maxLines = 1,
+        }),
+        ui.label({
+          text = tr("hint"),
+          fontSize = 10,
+          color = "on_surface_variant",
+          maxLines = 1,
+        }),
       }),
       ui.button({
         text = tr("apply"),
@@ -780,11 +738,17 @@ render = function()
     }))
   end
 
+  local scrim = cfg.scrim
+  local fill = "#00000000"
+  if scrim > 0 then
+    fill = string.format("#%02X%02X%02X%02X", 0, 0, 0, math.floor(scrim * 255 + 0.5))
+  end
+
   panel.render(ui.column({
     flexGrow = 1,
-    fill = "#00000000",
-    padding = cfg.minimal and 12 or 24,
-    gap = cfg.minimal and 6 or 14,
+    fill = fill,
+    padding = 0,
+    gap = 0,
     align = "stretch",
   }, rootChildren))
 end
@@ -804,7 +768,18 @@ selectIndex = function(index)
 end
 
 move = function(delta)
-  selectIndex(selected + delta)
+  if #wallpapers == 0 then
+    return
+  end
+  local next = selected + delta
+  -- La cinta es circular: al pasar del final vuelve al principio.
+  while next > #wallpapers do
+    next = next - #wallpapers
+  end
+  while next < 1 do
+    next = next + #wallpapers
+  end
+  selectIndex(next)
 end
 
 randomWallpaper = function()
@@ -853,7 +828,7 @@ reload = function(keepSelection)
   scanWallpapers()
   if #wallpapers == 0 then
     selected = 1
-    viewPos = 1
+    viewPos = 1.0
     animating = false
     panel.setNeedsFrameTick(false)
     render()
@@ -862,9 +837,35 @@ reload = function(keepSelection)
   selected = indexOfPath(previous) or indexOfPath(currentWallpaperPath()) or 1
   viewPos = selected
   animating = false
+  scrollOffset = 0
+  scrollSeen = 0
+  scrollAccum = 0
   panel.setNeedsFrameTick(false)
   render()
   ensureThumbs()
+end
+
+-- Recentra el scroll: el ancla está tan abajo que al revelarla el scroll
+-- salta SCROLL_JUMP px hacia arriba, dejando sitio para seguir subiendo. El
+-- relleno se adelanta al salto para que la cinta no dé un tirón.
+local function recenterScroll()
+  local m = metrics()
+  local scale = uiScale()
+  -- El scroll salta hacia arriba para reabrir el recorrido. El salto se
+  -- calcula con el relleno que Noctalia va a dejar puesto (revealKey apunta
+  -- al ancla), de modo que la cinta no se mueve ni un píxel.
+  local target = scrollOffset + SCROLL_JUMP * scale
+  local anchorOffset = (m.ribbonHeight + m.anchorGap) * scale
+  local viewport = panelHeight() - VIEWPORT_PADDING * 2
+  scrollComp = (target - anchorOffset - scale + viewport) / scale
+  scrollResetting = true
+  scrollReveal = scrollReveal + 1
+  scrollOffset = target
+  scrollSeen = target
+  scrollAccum = 0
+  scrollSettled = true
+  render()
+  scrollComp = nil
 end
 
 function onOpen(_context)
@@ -876,15 +877,30 @@ function onOpen(_context)
   selected = indexOfPath(currentWallpaperPath()) or 1
   viewPos = selected
   animating = false
+  hovered = nil
+  heldKey = nil
+  scrollOffset = 0
+  scrollSeen = 0
+  scrollAccum = 0
+  scrollSettled = true
+  scrollResetting = false
   thumbErrorShown = false
-  panel.setNeedsFrameTick(false)
+  -- El frame tick se queda activo siempre: sirve para la animación de la
+  -- cinta, para el autorepeat de las teclas y para consumir la rueda.
+  panel.setNeedsFrameTick(true)
   render()
-  ensureThumbs()
+  -- El scroll arranca en cero, sin recorrido hacia arriba: se recentra en el
+  -- primer frame para que la rueda pueda ir en ambos sentidos. Las miniaturas
+  -- tambien se piden ahi, para que onOpen no se coma el presupuesto de CPU.
+  pendingRecenter = true
+  pendingThumbs = true
 end
 
 function onClose()
   opened = false
   animating = false
+  heldKey = nil
+  panel.setNeedsFrameTick(false)
   noctalia.state.set("carousel.open", false)
 end
 
@@ -894,73 +910,141 @@ function onConfigChanged()
   end
 end
 
-function onFrameTick(deltaMs)
-  if not animating then
-    panel.setNeedsFrameTick(false)
-    return
-  end
-  local dt = tonumber(deltaMs) or 16
-  local difference = selected - viewPos
-  if math.abs(difference) < 0.005 then
-    viewPos = selected
-    animating = false
-    panel.setNeedsFrameTick(false)
+-- Desplazamiento vertical del scroll. No mueve el carrusel directamente: se
+-- acumula el delta y se aplica cuando el scroll se estabiliza, para que un
+-- solo dentado mueva un solo fondo aunque la animación dure varios frames.
+function onScroll(offset, _maxOffset)
+  local newOffset = tonumber(offset) or 0
+
+  if scrollResetting then
+    scrollResetting = false
+    scrollOffset = newOffset
+    scrollSeen = newOffset
+    scrollAccum = 0
+    scrollSettled = true
     render()
-    ensureThumbs()
     return
   end
-  -- Constante de tiempo mayor y proporcional a la distancia: el desplazamiento
-  -- se ve (y con él el movimiento interno de las miniaturas).
-  local timeConstant = 130 + math.min(420, math.abs(difference) * 10)
+
+  -- Cuando el scroll llega al principio no puede seguir subiendo: se recentra
+  -- saltando hacia abajo para reabrir el recorrido.
+  if newOffset <= 0.5 then
+    recenterScroll()
+    return
+  end
+
+  scrollOffset = newOffset
+end
+
+function onFrameTick(deltaMs)
+  local dt = tonumber(deltaMs) or 16
+
+  -- 0. El primer frame recentra el scroll, para que la rueda tenga recorrido
+  --    hacia arriba desde el principio, y pide las miniaturas.
+  if pendingRecenter then
+    pendingRecenter = false
+    recenterScroll()
+  end
+  if pendingThumbs then
+    pendingThumbs = false
+    ensureThumbs()
+  end
+
+  -- 1. Rueda del ratón: se acumula mientras el scroll se mueve y se aplica
+  --    el salto cuando se para.
+  if math.abs(scrollOffset - scrollSeen) > 0.5 then
+    scrollAccum = scrollAccum + (scrollOffset - scrollSeen)
+    scrollSeen = scrollOffset
+    scrollSettled = false
+  elseif not scrollSettled then
+    scrollSettled = true
+    local accumulated = scrollAccum
+    scrollAccum = 0
+    local steps = math.floor(math.abs(accumulated) / SCROLL_STEP + 0.5)
+    if steps > 0 then
+      move(accumulated > 0 and steps or -steps)
+    end
+  end
+
+  -- 2. Autorepeat de las flechas: la pulsación repetida del teclado no llega
+  --    al script, así que se reproduce aquí con el frame tick.
+  if heldKey then
+    heldElapsed = heldElapsed + dt
+    if heldElapsed >= KEY_REPEAT_DELAY then
+      heldRepeat = heldRepeat + dt
+      while heldRepeat >= KEY_REPEAT_RATE do
+        heldRepeat = heldRepeat - KEY_REPEAT_RATE
+        move(heldKey)
+      end
+    end
+  end
+
+  -- 3. Animación de la cinta: la posición visible persigue a la seleccionada.
+  local difference = selected - viewPos
+  if math.abs(difference) < 0.002 then
+    if animating then
+      viewPos = selected
+      animating = false
+      render()
+      ensureThumbs()
+    end
+    return
+  end
+  local timeConstant = 120 + math.min(380, math.abs(difference) * 12)
   local factor = 1 - math.exp(-dt / timeConstant)
   viewPos = viewPos + difference * factor
   render()
 end
 
 function onKey(chord, pressed)
-  if not pressed or #wallpapers == 0 then
-    return
-  end
-  if chord == "Left" or chord == "k" then
-    move(-1)
-  elseif chord == "Right" or chord == "j" then
-    move(1)
-  elseif chord == "Return" or chord == "space" then
-    apply()
-  elseif chord == "Home" then
-    selectIndex(1)
-  elseif chord == "End" then
-    selectIndex(#wallpapers)
-  elseif chord == "r" then
-    randomWallpaper()
-  elseif chord == "Escape" then
-    panel.close()
-  end
-end
-
-local lastWheelTime = 0
-
-function onScroll(axis, steps, _startsGesture)
   if #wallpapers == 0 then
     return
   end
-  if axis ~= "vertical" and axis ~= "horizontal" then
-    return
-  end
-  local now = os.clock()
-  if now - lastWheelTime < 0.07 then
-    return
-  end
-  lastWheelTime = now
-  if (steps or 0) > 0 then
-    move(1)
-  else
-    move(-1)
+  if chord == "Left" or chord == "h" or chord == "k" then
+    if pressed then
+      heldKey = -1
+      heldElapsed = 0
+      heldRepeat = 0
+      move(-1)
+    else
+      heldKey = nil
+    end
+  elseif chord == "Right" or chord == "l" or chord == "j" then
+    if pressed then
+      heldKey = 1
+      heldElapsed = 0
+      heldRepeat = 0
+      move(1)
+    else
+      heldKey = nil
+    end
+  elseif chord == "Return" or chord == "space" then
+    if pressed then
+      apply()
+    end
+  elseif chord == "Home" then
+    if pressed then
+      selectIndex(1)
+    end
+  elseif chord == "End" then
+    if pressed then
+      selectIndex(#wallpapers)
+    end
+  elseif chord == "r" then
+    if pressed then
+      randomWallpaper()
+    end
+  elseif chord == "Escape" then
+    panel.close()
   end
 end
 
 function onIpc(event, _payload)
   if event == "refresh" and opened then
     reload(true)
+  elseif event == "next" and opened then
+    move(1)
+  elseif event == "prev" and opened then
+    move(-1)
   end
 end

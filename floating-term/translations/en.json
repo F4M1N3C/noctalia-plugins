@@ -1,40 +1,64 @@
 {
+  "add_widget": "Add widget",
   "close": "Close",
-  "empty": "No commands configured. Add some in Settings → Plugins.",
+  "close_all": "Close all windows",
+  "delete_widget": "Delete widget",
+  "edit_mode": "Edit widgets",
+  "edit_widget": "Edit widget",
+  "empty": "No widgets configured. Add some in Settings → Plugins or with the pencil button.",
+  "field_command": "Command (e.g. cava)",
+  "field_layout": "Layout (e.g. bottom-center, 1610x584)",
+  "field_name": "Name",
   "focused_output": "focused monitor",
-  "hint": "Each row uses its entry in “Layouts”; if missing, the fallback geometry is used. Edit everything with the gear button.",
   "launch_failed": "Could not launch the terminal.",
-  "layout_custom": "absolute",
   "layout_auto": "auto",
+  "layout_custom": "absolute",
   "layout_global": "global · {width}×{height}",
   "layout_invalid": "invalid layout",
   "missing_command": "No command configured for {name}.",
+  "need_name": "The widget needs a name.",
+  "nothing_to_rotate": "There are not enough open windows to rotate.",
+  "open_all": "Open all (rotates them when they are already open)",
   "open_settings": "Open settings",
-  "overlap_tooltip": "When launching, a window that would collide with an open one moves to the closest free spot.",
-  "overlap_warning": "These windows overlap: {pairs}",
+  "rotate": "Rotate windows",
+  "save": "Save",
+  "save_failed": "Could not save the widget list: {detail}",
   "settings": {
+    "avoid_collisions": {
+      "description": "Move a window to the closest free spot when it would land on top of another one.",
+      "label": "Avoid overlapping windows"
+    },
+    "card_preview": {
+      "description": "Thumbnail of each widget: a screenshot of the window when it is open, or a mock card.",
+      "label": "Card preview",
+      "options": {
+        "auto": "Automatic",
+        "mock": "Mock",
+        "screenshot": "Screenshot"
+      }
+    },
     "close_on_launch": {
       "description": "Close the panel as soon as a terminal is launched.",
       "label": "Close panel after launch"
     },
-    "commands": {
-      "description": "Name = shell command. Each entry becomes a button in the panel.",
-      "label": "Commands"
+    "columns": {
+      "description": "Number of widget cards per row in the panel.",
+      "label": "Columns"
     },
-    "fonts": {
-      "description": "Optional kitty font per command: \"Family, size\". E.g.: lyrics = Departure Mono, 22. Only applies when the terminal is kitty; the font must be installed.",
-      "label": "Per-command font"
+    "commands": {
+      "description": "Name = shell command. Each entry becomes a card in the panel. Entries added here are merged with the built-in ones, so nothing is lost.",
+      "label": "Commands"
     },
     "glyph": {
       "description": "Icon shown in the bar.",
       "label": "Bar glyph"
     },
     "height": {
-      "description": "Height for commands without a Layouts entry.",
+      "description": "Height for widgets without a Layouts entry.",
       "label": "Fallback height"
     },
     "layouts": {
-      "description": "One entry per command: anchor, size and optional offset. E.g.: cava = bottom-center, 1610x584; lavat = bottom-left, 802x582; unimatrix = right-center, 869x1424. Anchors: any combination of top, left, center, right and bottom. Use custom, WxH, x, y for absolute monitor coordinates.",
+      "description": "One entry per widget: anchor, size and optional offset. E.g.: cava = bottom-center, 1610x584; lavat = bottom-left, 802x582; unimatrix = right-center, 869x1424. Anchors: any combination of top, left, center, right and bottom. Use custom, WxH, x, y for absolute monitor coordinates.",
       "label": "Per-command layouts"
     },
     "margin": {
@@ -49,25 +73,39 @@
       "description": "If the command's window is already open, focus it and reapply its geometry instead of opening another one.",
       "label": "Reuse open window"
     },
+    "rotation": {
+      "description": "How the open windows swap places when the rotate button is pressed.",
+      "label": "Rotation",
+      "options": {
+        "clockwise": "Clockwise",
+        "counterclockwise": "Counterclockwise",
+        "opposite": "Opposite corner",
+        "pairs": "Swap in pairs",
+        "shuffle": "Shuffle"
+      }
+    },
+    "rotation_sizes": {
+      "description": "Also swap the window sizes when they rotate.",
+      "label": "Swap sizes too"
+    },
     "terminal": {
       "description": "Terminal prefix (kitty-style flags: --class, --title, -e).",
       "label": "Terminal command"
     },
     "width": {
-      "description": "Width for commands without a Layouts entry.",
+      "description": "Width for widgets without a Layouts entry.",
       "label": "Fallback width"
     },
     "x": {
-      "description": "Fallback horizontal position (monitor coordinates) for commands without Layouts.",
+      "description": "Fallback horizontal position (monitor coordinates) for widgets without Layouts.",
       "label": "Fallback X position"
     },
     "y": {
-      "description": "Fallback vertical position (monitor coordinates) for commands without Layouts.",
+      "description": "Fallback vertical position (monitor coordinates) for widgets without Layouts.",
       "label": "Fallback Y position"
     }
   },
   "subtitle": "{terminal} · {margin} px margin · {output}",
-  "title": "Floating Terminal",
-  "tooltip": "Floating terminal apps",
-  "open_all": "Open all"
+  "title": "Term Deck",
+  "tooltip": "Floating terminal widgets"
 }

@@ -1,8 +1,7 @@
-# Floating Term
+# Term Deck
 
-Launch terminal apps in floating windows with a per-command size, anchor and position, so
-`cava` can open at the bottom center, `unimatrix` on the right and `lavat` on the left
-without covering each other.
+A launcher for terminal apps that live in floating windows. Every command gets its own
+card, its own size and anchor, and the whole set can be re-arranged with one click.
 
 ## Plugin
 
@@ -15,23 +14,17 @@ without covering each other.
 
 The following executables must be installed and available on `PATH`:
 
-- `kitty` — the default terminal the plugin launches.
+- `kitty` — the terminal the plugin launches.
 - `hyprland` — the compositor; the plugin uses the Hyprland 0.56 Lua API to float and
   place every window.
-- `playerctl` — only needed by the bundled `lyrics` command.
-
-The default command set also expects `cava`, `cbonsai`, `unimatrix`, `pipes.sh`, `lavat`
-and `btop`. Every entry is editable, so any of them can be replaced or removed.
+- `grim` — optional, used to take the preview screenshot of an open window.
+- `python3` with `python-pillow` — optional, used to crop those screenshots.
 
 ## Usage
 
-Add the `launcher` widget from Noctalia's widget picker. Clicking it opens the launcher
-panel, where every configured command is a row. Clicking a row starts the command in a
-floating terminal window.
-
-The **grid button** in the panel header launches every configured command at once.
-Pressing it again re-arranges the windows that are already open, so the whole set can
-be re-positioned in one click.
+Add the `launcher` widget from Noctalia's widget picker. Clicking it opens the deck: one
+card per command, with a live preview of the window when it is already open. Clicking a
+card launches the command in a floating terminal window.
 
 The panel can also be opened directly:
 
@@ -39,42 +32,34 @@ The panel can also be opened directly:
 noctalia msg panel-toggle faminec/floating-term:panel
 ```
 
-A specific command can be launched through IPC:
+### Opening and re-arranging everything
 
-```sh
-noctalia msg plugin faminec/floating-term:panel all launch cava
-```
+The **grid button** in the panel header opens every configured command at once. When all
+of them are already open, the same button rotates them: each window takes the slot of
+the next one, so the set can be re-arranged with a single click. The rotation direction
+is configurable (clockwise, counterclockwise, opposite, pairs or shuffle) and it can
+also swap the sizes between the windows.
 
-Each terminal gets its own class (`noctalia-term-<name>`) and is started with a Hyprland
+Each terminal is started with its own class (`noctalia-term-<name>`) and a Hyprland
 execution rule:
 
 ```lua
 hl.dsp.exec_cmd("<terminal> ...", { float = true, move = { x, y }, size = { w, h } })
 ```
 
-If the command's window is already open, the plugin focuses it and re-applies its
-geometry instead of opening a second window.
-
-### The lyrics carousel
-
-`bin/lyrics-carousel` is a small self-contained widget shipped with the plugin. It reads
-the active MPRIS player with `playerctl`, looks the current lyrics up (LRCLIB, NetEase,
-and the Noctalia Lyrics plugin adapter when it is installed) and shows them in a vertical
-carousel with the active line highlighted character by character.
-
-Shortcuts inside the widget: `q` quits, `space` pauses, `d` reverses the scroll
-direction, `k` toggles the karaoke effect and `r` searches for the lyrics again.
+If a command is already open, the plugin focuses it and re-applies its geometry instead
+of opening a second window. When two windows would land on the same area, the plugin
+moves the new one to the closest free slot.
 
 ## Settings
 
-Configure the plugin in **Settings → Plugins → Floating Term** (the gear button in the
-panel opens the same page).
+Configure the plugin in **Settings → Plugins → Term Deck** (the gear button in the panel
+opens the same page).
 
 | Setting | Type | Default | Description |
 | --- | --- | --- | --- |
-| `commands` | `string_map` | `cava`, `cbonsai`, `unimatrix`, `pipes`, `lavat`, `btop`, `lyrics` | Name = shell command. Every entry becomes a row in the panel. |
+| `commands` | `string_map` | `cava`, `cbonsai`, `unimatrix`, `pipes`, `lavat`, `btop` | Name = shell command. Every entry becomes a card. |
 | `layouts` | `string_map` | see below | Size, anchor and optional offset for every command. |
-| `fonts` | `string_map` | `lyrics = Departure Mono, 22` | Font per command (`kitty` only), written as `Family, size`. |
 | `margin` | `int` | `16` | Margin in pixels from the monitor edges for anchored layouts. |
 | `output` | `string` | empty | Monitor connector the windows open on (for example `DP-1`). Empty = focused monitor. |
 | `reuse_existing` | `bool` | `true` | Focus the existing window instead of opening another one. |
@@ -85,6 +70,11 @@ panel opens the same page).
 | `y` | `int` | `140` | Fallback Y position (monitor coordinates). |
 | `glyph` | `glyph` | `terminal-2` | Bar icon. |
 | `close_on_launch` | `bool` | `true` | Close the panel as soon as a command is launched. |
+| `rotation` | `select` | `clockwise` | How the windows are rotated: `clockwise`, `counterclockwise`, `opposite`, `pairs` or `shuffle`. |
+| `rotation_sizes` | `bool` | `false` | Swap the sizes between the windows when rotating. |
+| `columns` | `int` | `2` | Columns of the card grid (1 to 3). |
+| `card_preview` | `select` | `auto` | Card preview: `auto` (screenshot when possible), `screenshot` or `mock`. |
+| `avoid_collisions` | `bool` | `true` | Move a window to the closest free slot when its layout collides with another one. |
 
 ### Layout format
 
@@ -96,7 +86,6 @@ unimatrix = "right-center, 869x1424"
 pipes     = "bottom-right, 900x520"
 btop      = "top-left, 928x800"
 lavat     = "bottom-left, 802x582"
-lyrics    = "center, 1200x820"
 ```
 
 Anchors: `top-left`, `top-center`, `top-right`, `left-center`, `center`,
@@ -122,8 +111,14 @@ btop = "x=8 y=8 w=928 h=800"
 ```sh
 noctalia msg panel-toggle faminec/floating-term:panel
 noctalia msg plugin faminec/floating-term:panel all launch <command>
+noctalia msg plugin faminec/floating-term:panel all open-all
+noctalia msg plugin faminec/floating-term:panel all rotate
+noctalia msg plugin faminec/floating-term:panel all close-all
 noctalia msg plugin faminec/floating-term:panel all refresh
 ```
+
+The panel entry is only reachable over IPC while the panel is open; the other session's
+runtime is created on demand.
 
 ## Notes
 
@@ -136,7 +131,11 @@ noctalia msg plugin faminec/floating-term:panel all refresh
   geometry.
 - `kitty` is started with `-o confirm_os_window_close=0` so closing the window does not
   show a confirmation dialog.
-- The `fonts` setting is only applied when the terminal is `kitty`; it is translated to
-  `-o font_family=... -o font_size=...`.
-- The `lyrics` command makes network requests to the lyrics providers; every other
-  command is fully local.
+- The list of commands is merged at runtime: the manifest defaults, whatever is set in
+  the plugin settings and whatever is edited in the panel. Adding a command in the
+  settings never removes the others, and the defaults can be removed from the panel.
+- The card previews take a screenshot of the window area with `grim` and crop it with
+  Pillow. `grim` does not accept an output and a geometry at the same time, so the
+  helper captures the whole output and crops it itself.
+- The plugin spawns `kitty`, `hyprctl` and (for the previews) `grim`; it makes no network
+  requests.

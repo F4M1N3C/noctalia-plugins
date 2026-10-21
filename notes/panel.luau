@@ -593,7 +593,11 @@ local function dirSignature()
   table.sort(list)
   local parts = {}
   for _, name in ipairs(list) do
-    if name:sub(1, 1) ~= "." then
+    -- Solo las notas y el archivo de fijados: otros archivos de la carpeta
+    -- no interesan al panel.
+    local isNote = name:sub(1, 1) ~= "." and hasSuffix(name)
+    local isPins = name == ".pinned.json"
+    if isNote or isPins then
       local info = noctalia.fileInfo(notePath(name))
       local size = info ~= nil and info.size or 0
       local mtime = info ~= nil and info.mtime or 0

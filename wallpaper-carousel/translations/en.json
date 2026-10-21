@@ -7,7 +7,7 @@
   "empty_hint": "Choose another folder in Settings → Plugins.",
   "filename": "{name}",
   "folder": "Open folder",
-  "hint": "← → browse · Enter apply · Esc close",
+  "hint": "← → browse · scroll browse · Enter apply · Esc close",
   "missing_file": "The file no longer exists.",
   "next": "Next wallpaper",
   "prev": "Previous wallpaper",
@@ -15,12 +15,24 @@
   "refresh": "Rescan",
   "settings": {
     "apply_all": {
-      "description": "Apply to every monitor; when off, only the focused monitor.",
+      "description": "Apply to every monitor; when off, only to the focused monitor.",
       "label": "Apply to all outputs"
     },
-    "card_scale": {
-      "description": "Initial card size (also adjustable from the panel slider).",
-      "label": "Card scale"
+    "base_scale": {
+      "description": "Size of the cards around the selected one.",
+      "label": "Side card scale"
+    },
+    "card_height": {
+      "description": "Height of the selected card, in logical pixels.",
+      "label": "Card height"
+    },
+    "card_width": {
+      "description": "Width of the selected card, in logical pixels.",
+      "label": "Card width"
+    },
+    "chrome": {
+      "description": "Show the footer with the file name and the apply button.",
+      "label": "Show the footer"
     },
     "close_on_apply": {
       "description": "Close the carousel after applying a wallpaper.",
@@ -30,29 +42,33 @@
       "description": "Leave empty to use Noctalia's configured wallpaper folder.",
       "label": "Wallpaper folder"
     },
-    "gap": {
-      "description": "Horizontal space between cards, in pixels.",
-      "label": "Gap"
-    },
     "glyph": {
       "description": "Icon shown in the bar.",
       "label": "Bar glyph"
     },
+    "hover_boost": {
+      "description": "How much the card under the pointer grows and brightens.",
+      "label": "Hover emphasis"
+    },
     "parallax": {
-      "description": "How much each thumbnail crop shifts based on its position.",
+      "description": "How much each thumbnail crop shifts with the card's position.",
       "label": "Parallax strength"
+    },
+    "scrim": {
+      "description": "Dark veil over the desktop. 0 keeps the background fully transparent.",
+      "label": "Scrim opacity"
+    },
+    "selected_scale": {
+      "description": "Size of the selected card relative to the side cards.",
+      "label": "Selected card scale"
     },
     "show_filenames": {
       "description": "Show the selected file name in the panel footer.",
       "label": "Show filenames"
     },
-    "minimal": {
-      "label": "Minimal mode",
-      "description": "Hide the header and footer for a minimal look."
-    },
-    "visible": {
-      "label": "Visible cards",
-      "description": "How many cards to show at once. 0 fills the screen."
+    "skew": {
+      "description": "How much the cards lean to the right. 0 gives straight cards.",
+      "label": "Card skew"
     }
   },
   "size": "Size",

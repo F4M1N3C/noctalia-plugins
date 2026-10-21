@@ -669,7 +669,7 @@ render = function()
   -- asi que el relleno tiene que contar solo las que si existen.
   local firstIndex = math.max(1, center - m.half)
   local lead = viewportWidth() / 2 - cfg.cardWidth / 2 - (center - firstIndex) * cfg.cardWidth
-  table.insert(nodes, 2, ui.spacer({
+  table.insert(nodes, 1, ui.spacer({
     key = "lead",
     width = math.max(0, math.floor(lead - fraction * cfg.cardWidth + 0.5)),
     height = 1,

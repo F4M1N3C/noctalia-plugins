@@ -22,6 +22,9 @@ local CARD_GAP = 10
 local CARD_PADDING = 8
 local DETAILS_HEIGHT = 32
 local PREVIEW_RATIO = 0.5
+-- Margen de tolerancia: dos ventanas que se tocan (1-2 px) no cuentan como
+-- solapadas, así una posición configurada no se mueve por un roce.
+local OVERLAP_TOLERANCE = 4
 
 local cfg = {
   terminal = "kitty",
@@ -54,6 +57,22 @@ local state = {
   launching = {},
   open = false,
 }
+
+-- Las funciones se referencian entre sí (una tarjeta llama a render() y
+-- render() dibuja las tarjetas), así que se declaran antes de definirlas.
+local render
+local card
+local header
+local editorCard
+local launch
+local startEditing
+local deleteWidget
+local saveForm
+local refreshWindows
+local captureThumbs
+local openAll
+local rotateWindows
+local closeAllWindows
 
 local function tr(key, args)
   return noctalia.tr(key, args)
@@ -236,13 +255,16 @@ end
 -- ------------------------------------------------------------- ventanas --
 
 local function rectsOverlap(a, b)
-  return a.x < b.x + b.w and b.x < a.x + a.w and a.y < b.y + b.h and b.y < a.y + a.h
+  local tolerance = OVERLAP_TOLERANCE
+  return a.x + tolerance < b.x + b.w
+    and b.x + tolerance < a.x + a.w
+    and a.y + tolerance < b.y + b.h
+    and b.y + tolerance < a.y + a.h
 end
 
 -- Zonas ocupadas por las ventanas del plugin en el monitor de destino.
 local function collectOccupied(clients, monitors, targetOutput)
   local occupied = {}
-  local map = classMap()
   for _, client in ipairs(clients or {}) do
     if win.isPluginClass(client.class) then
       local monitor = (monitors or {})[client.monitor]
@@ -326,7 +348,7 @@ end
 
 -- ------------------------------------------------------------- miniaturas --
 
-local function captureThumbs()
+captureThumbs = function()
   if cfg.cardPreview == "mock" then
     return
   end
@@ -362,7 +384,15 @@ end
 
 -- ------------------------------------------------------------- acciones --
 
-local function refreshWindows(callback)
+local function refresh()
+  refreshWindows(function()
+    if state.open then
+      render()
+    end
+  end)
+end
+
+refreshWindows = function(callback)
   win.list(function(clients)
     win.monitors(function(monitors)
       local map = classMap()
@@ -388,7 +418,7 @@ end
 
 -- Abre (o enfoca) un widget. El debounce evita que un doble clic rápido
 -- abra dos ventanas iguales.
-local function launch(name, opts)
+launch = function(name, opts)
   opts = opts or {}
   local command = state.commands[name]
   if type(command) ~= "string" or command == "" then
@@ -410,18 +440,14 @@ local function launch(name, opts)
 
   local geometry = resolveGeometry(name)
 
-  local function done()
+  local function finish(doRefresh)
     state.launching[class] = nil
     if opts.onDone ~= nil then
       opts.onDone()
       return
     end
-    if not opts.quiet then
-      refreshWindows(function()
-        if state.open then
-          render()
-        end
-      end)
+    if doRefresh ~= false then
+      refresh()
     end
   end
 
@@ -434,7 +460,9 @@ local function launch(name, opts)
 
       local existing = findByClass(clients, class)
       if existing ~= nil and cfg.reuseExisting then
-        win.focusExisting(class, geometry, done)
+        win.focusExisting(class, geometry, function()
+          finish(true)
+        end)
       else
         win.spawn({
           terminal = cfg.terminal,
@@ -447,15 +475,11 @@ local function launch(name, opts)
             noctalia.notifyError(tr("title"), tr("launch_failed"))
           end,
         }, function()
-          done()
           -- La miniatura se toma cuando la ventana ya está mapeada.
           noctalia.runAsync({ "sleep", "1.2" }, function()
-            refreshWindows(function()
-              if state.open then
-                render()
-              end
-            end)
+            refresh()
           end)
+          finish(false)
         end)
       end
     end)
@@ -463,7 +487,7 @@ local function launch(name, opts)
 end
 
 -- Rota las ventanas abiertas entre sí.
-local function rotateWindows()
+rotateWindows = function()
   win.list(function(clients)
     win.monitors(function(monitors)
       local map = classMap()
@@ -477,18 +501,16 @@ local function rotateWindows()
       end
 
       win.rotate(windows, cfg.rotation, cfg.rotationSizes, function()
-        refreshWindows(function()
-          if state.open then
-            render()
-          end
-        end)
+        refresh()
       end)
     end)
   end)
 end
 
--- Abre los widgets que falten. Si ya estaban todos abiertos, los rota.
-local function openAll()
+-- Abre los widgets que falten, uno detrás de otro (así cada uno ve las
+-- ventanas que ya están abiertas y no se pisan). Si ya estaban todos
+-- abiertos, los rota.
+openAll = function()
   win.list(function(clients)
     win.monitors(function(monitors)
       local map = classMap()
@@ -513,11 +535,7 @@ local function openAll()
       if #missing == 0 then
         if #windows >= 2 then
           win.rotate(windows, cfg.rotation, cfg.rotationSizes, function()
-            refreshWindows(function()
-              if state.open then
-                render()
-              end
-            end)
+            refresh()
           end)
         else
           noctalia.notify(tr("title"), tr("nothing_to_rotate"))
@@ -525,27 +543,28 @@ local function openAll()
         return
       end
 
-      local pending = #missing
-      for _, name in ipairs(missing) do
+      local index = 0
+      local function nextWidget()
+        index = index + 1
+        local name = missing[index]
+        if name == nil then
+          refresh()
+          return
+        end
         launch(name, {
           quiet = true,
           onDone = function()
-            pending = pending - 1
-            if pending <= 0 then
-              refreshWindows(function()
-                if state.open then
-                  render()
-                end
-              end)
-            end
+            nextWidget()
           end,
         })
       end
+
+      nextWidget()
     end)
   end)
 end
 
-local function closeAllWindows()
+closeAllWindows = function()
   win.list(function(clients)
     win.monitors(function(monitors)
       local map = classMap()
@@ -553,11 +572,7 @@ local function closeAllWindows()
         return map[class]
       end)
       win.closeAll(windows, function()
-        refreshWindows(function()
-          if state.open then
-            render()
-          end
-        end)
+        refresh()
       end)
     end)
   end)
@@ -565,7 +580,7 @@ end
 
 -- ------------------------------------------------------------- edición --
 
-local function startEditing(name)
+startEditing = function(name)
   state.editing = true
   state.editTarget = name
   state.editSession = state.editSession + 1
@@ -581,7 +596,7 @@ local function startEditing(name)
   render()
 end
 
-local function saveForm()
+saveForm = function()
   local name = util.trim(state.form.name)
   local command = util.trim(state.form.command)
   local layout = util.trim(state.form.layout)
@@ -610,7 +625,7 @@ local function saveForm()
   render()
 end
 
-local function deleteWidget(name)
+deleteWidget = function(name)
   storeLib.remove(state.store, name)
   local saved, err = storeLib.save(state.store)
   if not saved then
@@ -622,11 +637,7 @@ local function deleteWidget(name)
   local window = state.windows[name]
   if window ~= nil then
     win.closeWindow(window.address, function()
-      refreshWindows(function()
-        if state.open then
-          render()
-        end
-      end)
+      refresh()
     end)
   end
 
@@ -714,7 +725,7 @@ local function cardPreview(name)
   return mockPreview(name)
 end
 
-local function card(name)
+card = function(name)
   local hovered = state.hovered == name
   local running = state.windows[name] ~= nil
   local command = state.commands[name] or ""
@@ -807,7 +818,7 @@ local function card(name)
   return ui.column(cardProps, children)
 end
 
-local function editorCard()
+editorCard = function()
   local session = state.editSession
   local children = {}
 
@@ -863,7 +874,7 @@ local function editorCard()
   }, children)
 end
 
-local function header()
+header = function()
   local outputLabel = cfg.output ~= "" and cfg.output or tr("focused_output")
   local subtitle = tr("subtitle", {
     terminal = cfg.terminal,
@@ -940,7 +951,7 @@ local function header()
   return ui.row({ gap = 4, align = "center" }, { title, ui.row({ gap = 2, align = "center" }, buttons) })
 end
 
-local function render()
+render = function()
   if not state.open then
     return
   end

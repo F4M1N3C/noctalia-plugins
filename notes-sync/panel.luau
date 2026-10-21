@@ -11,6 +11,11 @@
 
 local PANEL_ID = "faminec/notes-sync:panel"
 
+-- `render` se usa en onSendCurrent, que está por encima de su definición.
+-- En Luau un `local` solo existe desde su declaración, así que se declara
+-- aquí: si no, esas llamadas caen en un global sin valor (nil).
+local render
+
 local sync = {}
 local busy = false
 
@@ -128,11 +133,13 @@ local function serviceId()
   return PANEL_ID:gsub(":panel$", ":service")
 end
 
-local function onOpenNotes()
+-- Los manejadores referenciados por nombre (`onClick = "onOpenNotes"`) tienen
+-- que ser globales: Noctalia los busca en el ambito global de la entrada.
+function onOpenNotes()
   noctalia.runAsync("noctalia msg panel-open " .. shellQuote(notesPanelId()))
 end
 
-local function onSendCurrent()
+function onSendCurrent()
   local name = currentNote()
   if name == nil then
     noctalia.notifyError(tr("title"), tr("errors.no_note_open"))
@@ -151,17 +158,15 @@ local function onSendCurrent()
   render()
 end
 
-local function onRefresh()
+function onRefresh()
   noctalia.runAsync("noctalia msg plugin " .. shellQuote(serviceId()) .. " all refresh")
 end
 
-local function onOpenSettings()
+function onOpenSettings()
   noctalia.openSettings()
 end
 
 -- ------------------------------------------------------------------ render
-
-local render
 
 local function body()
   local s = readSync()

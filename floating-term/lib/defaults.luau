@@ -223,6 +223,12 @@ local function parseManifest(text)
   return result
 end
 
+-- Olvida el manifiesto cacheado (solo para pruebas o si el manifiesto cambia
+-- en caliente).
+function M.reset()
+  cached = nil
+end
+
 function M.load()
   if cached ~= nil then
     return {

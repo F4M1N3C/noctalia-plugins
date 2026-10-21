@@ -88,21 +88,22 @@ def capture(item: dict) -> None:
                 # Recorte manual: la captura viene a la escala de la salida,
                 # mientras que la zona está en coordenadas lógicas.
                 scale = output_scale(output)
-                if scale != 1.0:
-                    box = (
-                        int(round(x * scale)),
-                        int(round(y * scale)),
-                        int(round((x + w) * scale)),
-                        int(round((y + h) * scale)),
-                    )
-                    box = (
-                        max(0, box[0]),
-                        max(0, box[1]),
-                        min(image.width, box[2]),
-                        min(image.height, box[3]),
-                    )
-                    if box[2] > box[0] and box[3] > box[1]:
-                        image = image.crop(box)
+                box = (
+                    int(round(x * scale)),
+                    int(round(y * scale)),
+                    int(round((x + w) * scale)),
+                    int(round((y + h) * scale)),
+                )
+                box = (
+                    max(0, box[0]),
+                    max(0, box[1]),
+                    min(image.width, box[2]),
+                    min(image.height, box[3]),
+                )
+                if box[2] > box[0] and box[3] > box[1]:
+                    image = image.crop(box)
+                else:
+                    raise ValueError("la zona queda fuera de la salida")
             if image.size != (target_w, target_h):
                 image = image.resize((target_w, target_h), Image.LANCZOS)
             image.save(out)

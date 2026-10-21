@@ -47,6 +47,8 @@ local state = {
   layouts = {},
   store = nil,
   windows = {},
+  clients = {},
+  classNames = {},
   editing = false,
   editTarget = nil,
   editSession = 0,
@@ -347,6 +349,28 @@ end
 
 -- ------------------------------------------------------------- miniaturas --
 
+-- `hyprctl clients` devuelve las ventanas de la más alta a la más baja, así que
+-- se puede saber si otra ventana tapa a la del widget. Si está tapada, la
+-- captura mostraría otra cosa y es mejor no capturar.
+local function isMostlyCovered(clients, index, rect)
+  local covered = 0
+  for position = 1, index - 1 do
+    local other = clients[position]
+    local overlapX = math.min(rect.x + rect.w, other.x + other.w) - math.max(rect.x, other.x)
+    local overlapY = math.min(rect.y + rect.h, other.y + other.h) - math.max(rect.y, other.y)
+    if overlapX > 0 and overlapY > 0 then
+      covered = covered + (overlapX * overlapY)
+    end
+  end
+  local area = rect.w * rect.h
+  if area <= 0 then
+    return true
+  end
+  -- Cualquier solape relevante hace que la captura no sea fiel, así que con
+  -- un 2 % ya se considera tapada.
+  return (covered / area) > 0.02
+end
+
 captureThumbs = function()
   if cfg.cardPreview == "mock" then
     return
@@ -355,18 +379,27 @@ captureThumbs = function()
     return
   end
 
+  local clients = state.clients or {}
   local entries = {}
-  for _, name in ipairs(widgetNames()) do
-    local window = state.windows[name]
-    if window ~= nil and window.w > 0 and window.h > 0 then
-      table.insert(entries, {
-        name = name,
-        output = window.monitor.name,
-        x = window.x,
-        y = window.y,
-        w = window.w,
-        h = window.h,
-      })
+  for index, client in ipairs(clients) do
+    local name = state.classNames[client.class]
+    if name ~= nil and client.w > 0 and client.h > 0 then
+      local window = state.windows[name]
+      if window ~= nil and not isMostlyCovered(clients, index, {
+        x = client.x,
+        y = client.y,
+        w = client.w,
+        h = client.h,
+      }) then
+        table.insert(entries, {
+          name = name,
+          output = window.monitor.name,
+          x = window.x,
+          y = window.y,
+          w = window.w,
+          h = window.h,
+        })
+      end
     end
   end
 
@@ -399,6 +432,8 @@ refreshWindows = function(callback)
         return map[class]
       end)
 
+      state.clients = clients
+      state.classNames = map
       state.windows = {}
       for _, window in ipairs(windows) do
         if window.name ~= nil then
@@ -443,6 +478,12 @@ launch = function(name, opts)
     state.launching[class] = nil
     if opts.onDone ~= nil then
       opts.onDone()
+      return
+    end
+    -- `close_on_launch` cierra el panel al abrir una terminal (salvo que la
+    -- acción sea por lotes, como "abrir todos").
+    if cfg.closeOnLaunch and not opts.keepOpen then
+      panel.close()
       return
     end
     if doRefresh ~= false then
@@ -552,6 +593,7 @@ openAll = function()
         end
         launch(name, {
           quiet = true,
+          keepOpen = true,
           onDone = function()
             nextWidget()
           end,
@@ -1009,19 +1051,12 @@ end
 -- ------------------------------------------------------------- ciclo de vida --
 
 function onOpen(_context)
-  local t0 = os.clock()
   state.open = true
   loadConfig()
-  local t1 = os.clock()
   loadWidgets()
-  local t2 = os.clock()
-  noctalia.log(string.format("floating-term: T loadConfig=%.2fms loadWidgets=%.2fms", (t1-t0)*1000, (t2-t1)*1000))
   state.editing = false
   state.editTarget = nil
-  local t3 = os.clock()
   render()
-  local t4 = os.clock()
-  noctalia.log(string.format("floating-term: T render=%.2fms total=%.2fms", (t4-t3)*1000, (t4-t0)*1000))
   refreshWindows(function()
     if state.open then
       render()

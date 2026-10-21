@@ -51,6 +51,25 @@ If a command is already open, the plugin focuses it and re-applies its geometry 
 of opening a second window. When two windows would land on the same area, the plugin
 moves the new one to the closest free slot.
 
+### Editing the widget list
+
+The **pencil button** in the panel header switches to edit mode: every card grows a
+rename and a delete button, and an extra card at the end opens a small form with the
+name, the command and the layout of a new widget.
+
+The list is stored in the plugin's own data directory
+(`noctalia.pluginDataDir()/store.json`), not in the plugin settings, and it is merged
+with them at runtime:
+
+```
+defaults (plugin.toml)  ⊕  settings (Ajustes → Plugins)  ⊕  store (this panel)
+−  removed (deleted from the panel)
+```
+
+That is why adding a widget from the settings never removes the others, and why the
+built-in widgets can be deleted as well: a deleted name is remembered as a tombstone in
+the store.
+
 ## Settings
 
 Configure the plugin in **Settings → Plugins → Term Deck** (the gear button in the panel
@@ -114,6 +133,8 @@ noctalia msg plugin faminec/floating-term:panel all launch <command>
 noctalia msg plugin faminec/floating-term:panel all open-all
 noctalia msg plugin faminec/floating-term:panel all rotate
 noctalia msg plugin faminec/floating-term:panel all close-all
+noctalia msg plugin faminec/floating-term:panel all add "name|command|layout"
+noctalia msg plugin faminec/floating-term:panel all remove <name>
 noctalia msg plugin faminec/floating-term:panel all refresh
 ```
 
@@ -127,8 +148,6 @@ runtime is created on demand.
 - The size is re-applied shortly after the window is created, because the
   `persistent_size` rule in `windowrules.lua` restores the remembered size of the class
   and can override the requested one.
-- Outside Hyprland the plugin falls back to `noctalia.runInTerminal(command)`, without
-  geometry.
 - `kitty` is started with `-o confirm_os_window_close=0` so closing the window does not
   show a confirmation dialog.
 - The list of commands is merged at runtime: the manifest defaults, whatever is set in
@@ -136,6 +155,10 @@ runtime is created on demand.
   settings never removes the others, and the defaults can be removed from the panel.
 - The card previews take a screenshot of the window area with `grim` and crop it with
   Pillow. `grim` does not accept an output and a geometry at the same time, so the
-  helper captures the whole output and crops it itself.
+  helper captures the whole output and crops it itself. A window that is covered by
+  another one is not captured (the picture would show the wrong thing), so its card
+  keeps the mock thumbnail.
+- Clicking a card twice in a row does not open two windows: a short debounce (and the
+  `reuse_existing` behaviour) keeps a single window per command.
 - The plugin spawns `kitty`, `hyprctl` and (for the previews) `grim`; it makes no network
   requests.

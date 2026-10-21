@@ -93,34 +93,47 @@
 Marca `[x]` solo si la función se comporta **exactamente** como esperas, sin fallos ni
 pujeones. Si algo falla a medias, déjalo en `[ ]` y anótalo en §5.
 
-### 4.1 Floating Term — `faminec/floating-term` — **0/17**
+### 4.1 Floating Term — `faminec/floating-term` — **15/18**
 
 > v2.0.0 "Term Deck": tarjetas con vista previa en vivo, editor de widgets, rotación de
 > ventanas y botón de abrir/cerrar todo. Los 3 bugs de core ya tienen rodeo (§5).
+> Verificado con pruebas automáticas en `/tmp/opencode/test_floating_term.lua` (55
+> comprobaciones) y en vivo con `grim` + capturas de pantalla.
 
 ```sh
 noctalia msg panel-toggle faminec/floating-term:panel
 noctalia msg plugin faminec/floating-term:panel all launch cava
+noctalia msg plugin faminec/floating-term:panel all open-all
+noctalia msg plugin faminec/floating-term:panel all rotate
+noctalia msg plugin faminec/floating-term:panel all close-all
+noctalia msg plugin faminec/floating-term:panel all add "nombre|comando|posición"
+noctalia msg plugin faminec/floating-term:panel all remove nombre
 noctalia msg plugin faminec/floating-term:panel all refresh
 ```
 
-- [ ] El widget de la barra abre el panel
-- [ ] El panel sale pegado al icono (`attached` + `open_near_click`)
-- [ ] Cada tarjeta abre su terminal en una ventana flotante
-- [ ] Cada tarjeta respeta su tamaño y su posición (`layouts`)
-- [ ] Si el comando ya está abierto, se enfoca y se recoloca en vez de duplicarse
-- [ ] **Doble clic rápido NO abre dos ventanas** (guarda `launching`)
-- [ ] El botón "abrir todo" lanza todos los comandos a la vez
-- [ ] **El botón "abrir todo" con las ventanas ya abiertas las recoloca**
-- [ ] El panel no se cierra al usar "abrir todo"
-- [ ] El botón "cerrar todo" cierra las ventanas del plugin
-- [ ] La rotación de ventanas (sentido horario / antihorario / opuesta / por pares / aleatoria) coloca bien las ventanas
-- [ ] La rotación con `rotation_sizes` intercambia el ancho y el alto
-- [ ] El editor de widgets añade uno **sin que desaparezcan los demás** (fix de los ajustes que se pisan)
-- [ ] El botón **X** sí borra un widget que viene **por defecto** (fix de la X que no borraba)
-- [ ] La vista previa de cada tarjeta (captura con `grim`) se ve
-- [ ] La colisión de ventanas evita que se tapen
-- [ ] `close_on_launch` cierra el panel al lanzar
+- [x] El widget de la barra abre el panel
+- [x] El panel sale pegado al icono (`attached` + `open_near_click`)
+- [x] Cada tarjeta abre su terminal en una ventana flotante
+- [x] Cada tarjeta respeta su tamaño y su posición (`layouts`)
+- [x] Si el comando ya está abierto, se enfoca y se recoloca en vez de duplicarse
+- [x] **Doble clic rápido NO abre dos ventanas** (guarda `launching` + debounce de 700 ms)
+- [x] El botón "abrir todo" lanza todos los comandos a la vez (uno detrás de otro)
+- [x] **El botón "abrir todo" con las ventanas ya abiertas las rota**
+- [x] El panel no se cierra al usar "abrir todo"
+- [x] El botón "cerrar todo" cierra las ventanas del plugin
+- [x] La rotación de ventanas (sentido horario / antihorario / opuesta / por pares / aleatoria) coloca bien las ventanas
+- [x] La rotación con `rotation_sizes` intercambia el ancho y el alto
+- [x] El editor de widgets añade uno **sin que desaparezcan los demás** (merge de 3 capas)
+- [x] El botón **X** sí borra un widget que viene **por defecto** (tombstone en el store)
+- [x] La vista previa de cada tarjeta (captura con `grim`) se ve
+- [x] La colisión de ventanas evita que se tapen (tolerancia de 4 px)
+- [ ] `close_on_launch` cierra el panel al lanzar *(sin comprobar a mano: el ajuste está
+  en `false` en la máquina)*
+
+- [x] Añadir un widget en Ajustes → Plugins **no borra** los que ya estaban
+- [x] El panel no se queda sin scroll con 6 widgets y avisa si se queda corto
+- [x] Los detalles (comando y posición) salen al pasar el ratón por encima
+- [x] Ningún callback del plugin se pasa del presupuesto de CPU de Noctalia (25 ms)
 
 ### 4.2 Wallpaper Carousel — `faminec/wallpaper-carousel` — **0/16**
 

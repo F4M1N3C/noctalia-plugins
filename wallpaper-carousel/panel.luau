@@ -391,14 +391,21 @@ local function metrics()
   -- La fila se centra en la pantalla, así que el grupo entero (las tarjetas
   -- más el relleno que genera el desplazamiento) tiene que caber: si no, el
   -- centro se sale de sitio. De ahí el margen de dos ranuras.
+  -- Cuántas tarjetas caben a cada lado. La cinta se coloca con un relleno
+  -- inicial, así que la tarjeta seleccionada tiene que caber entre el borde
+  -- izquierdo y el centro: de ahí el margen de una ranura y media.
   local slots = viewportWidth() / cfg.cardWidth
   local half = math.max(1, math.floor((slots - 3) / 2))
+  -- Desplazamiento inicial: deja la tarjeta seleccionada en el centro de la
+  -- pantalla. El relleno se encoge a medida que la cinta avanza.
+  local lead = viewportWidth() / 2 - half * cfg.cardWidth - cfg.cardWidth / 2
   return {
     half = half,
     viewport = viewport,
     ribbonHeight = ribbonHeight,
     pad = pad,
     anchorGap = anchorGap,
+    lead = lead,
   }
 end
 
@@ -643,12 +650,12 @@ render = function()
     end
   end
 
-  -- Desplazamiento fraccionario de la cinta: la fila se centra en la
-  -- pantalla y el relleno final la empuja hacia la izquierda lo justo para
-  -- que la tarjeta seleccionada llegue al centro.
-  table.insert(nodes, ui.spacer({
-    key = "shift",
-    width = math.floor(2 * fraction * cfg.cardWidth + 0.5),
+  -- Desplazamiento fraccionario de la cinta: la fila se alinea al principio y
+  -- un relleno inicial coloca la tarjeta seleccionada en el centro. Al
+  -- avanzar, el relleno se encoge y la cinta se desliza hacia la izquierda.
+  table.insert(nodes, 1, ui.spacer({
+    key = "lead",
+    width = math.max(0, math.floor(m.lead - fraction * cfg.cardWidth + 0.5)),
     height = 1,
   }))
 
@@ -657,7 +664,7 @@ render = function()
     width = math.floor(viewportWidth()),
     gap = 0,
     align = "center",
-    justify = "center",
+    justify = "start",
   }, nodes)
 
   local children = {
@@ -761,6 +768,7 @@ selectIndex = function(index)
   if index == selected then
     return
   end
+  noctalia.log(string.format("wc-dbg select %d -> %d", selected, index))
   selected = index
   animating = true
   panel.setNeedsFrameTick(true)
@@ -936,8 +944,13 @@ function onScroll(offset, _maxOffset)
   scrollOffset = newOffset
 end
 
+local frameCount = 0
 function onFrameTick(deltaMs)
   local dt = tonumber(deltaMs) or 16
+  frameCount = frameCount + 1
+  if frameCount % 40 == 0 then
+    noctalia.log(string.format("wc-dbg frame %d dt=%.1f heldKey=%s heldElapsed=%.0f", frameCount, dt, tostring(heldKey), heldElapsed))
+  end
 
   -- 0. El primer frame recentra el scroll, para que la rueda tenga recorrido
   --    hacia arriba desde el principio, y pide las miniaturas.

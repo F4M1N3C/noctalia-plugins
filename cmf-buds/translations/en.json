@@ -94,7 +94,7 @@
   "shortcut.mods_held": "Held: {mods}",
   "shortcut.mods_unavailable": "No access to /dev/input",
   "shortcut.none": "—",
-  "shortcut.note": "For the signal to reach the PC, the gesture must be mapped to a volume action (e.g. triple press of the case button → Volume up).",
+  "shortcut.note": "For the signal to reach the PC, the gesture must be mapped to a volume action (e.g. triple press of the case button → Volume up). Note: if a gesture has a rule with a number of presses (2, 3...), the 'Any' rule for that same gesture is ignored; the N-press rule wins.",
   "shortcut.modifier.none": "None",
   "shortcut.modifier.super": "SUPER",
   "shortcut.modifier.ctrl": "CTRL",

@@ -465,7 +465,7 @@ class LocalActionEngine:
             modifiers = self.modifiers.modifiers()
             # Reglas "cualquier numero de pulsaciones": se ejecutan al instante.
             any_rule = self._matching_rule(trigger, 0, modifiers, True)
-            if any_rule is not None:
+            if any_rule is not None and not self._has_counted_rules(trigger):
                 # Un gesto = una accion (varias muescas seguidas = una).
                 if now - self._last_fire.get(trigger, 0.0) >= GESTURE_WINDOW:
                     self.last_event = {
@@ -513,6 +513,21 @@ class LocalActionEngine:
             self._timer.start()
 
     # -- ejecucion -----------------------------------------------------------
+    def _has_counted_rules(self, trigger):
+        """True si el gesto tiene alguna regla con un numero de pulsaciones.
+
+        Si las hay, mandan sobre la regla "cualquiera": si no, esta se
+        comeria los eventos y la de N pulsaciones nunca llegaria a dispararse.
+        """
+        for rule in self.rules:
+            if not rule.get("enabled", True):
+                continue
+            if rule.get("trigger") != trigger:
+                continue
+            if int(rule.get("presses", 1)) > 0:
+                return True
+        return False
+
     def _matching_rule(self, trigger, count, modifiers, any_ok=False):
         candidates = []
         for rule in self.rules:

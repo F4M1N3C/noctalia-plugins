@@ -162,6 +162,8 @@ Datos persistentes:
 
 - **Un giro = una acción.** Varias muescas seguidas se agrupan en un solo
   gesto (ventana de 0,5 s).
+- **Precedencia:** si un gesto tiene una regla con N pulsaciones (2, 3...),
+  la regla "Cualquiera" de ese gesto se ignora; la de N pulsaciones manda.
 - **El eco del auricular se ignora.** Al restaurar el volumen, los auriculares
   devuelven el suyo y generan otro evento; el motor ignora los eventos hasta
   que el volumen se estabiliza (1,2 s) y luego vuelve a armarse solo.

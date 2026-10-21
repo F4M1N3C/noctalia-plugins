@@ -94,7 +94,7 @@
   "shortcut.mods_held": "Pulsados: {mods}",
   "shortcut.mods_unavailable": "Sin acceso a /dev/input",
   "shortcut.none": "—",
-  "shortcut.note": "Para que la señal llegue al PC, el gesto debe tener asignada una acción de volumen (p. ej. triple pulsación del botón del estuche → Subir volumen).",
+  "shortcut.note": "Para que la señal llegue al PC, el gesto debe tener asignada una acción de volumen (p. ej. triple pulsación del botón del estuche → Subir volumen). Ojo: si un gesto tiene una regla con un número de pulsaciones (2, 3...), la regla 'Cualquiera' de ese mismo gesto se ignora; la de N pulsaciones manda.",
   "shortcut.modifier.none": "Ninguno",
   "shortcut.modifier.super": "SUPER",
   "shortcut.modifier.ctrl": "CTRL",

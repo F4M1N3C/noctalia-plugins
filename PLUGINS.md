@@ -4,8 +4,40 @@
 > Un plugin con todas sus casillas tachadas pasa a la cola de contribución upstream.
 
 - Repositorio personal: <https://github.com/F4M1N3C/noctalia-plugins>
+- Fork de la tienda: <https://github.com/F4M1N3C/community-plugins>
 - Tienda oficial (destino): <https://github.com/noctalia-dev/community-plugins>
 - Última actualización: **2026-10-21**
+
+---
+
+## 0. Resumen · qué falta por revisar
+
+> Esta tabla la mantengo yo (sesión *Github*). La actualizo cuando me avisas de que un
+> plugin ya va al 100 %, cuando otra sesión mueve algo, o cuando se abre un PR.
+> Al tacharse **todas** las casillas de §4, el plugin pasa a la cola de §6.
+
+| Plugin | Probado | Rama en el fork | PR upstream | Bloqueo actual | Qué falta para mandarlo |
+| --- | --- | --- | --- | --- | --- |
+| `faminec/equalizer` | **8/8** ✅ | `feat/equalizer` lista | Sin abrir | Ninguno (retirado del sistema, el código sigue publicado) | Abrir el PR y revisar la plantilla |
+| `faminec/floating-term` | 0/13 | `feat/floating-term` lista | Sin abrir | 3 bugs del **core de Noctalia** (ajustes que se pisan, X que no borra, doble clic que duplica) | Probar las 13 casillas; documentar los bugs de core o buscar rodeo en el plugin |
+| `faminec/wallpaper-carousel` | 0/15 | `feat/wallpaper-carousel` lista | Sin abrir | Otra sesión prepara una **v2** (tarjetas inclinadas) en `/tmp/opencode/wc-v2` | Decidir si entra la v2 antes del PR (cambia thumbnail y README) |
+| `faminec/notes` | 0/14 | `feat/notes` lista | Sin abrir | Falta probar la app en el móvil; Tailscale Funnel pide activar Funnel en la cuenta | Probar las 14 casillas + el puente IPC (`refresh`, `open-note`) |
+| `faminec/cmf-buds` | 0/19 | `feat/cmf-buds` lista | Sin abrir | La rueda del ratón no llega a los `ui.slider` (falta `wheelAdjustEnabled` en el reconciliador de Noctalia) | Probar las 19 casillas; decidir parche de core o rodeo en el plugin |
+| `faminec/lyrics-carousel` | 0/18 | `feat/lyrics-carousel` lista | Sin abrir | El panel escribe `overrides.json` y eso tapa `settings.toml` (ajustes lostos) | Aplicar el fix preparado en `/tmp/opencode` y probar las 18 casillas |
+| `ntimer` (utilidad) | 0/9 | — | No aplica | — | Probar el CLI y el visor `tty-clock` |
+| `notes-mobile` (utilidad) | 0/8 | — | No aplica | Cloudflare/Tailscale por confirmar en el móvil | Probar en el teléfono (ver, crear, editar, borrar, sincronía) |
+
+**Estado de GitHub (2026-10-21):**
+
+| Elemento | Estado |
+| --- | --- |
+| Repo personal `F4M1N3C/noctalia-plugins` | 6 commits, `main` **1 commit por pushear** (`feat(notes): add service entry for the IPC bridge`) |
+| Fork `F4M1N3C/community-plugins` | Creado y **sincronizado** con `noctalia-dev/community-plugins` (`main` = `f62bad56`) |
+| Ramas en el fork | `feat/cmf-buds`, `feat/equalizer`, `feat/floating-term`, `feat/lyrics-carousel`, `feat/notes`, `feat/wallpaper-carousel` |
+| Estado de cada rama | 1 commit sobre `main` de upstream, **un solo directorio de plugin** (requisito de la tienda) |
+| PRs abiertos | **Ninguno** — 6 ramas preparadas, esperando la lista de pruebas |
+| Validador oficial | `Validated 6 plugin manifest(s).` (sin errores) |
+| Conflictos de nombre con la tienda | Ninguno: no existen `notes`, `equalizer`, `cmf-buds`, `floating-term`, `lyrics-carousel` ni `wallpaper-carousel` |
 
 ---
 
@@ -13,12 +45,12 @@
 
 | Plugin | Id | Estado | En GitHub | PR upstream | Probado 100 % |
 | --- | --- | --- | --- | --- | --- |
-| Floating Term | `faminec/floating-term` | Listo | Sí | Pendiente | ☐ |
-| Wallpaper Carousel | `faminec/wallpaper-carousel` | Listo | Sí | Pendiente | ☐ |
-| Notes | `faminec/notes` | Listo | Sí | Pendiente | ☐ |
-| CMF Buds | `faminec/cmf-buds` | Listo | Sí | Pendiente | ☐ |
-| Lyrics Carousel | `faminec/lyrics-carousel` | Listo | Sí | Pendiente | ☐ |
-| Equalizer | `faminec/equalizer` | Listo pero **retirado** | Sí | Pendiente | ☑ (verificado con prueba de audio real) |
+| Floating Term | `faminec/floating-term` | Listo | Sí (repo + rama) | Rama lista, sin abrir | ☐ |
+| Wallpaper Carousel | `faminec/wallpaper-carousel` | Listo | Sí (repo + rama) | Rama lista, sin abrir | ☐ |
+| Notes | `faminec/notes` | Listo | Sí (repo + rama) | Rama lista, sin abrir | ☐ |
+| CMF Buds | `faminec/cmf-buds` | Listo | Sí (repo + rama) | Rama lista, sin abrir | ☐ |
+| Lyrics Carousel | `faminec/lyrics-carousel` | Listo | Sí (repo + rama) | Rama lista, sin abrir | ☐ |
+| Equalizer | `faminec/equalizer` | Listo pero **retirado** | Sí (repo + rama) | Rama lista, sin abrir | ☑ (verificado con prueba de audio real) |
 
 ### Utilidades (no son plugins)
 
@@ -34,11 +66,12 @@
 
 | # | Plugin / idea | Qué falta | Prioridad |
 | --- | --- | --- | --- |
-| 1 | PRs a `noctalia-dev/community-plugins` | Abrir un PR por plugin, con el checklist del repositorio filled | Alta |
-| 2 | App móvil de las notas | La parte del teléfono (el plugin ya sincroniza) | Media |
+| 1 | PRs a `noctalia-dev/community-plugins` | Las **6 ramas ya están en el fork**; falta el checklist de pruebas (§4) y abrir un PR por plugin | Alta |
+| 2 | App móvil de las notas | Hecha (`~/notes-mobile`, PWA + SSE). Falta probarla en el móvil y decidir el túnel (Funnel pide activar Funnel en la cuenta; alternativa `adb reverse`) | Media |
 | 3 | Tema del navegador según el wallpaper | Decidir el enfoque (Edge + Monkeytype) | Media |
-| 4 | Miniatura / README de la tienda | Hecho el 2026-10-21: ambos plugins nuevos ya los tienen | — |
+| 4 | Miniatura / README de la tienda | Hecho el 2026-10-21: los 6 plugins ya los tienen | — |
 | 5 | `pipes.sh` vs `pipies.sh` | Confirmar el nombre real del script | Baja |
+| 6 | `wallpaper-carousel` v2 | Otra sesión tiene la v2 en staging (`/tmp/opencode/wc-v2`, tarjetas inclinadas). Decidir si entra antes del PR | Media |
 
 ---
 
@@ -244,6 +277,12 @@ Anota aquí lo que falle al probar, para no perderlo:
 
 | Plugin | Qué falla | Notas |
 | --- | --- | --- |
+| `floating-term` | Al guardar un ajuste de `commands` se pierden los demás | Bug del core: `plugin_manifest.cpp:855` **reemplaza** el mapa de overrides en vez de fusionarlo. Plan: `/tmp/opencode/plan-floating-term.md` |
+| `floating-term` | El botón **X** de un comando no borra nada | `clearOverride` sobre una clave que solo existe en el default del manifiesto → no-op. Bug del core (`settings_control_factory.cpp`) |
+| `floating-term` | Doble clic en un comando abre dos ventanas | `findExisting()` es asíncrono: faltan dos clics antes de que exista la ventana. Falta una marca de "en curso" |
+| `cmf-buds` | La rueda del ratón no mueve los sliders del panel | El árbol declarativo `ui.*` no expone `wheelAdjustEnabled`; el reconciliador nunca lo lee. Parche de 6 líneas en `src/ui/ui_tree_reconciler.cpp` (staging en `/tmp/opencode/staging`) |
+| `lyrics-carousel` | Los cambios de la página de ajustes no se aplican | El panel escribe **todos** los interruptores en `overrides.json`, que tiene prioridad sobre `settings.toml`. Fix preparado (helper `set-setting.py` + `noctalia msg config-reload`), **sin aplicar** |
+| `notes` | Tailscale Funnel se queda colgado al habilitarlo | Funnel hay que activarlo en la consola de Tailscale (atributo ACL). Alternativa en pruebas: `adb reverse` |
 | | | |
 
 ---
@@ -253,18 +292,25 @@ Anota aquí lo que falle al probar, para no perderlo:
 Cuando un plugin tenga **todas** sus casillas tachadas, se abre un PR contra
 `noctalia-dev/community-plugins` (un plugin por PR, como exige la tienda):
 
-- [ ] `faminec/floating-term`
-- [ ] `faminec/wallpaper-carousel`
-- [ ] `faminec/notes`
-- [ ] `faminec/cmf-buds`
-- [ ] `faminec/lyrics-carousel`
-- [ ] `faminec/equalizer`
+| Plugin | Rama del fork lista | Checklist §4 | PR abierto |
+| --- | --- | --- | --- |
+| `faminec/floating-term` | `feat/floating-term` | 0/13 | — |
+| `faminec/wallpaper-carousel` | `feat/wallpaper-carousel` | 0/15 | — |
+| `faminec/notes` | `feat/notes` | 0/14 | — |
+| `faminec/cmf-buds` | `feat/cmf-buds` | 0/19 | — |
+| `faminec/lyrics-carousel` | `feat/lyrics-carousel` | 0/18 | — |
+| `faminec/equalizer` | `feat/equalizer` | **8/8** ✅ | — |
 
 Cada PR necesita:
 
-- [ ] El directorio contiene `plugin.toml`, `README.md`, `thumbnail.webp` y `translations/en.json`
-- [ ] El `README.md` sigue la plantilla de la tienda y documenta todas las entradas
-- [ ] `thumbnail.webp` es WebP de 960×540
-- [ ] `version` con semver y subida, `plugin_api` es el nivel más bajo que hace falta
-- [ ] `catalog.toml` **no** se toca (lo genera la CI)
-- [ ] El PR toca **un solo** directorio de plugin
+- [x] El directorio contiene `plugin.toml`, `README.md`, `thumbnail.webp` y `translations/en.json`
+- [x] El `README.md` sigue la plantilla de la tienda y documenta todas las entradas
+- [x] `thumbnail.webp` es WebP de 960×540
+- [x] `version` con semver y subida, `plugin_api` es el nivel más bajo que hace falta
+- [x] `catalog.toml` **no** se toca (lo genera la CI)
+- [x] El PR toca **un solo** directorio de plugin
+- [ ] En la descripción del PR: marcar "New plugin" y **al menos un compositor** probado (Hyprland)
+- [ ] En la descripción del PR: capturas o vídeo del plugin funcionando
+- [ ] Atestación de revisión de código (4 casillas de la plantilla oficial)
+- [ ] Las traducciones `es.json` (`cmf-buds`, `lyrics-carousel`, `notes`) revisadas a mano
+- [ ] La rama del fork está actualizada con `main` de la tienda antes de abrir el PR

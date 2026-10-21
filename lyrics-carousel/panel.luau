@@ -858,12 +858,18 @@ function onIpc(event, payload)
       local head, tail = payload:match("^%s*([^=%s]+)%s*=%s*(.-)%s*$")
       local kind = "string"
       if tail ~= nil then
+        -- El tipo va al final; el valor es todo lo de en medio (puede
+        -- llevar espacios: "font_family=Nothing Font (5x7) string").
         local pieces = {}
         for piece in tail:gmatch("%S+") do
           pieces[#pieces + 1] = piece
         end
-        tail = pieces[1]
-        kind = pieces[2] or "string"
+        local last = pieces[#pieces]
+        if last == "bool" or last == "int" or last == "float" or last == "string" then
+          kind = last
+          table.remove(pieces)
+        end
+        tail = table.concat(pieces, " ")
       end
       local key = head
       local value = tail

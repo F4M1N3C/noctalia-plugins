@@ -196,8 +196,10 @@ class ImageRenderer:
         duration = app.track.duration if app.track else 0.0
 
         self.frames += 1
-        # Si el cuadro no ha cambiado no se dibuja ni se envía nada.
-        signature = self._frame_signature(accent)
+        # Si el cuadro no ha cambiado no se dibuja ni se envía nada. El
+        # tamaño va en la huella: si la ventana se redimensiona hay que
+        # reenviar la imagen aunque el contenido sea el mismo.
+        signature = self._frame_signature(accent) + (cols, rows, xpix, ypix)
         if signature == self.last_signature:
             return True
         self.last_signature = signature

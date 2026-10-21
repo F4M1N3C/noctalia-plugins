@@ -74,11 +74,31 @@ def patch(text: str, key: str, raw_value: str) -> str:
         return prefix + "\n".join(block) + "\n"
 
     body = lines[start + 1 : end]
+    # El TOML no admite claves duplicadas: si las hay, todo el fichero
+    # queda invalido y Noctalia descarta la seccion entera. Se deja solo la
+    # primera aparicion de cada clave.
+    seen = set()
+    clean = []
+    for line in body:
+        name = line.split("=", 1)[0].strip()
+        if name and not name.startswith("["):
+            if name in seen:
+                continue
+            seen.add(name)
+        clean.append(line)
+    body = clean
+    replaced = False
     for index, line in enumerate(body):
         if line.strip().startswith(key + " "):
-            body[index] = f"{key} = {raw_value}"
-            break
-    else:
+            if not replaced:
+                body[index] = f"{key} = {raw_value}"
+                replaced = True
+            else:
+                # Clave duplicada: el TOML ser\u00eda inv\u00e1lido y Noctalia
+                # descartaria toda la secci\u00f3n. Se elimina el duplicado.
+                body[index] = None
+    body = [line for line in body if line is not None]
+    if not replaced:
         insert_at = len(body)
         while insert_at > 0 and body[insert_at - 1].strip() == "":
             insert_at -= 1

@@ -76,6 +76,21 @@ noctalia msg plugin faminec/notes-sync:service all cmd '{"op":"push","text":"hel
 | `push` | Queues a message for the phone. |
 | `refresh` | Same as `status`; also accepted as a bare event. |
 
+## Tests
+
+```sh
+lua5.4 notes-sync/test-panel.lua
+```
+
+19 comprobaciones con el API de Noctalia simulado: los manejadores del panel
+se llaman de verdad y se comprueba que montan el comando correcto, que el
+JSON va citado para el shell y que **los manejadores referenciados por
+nombre son globales**.
+
+> Noctalia resuelve `onClick = "onXxx"` con `hasGlobal`: si la función es
+> `local function`, el clic se ignora **en silencio** (no sale ningún error en
+> el log). Los cuatro manejadores del panel son globales por eso.
+
 ## Published state
 
 The service publishes a snapshot under `notes_sync`:

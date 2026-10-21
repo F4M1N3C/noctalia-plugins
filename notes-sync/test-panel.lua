@@ -118,7 +118,20 @@ _G.ui = setmetatable({}, {
 
 -- --------------------------------------------------------------- cargar el panel
 
-local chunk, err = loadfile("panel.luau")
+-- El panel se carga desde el directorio del propio script, para que el test
+-- se pueda ejecutar desde cualquier sitio.
+local function scriptDir()
+  local src = debug.getinfo(1, "S").source
+  if src:sub(1, 1) == "@" then
+    return src:sub(2):match("^(.*)[/\\][^/\\]*$") or "."
+  end
+  return "."
+end
+
+local DIR = scriptDir()
+local PANEL_PATH = DIR .. "/panel.luau"
+
+local chunk, err = loadfile(PANEL_PATH)
 if not chunk then
   print("no se pudo cargar panel.luau: " .. tostring(err))
   os.exit(1)
@@ -183,7 +196,7 @@ check("onRefresh lanza refresh al servicio", true, (#commands > 0 and string.fin
 -- Un nombre con comilla simple no debe romper la linea de comandos.
 local quoted = nil
 do
-  local src = io.open("panel.luau", "r")
+  local src = io.open(PANEL_PATH, "r")
   local text = src:read("*a")
   src:close()
   local i = text:find("local function shellQuote")
@@ -200,7 +213,7 @@ check("el panel cita los textos para el shell", true, quoted ~= nil and quoted:f
 -- entrada. Si son `local function`, Noctalia no los encuentra y el boton
 -- se queda muerto sin avisar.
 do
-  local src = io.open("panel.luau", "r")
+  local src = io.open(PANEL_PATH, "r")
   local text = src:read("*a")
   src:close()
   local referenced = {}

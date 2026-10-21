@@ -711,6 +711,8 @@ render = function()
       }),
       ui.button({
         key = "close-panel",
+        -- "x" es el nombre real en el set de Tabler; "close" también
+        -- funciona (alias de Noctalia) pero el validador no lo conoce.
         glyph = "x",
         variant = "ghost",
         tooltip = tr("close"),

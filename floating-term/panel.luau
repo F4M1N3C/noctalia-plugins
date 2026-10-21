@@ -21,6 +21,7 @@ local PANEL_PADDING = 12
 local CARD_GAP = 10
 local CARD_PADDING = 8
 local PREVIEW_RATIO = 0.58
+local MAX_PREVIEW_HEIGHT = 210
 -- Margen de tolerancia: dos ventanas que se tocan (1-2 px) no cuentan como
 -- solapadas, así una posición configurada no se mueve por un roce.
 local OVERLAP_TOLERANCE = 4
@@ -136,7 +137,20 @@ end
 local function classMap()
   local map = {}
   for _, name in ipairs(widgetNames()) do
-    map[util.classFor(name)] = name
+    local class = util.classFor(name)
+    if map[class] ~= nil then
+      -- Dos nombres que seormalizan igual comparten clase: sus ventanas se
+      -- confundirían. Se avisa en el log, pero se sigue funcionando.
+      noctalia.log(
+        string.format(
+          "floating-term: '%s' y '%s' comparten la clase %s",
+          map[class],
+          name,
+          class
+        )
+      )
+    end
+    map[class] = name
   end
   return map
 end
@@ -454,9 +468,20 @@ end
 -- abra dos ventanas iguales.
 launch = function(name, opts)
   opts = opts or {}
+
+  -- Si la acción es parte de una cadena (por ejemplo "abrir todo"), hay que
+  -- avisar igual de que este widget se salta, o la cadena se quedaría
+  -- colgada y los siguientes nunca se abrirían.
+  local function skip()
+    if opts.onDone ~= nil then
+      opts.onDone()
+    end
+  end
+
   local command = state.commands[name]
   if type(command) ~= "string" or command == "" then
     noctalia.notifyError(tr("title"), tr("missing_command", { name = tostring(name) }))
+    skip()
     return
   end
 
@@ -464,9 +489,11 @@ launch = function(name, opts)
   local now = noctalia.nowMs()
   local last = state.lastLaunch[class]
   if last ~= nil and (now - last) < DEBOUNCE_MS then
+    skip()
     return
   end
   if state.launching[class] then
+    skip()
     return
   end
   state.lastLaunch[class] = now
@@ -635,7 +662,13 @@ local function applyWidget(name, command, layout)
     loadWidgets()
   end
 
-  storeLib.upsert(state.store, name, command ~= "" and command or nil, layout ~= "" and layout or nil)
+  -- Un comando vacío en un widget que ya existe no lo deja sin comando (sería
+  -- un despiste al editar); en uno nuevo sí se guarda tal cual.
+  if command == "" and state.commands[name] ~= nil then
+    command = nil
+  end
+
+  storeLib.upsert(state.store, name, command, layout ~= "" and layout or nil)
   local saved, err = storeLib.save(state.store)
   if not saved then
     return false, tr("save_failed", { detail = tostring(err or "") })
@@ -730,7 +763,9 @@ local function cardWidth()
 end
 
 local function previewHeight()
-  return math.floor(cardWidth() * PREVIEW_RATIO)
+  -- En una sola columna la tarjeta es muy ancha: la miniatura se aplana para
+  -- que la tarjeta no quede disproportionate.
+  return math.min(math.floor(cardWidth() * PREVIEW_RATIO), MAX_PREVIEW_HEIGHT)
 end
 
 -- Miniatura sintética: una terminal falsa con el nombre del widget.
@@ -848,7 +883,9 @@ card = function(name)
     border = "outline/0.2",
     borderWidth = 1,
     -- Comando y posición salen en el tooltip al pasar el ratón por encima.
-    tooltip = string.format("%s\n%s", command, layout),
+    tooltip = command ~= ""
+        and string.format("%s\n%s", command, layout)
+      or tr("missing_command", { name = name }),
   }
 
   if not state.editing then

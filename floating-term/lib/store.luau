@@ -90,6 +90,9 @@ function M.save(store)
 end
 
 -- Fusiona las tres capas y aplica los borrados.
+-- Los valores vacíos de los defaults y de Ajustes se ignoran, pero los del
+-- store se respetan: un comando vacío es una decisión explícita del usuario
+-- (un widget sin comando sigue apareciendo en la lista).
 function M.merge(base, configMap, storeMap, removed)
   local out = {}
 
@@ -104,7 +107,7 @@ function M.merge(base, configMap, storeMap, removed)
     end
   end
   for key, value in pairs(storeMap or {}) do
-    if type(value) == "string" and value ~= "" then
+    if type(value) == "string" then
       out[key] = value
     end
   end
@@ -125,6 +128,8 @@ function M.remove(store, name)
 end
 
 -- Añade o actualiza un widget.
+-- `command` y `layout` a "" se guardan tal cual (quitan el valor); a nil no
+-- tocan lo que hubiera.
 function M.upsert(store, name, command, layout)
   local index = nil
   for position, value in ipairs(store.removed) do
@@ -137,10 +142,10 @@ function M.upsert(store, name, command, layout)
     table.remove(store.removed, index)
   end
 
-  if command ~= nil and command ~= "" then
+  if command ~= nil then
     store.commands[name] = command
   end
-  if layout ~= nil and layout ~= "" then
+  if layout ~= nil then
     store.layouts[name] = layout
   end
 end

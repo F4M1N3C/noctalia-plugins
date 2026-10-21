@@ -75,9 +75,8 @@ local scrollResetting = false
 local scrollReveal = 0
 local scrollComp = nil -- relleno previsto para el siguiente salto del scroll
 local anchorOffset = nil -- distancia real del ancla (medida, px de superficie)
--- Correccion del hueco hasta el ancla. El valor inicial está medido sobre la
--- maquina de referencia; a partir de ahi se ajusta solo con cada salto.
-local anchorGapAdjust = 438
+-- Correccion fina del hueco hasta el ancla: se calcula con el salto real.
+local anchorGapAdjust = 0
 local lastRecenterComp = nil -- relleno usado en el ultimo recentrado
 local pendingRecenter = false
 local pendingThumbs = false
@@ -199,7 +198,16 @@ local thumbPathCache = {}
 -- entra en la clave de caché: si el usuario lo cambia, las tarjetas se
 -- regeneran al tamaño correcto.
 local function thumbPath(source, bucket)
-  local cacheKey = source .. "|" .. tostring(bucket) .. "|" .. tostring(uiScale())
+  local info = fileInfoFor(source)
+  -- La clave incluye mtime y tamaño: si el wallpaper se edita, la ruta de la
+  -- miniatura cambia y no se queda la imagen vieja cacheada.
+  local cacheKey = table.concat({
+    source,
+    tostring(bucket),
+    string.format("%.2f", uiScale()),
+    tostring(info.mtime or 0),
+    tostring(info.size or 0),
+  }, "|")
   local cached = thumbPathCache[cacheKey]
   if cached ~= nil then
     return cached
@@ -209,7 +217,6 @@ local function thumbPath(source, bucket)
     thumbPathCache[cacheKey] = source
     return source
   end
-  local info = fileInfoFor(source)
   local key = table.concat({
     source,
     tostring(info.mtime or 0),
@@ -265,6 +272,7 @@ local function scanWallpapers()
   fileInfoCache = {}
   thumbReady = {}
   thumbRequested = {}
+  thumbPathCache = {}
   scanError = nil
 
   local configured = cfg.directory
@@ -387,13 +395,15 @@ local function metrics()
   if pad < 0 then
     pad = 0
   end
-  -- Distancia desde la cinta hasta el ancla del scroll. El ancla tiene que
-  -- quedar por debajo de la ventana (para que al revelarla el scroll salte
-  -- hacia arriba) y a la vez el salto tiene que dejar la cinta en el mismo
-  -- sitio de la pantalla. La segunda condición fija esta distancia: hace
-  -- falta que el ancla quede a `viewport - pad - 1` del borde del contenido.
+  -- Distancia desde la cinta hasta el ancla del scroll, en px lógicos.
+  --
+  -- El ancla tiene que quedar por debajo de la ventana (para que al revelarla
+  -- el scroll salte hacia arriba) y a la vez el salto tiene que dejar la cinta
+  -- en el mismo sitio de la pantalla. Esa segunda condición pide que el ancla
+  -- quede a `viewport - pad - 1` del borde del contenido; como el ancla va
+  -- detrás de la cinta, del hueco se descuenta su altura y la del ancla.
   -- El ajuste fino se mide sobre el salto real y se corrige solo.
-  local anchorGap = math.max(0, viewport - pad - 1 + anchorGapAdjust)
+  local anchorGap = math.max(0, viewport - pad - 1 - ribbonHeight - 1 + anchorGapAdjust)
   -- Cuántas tarjetas caben a cada lado del centro.
   local slots = viewportWidth() / cfg.cardWidth
   local half = math.max(1, math.floor((slots - 3) / 2))

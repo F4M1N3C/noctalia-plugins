@@ -506,7 +506,9 @@ class LocalActionEngine:
                     "-a",
                     "Noctalia - CMF Buds",
                     "-i",
-                    "headphones",
+                    # El nombre del tema del sistema es "audio-headphones";
+                    # "headphones" no existe y el toast salía sin icono.
+                    "audio-headphones",
                     "Atajo de los auriculares",
                     body,
                 ],

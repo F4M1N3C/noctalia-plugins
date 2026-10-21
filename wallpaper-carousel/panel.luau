@@ -488,6 +488,10 @@ local function ensureThumbs()
   }, function(result)
     generating = false
     thumbReady = {}
+    if result.exitCode ~= 0 then
+      -- Se limpia lo pedido para que la proxima vez se vuelva a intentar.
+      thumbRequested = {}
+    end
     if result.exitCode ~= 0 and not thumbErrorShown then
       thumbErrorShown = true
       local detail = (result.stderr or ""):gsub("%s+$", "")
@@ -784,7 +788,15 @@ selectIndex = function(index)
     return
   end
   selected = index
-  animating = true
+  -- Un salto largo (dar la vuelta, ir al primero o al último) coloca la
+  -- cinta directamente: si no, recorrería los cientos de fondos de golpe. Un
+  -- avance de pocos pasos, en cambio, sí se desliza.
+  if math.abs(selected - viewPos) > 4 then
+    viewPos = selected
+    animating = false
+  else
+    animating = true
+  end
   panel.setNeedsFrameTick(true)
   render()
 end
@@ -859,6 +871,7 @@ reload = function(keepSelection)
   selected = indexOfPath(previous) or indexOfPath(currentWallpaperPath()) or 1
   viewPos = selected
   animating = false
+  hovered = nil
   scrollOffset = 0
   scrollSeen = 0
   scrollAccum = 0

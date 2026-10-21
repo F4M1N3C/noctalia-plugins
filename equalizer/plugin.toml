@@ -1,0 +1,55 @@
+# Equalizer de 10 bandas sobre EasyEffects.
+# El servicio arranca EasyEffects en segundo plano y carga el preset; el panel
+# escribe las ganancias por el socket local de EasyEffects.
+
+id = "faminec/equalizer"
+name = "Equalizer"
+version = "1.0.0"
+plugin_api = 26
+author = "faminec"
+license = "MIT"
+dependencies = ["easyeffects"]
+tags = ["audio", "utility", "bar", "panel"]
+icon = "adjustments-horizontal"
+description = "A 10-band graphic equalizer with preamp, bypass and presets on top of EasyEffects."
+
+[[setting]]
+key = "pipeline"
+type = "select"
+label_key = "settings.pipeline.label"
+description_key = "settings.pipeline.description"
+default = "output"
+options = [
+  { value = "output", label_key = "settings.pipeline.output" },
+  { value = "input", label_key = "settings.pipeline.input" }
+]
+
+[[setting]]
+key = "preset"
+type = "string"
+label_key = "settings.preset.label"
+description_key = "settings.preset.description"
+default = "Noctalia EQ"
+
+[[setting]]
+key = "glyph"
+type = "glyph"
+label_key = "settings.glyph.label"
+description_key = "settings.glyph.description"
+default = "adjustments-horizontal"
+
+[[service]]
+id = "service"
+entry = "service.luau"
+
+[[widget]]
+id = "widget"
+entry = "widget.luau"
+
+[[panel]]
+id = "panel"
+entry = "panel.luau"
+width = 560
+height = 760
+placement = "attached"
+open_near_click = true

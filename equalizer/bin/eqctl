@@ -1,0 +1,376 @@
+#!/usr/bin/env python3
+"""eqctl - control mínimo de EasyEffects para el plugin de Noctalia.
+
+EasyEffects escucha en $XDG_RUNTIME_DIR/EasyEffectsServer y acepta comandos
+de texto. Este helper encapsula el socket, la creación del preset y las
+operaciones que usa el panel.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+BANDS = [31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
+DEFAULT_PRESET = "Noctalia EQ"
+SOCKET_PATH = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "EasyEffectsServer"
+DATA_HOME = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+EASYEFFECTS_DATA = DATA_HOME / "easyeffects"
+
+
+class EqError(RuntimeError):
+    pass
+
+
+def preset_path(pipeline: str, preset: str) -> Path:
+    return EASYEFFECTS_DATA / pipeline / f"{preset}.json"
+
+
+def default_gains() -> list[float]:
+    return [0.0] * len(BANDS)
+
+
+def channel(gains: list[float]) -> dict:
+    return {
+        f"band{i}": {
+            "frequency": freq,
+            "gain": float(gains[i]),
+            "mode": "RLC (BT)",
+            "mute": False,
+            "q": 1.41,
+            "slope": "x1",
+            "solo": False,
+            "type": "Bell",
+            "width": 4.0,
+        }
+        for i, freq in enumerate(BANDS)
+    }
+
+
+def make_preset(pipeline: str, gains: list[float], preamp: float = 0.0, bypass: bool = False) -> dict:
+    gains = list(gains) + [0.0] * (len(BANDS) - len(gains))
+    return {
+        pipeline: {
+            "blocklist": [],
+            "equalizer#0": {
+                "balance": 0.0,
+                "bypass": bool(bypass),
+                "input-gain": float(preamp),
+                "left": channel(gains),
+                "mode": "IIR",
+                "num-bands": len(BANDS),
+                "output-gain": 0.0,
+                "pitch-left": 0.0,
+                "pitch-right": 0.0,
+                "right": channel(gains),
+                "split-channels": False,
+            },
+            "plugins_order": ["equalizer#0"],
+        }
+    }
+
+
+def read_preset(pipeline: str, preset: str) -> dict | None:
+    path = preset_path(pipeline, preset)
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def write_preset(pipeline: str, preset: str, data: dict) -> None:
+    path = preset_path(pipeline, preset)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def ensure_preset_file(pipeline: str, preset: str) -> None:
+    data = read_preset(pipeline, preset)
+    if data is None or pipeline not in data or "equalizer#0" not in data[pipeline]:
+        write_preset(pipeline, preset, make_preset(pipeline, default_gains()))
+
+
+def send(command: str, timeout: float = 2.0) -> str | None:
+    if not SOCKET_PATH.exists():
+        return None
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            sock.connect(str(SOCKET_PATH))
+            sock.sendall((command + "\n").encode("utf-8"))
+            sock.shutdown(socket.SHUT_WR)
+            chunks: list[bytes] = []
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        return b"".join(chunks).decode("utf-8", errors="replace").strip()
+    except (OSError, socket.timeout):
+        return None
+
+
+def is_running() -> bool:
+    return send("get_global_bypass") is not None
+
+
+def start_server() -> None:
+    exe = shutil.which("easyeffects")
+    if exe is None:
+        raise EqError("easyeffects no está instalado")
+    subprocess.Popen(
+        [exe, "--hide-window"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    for _ in range(80):
+        if is_running():
+            return
+        time.sleep(0.1)
+    raise EqError("EasyEffects no respondió en el socket local")
+
+
+def ensure_server() -> None:
+    if not is_running():
+        start_server()
+
+
+def load_preset(pipeline: str, preset: str) -> None:
+    ensure_server()
+    ensure_preset_file(pipeline, preset)
+    response = send(f"load_preset:{pipeline}:{preset}")
+    if response is None:
+        raise EqError("no se pudo hablar con EasyEffects")
+    if response.startswith("error"):
+        raise EqError(f"EasyEffects rechazó el preset: {response}")
+    # Dar un instante a que el plugin se instancie antes de escribir props.
+    time.sleep(0.15)
+    loaded = send(f"get_last_loaded_preset:{pipeline}") or ""
+    if loaded != preset:
+        raise EqError(f"el preset activo es {loaded!r}, no {preset!r}")
+
+
+def ensure_loaded(pipeline: str, preset: str) -> None:
+    ensure_server()
+    ensure_preset_file(pipeline, preset)
+    loaded = send(f"get_last_loaded_preset:{pipeline}") or ""
+    if loaded != preset:
+        load_preset(pipeline, preset)
+
+
+def set_property(pipeline: str, name: str, value: str) -> None:
+    response = send(f"set_property:{pipeline}:equalizer:0:{name}:{value}")
+    if response is None:
+        raise EqError("EasyEffects no está disponible")
+    if response.startswith("error"):
+        raise EqError(f"set_property {name} falló: {response}")
+
+
+def get_property(pipeline: str, name: str) -> str:
+    return send(f"get_property:{pipeline}:equalizer:0:{name}") or ""
+
+
+def parse_bands(raw: str) -> list[float]:
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if len(parts) != len(BANDS):
+        raise EqError(f"se esperaban {len(BANDS)} bandas, llegaron {len(parts)}")
+    try:
+        return [float(p) for p in parts]
+    except ValueError as exc:
+        raise EqError(f"banda no numérica: {raw!r}") from exc
+
+
+def state_from_args(args: argparse.Namespace) -> tuple[list[float], float, bool]:
+    if getattr(args, "state", None):
+        try:
+            data = json.loads(Path(args.state).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise EqError(f"no se pudo leer el estado: {exc}") from exc
+        gains = [float(v) for v in data.get("bands", default_gains())]
+        gains = (gains + default_gains())[: len(BANDS)]
+        return gains, float(data.get("preamp", 0.0)), bool(data.get("bypass", False))
+    gains = parse_bands(args.bands) if getattr(args, "bands", None) else default_gains()
+    return gains, float(args.preamp), bool(args.bypass)
+
+
+def write_runtime_values(pipeline: str, preset: str, gains: list[float], preamp: float, bypass: bool) -> None:
+    ensure_loaded(pipeline, preset)
+    for i, gain in enumerate(gains):
+        set_property(pipeline, f"left:band{i}Gain", f"{gain:g}")
+        set_property(pipeline, f"right:band{i}Gain", f"{gain:g}")
+    set_property(pipeline, "inputGain", f"{preamp:g}")
+    set_property(pipeline, "bypass", "1" if bypass else "0")
+    write_preset(pipeline, preset, make_preset(pipeline, gains, preamp, bypass))
+
+
+def cmd_ensure(args: argparse.Namespace) -> int:
+    ensure_server()
+    ensure_preset_file(args.pipeline, args.preset)
+    ensure_loaded(args.pipeline, args.preset)
+    if args.state:
+        gains, preamp, bypass = state_from_args(args)
+        write_runtime_values(args.pipeline, args.preset, gains, preamp, bypass)
+    print("ok")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    running = is_running()
+    data = read_preset(args.pipeline, args.preset) or make_preset(args.pipeline, default_gains())
+    plugin = data[args.pipeline]["equalizer#0"]
+    result = {
+        "running": running,
+        "pipeline": args.pipeline,
+        "preset": args.preset,
+        "preset_path": str(preset_path(args.pipeline, args.preset)),
+        "bands": [float(plugin["left"][f"band{i}"]["gain"]) for i in range(len(BANDS))],
+        "preamp": float(plugin.get("input-gain", 0.0)),
+        "bypass": bool(plugin.get("bypass", False)),
+    }
+    if running:
+        loaded = send(f"get_last_loaded_preset:{args.pipeline}") or ""
+        result["loaded_preset"] = loaded
+        bypass = get_property(args.pipeline, "bypass").lower()
+        if bypass in ("true", "false"):
+            result["bypass"] = bypass == "true"
+        preamp = get_property(args.pipeline, "inputGain")
+        try:
+            result["preamp"] = float(preamp)
+        except ValueError:
+            pass
+        gains: list[float] = []
+        for i in range(len(BANDS)):
+            try:
+                gains.append(float(get_property(args.pipeline, f"left:band{i}Gain")))
+            except ValueError:
+                gains.append(0.0)
+        result["bands"] = gains
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
+
+
+def cmd_set_band(args: argparse.Namespace) -> int:
+    if not 0 <= args.index < len(BANDS):
+        raise EqError(f"banda fuera de rango: {args.index}")
+    ensure_loaded(args.pipeline, args.preset)
+    set_property(args.pipeline, f"left:band{args.index}Gain", f"{args.gain:g}")
+    set_property(args.pipeline, f"right:band{args.index}Gain", f"{args.gain:g}")
+    data = read_preset(args.pipeline, args.preset) or make_preset(args.pipeline, default_gains())
+    plugin = data[args.pipeline]["equalizer#0"]
+    plugin["left"][f"band{args.index}"]["gain"] = float(args.gain)
+    plugin["right"][f"band{args.index}"]["gain"] = float(args.gain)
+    write_preset(args.pipeline, args.preset, data)
+    return 0
+
+
+def cmd_set_preamp(args: argparse.Namespace) -> int:
+    ensure_loaded(args.pipeline, args.preset)
+    set_property(args.pipeline, "inputGain", f"{args.gain:g}")
+    data = read_preset(args.pipeline, args.preset) or make_preset(args.pipeline, default_gains())
+    data[args.pipeline]["equalizer#0"]["input-gain"] = float(args.gain)
+    write_preset(args.pipeline, args.preset, data)
+    return 0
+
+
+def cmd_bypass(args: argparse.Namespace) -> int:
+    ensure_loaded(args.pipeline, args.preset)
+    value = "1" if args.value else "0"
+    set_property(args.pipeline, "bypass", value)
+    data = read_preset(args.pipeline, args.preset) or make_preset(args.pipeline, default_gains())
+    data[args.pipeline]["equalizer#0"]["bypass"] = bool(args.value)
+    write_preset(args.pipeline, args.preset, data)
+    return 0
+
+
+def cmd_apply(args: argparse.Namespace) -> int:
+    gains, preamp, bypass = state_from_args(args)
+    write_runtime_values(args.pipeline, args.preset, gains, preamp, bypass)
+    return 0
+
+
+def cmd_reset(args: argparse.Namespace) -> int:
+    write_runtime_values(args.pipeline, args.preset, default_gains(), 0.0, False)
+    return 0
+
+
+def cmd_open(_args: argparse.Namespace) -> int:
+    exe = shutil.which("easyeffects")
+    if exe is None:
+        raise EqError("easyeffects no está instalado")
+    subprocess.Popen([exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="eqctl")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def common(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--pipeline", choices=("output", "input"), default="output")
+        p.add_argument("--preset", default=DEFAULT_PRESET)
+
+    p = sub.add_parser("ensure")
+    common(p)
+    p.add_argument("--state")
+    p.set_defaults(func=cmd_ensure)
+
+    p = sub.add_parser("status")
+    common(p)
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("set-band")
+    common(p)
+    p.add_argument("index", type=int)
+    p.add_argument("gain", type=float)
+    p.set_defaults(func=cmd_set_band)
+
+    p = sub.add_parser("set-preamp")
+    common(p)
+    p.add_argument("gain", type=float)
+    p.set_defaults(func=cmd_set_preamp)
+
+    p = sub.add_parser("bypass")
+    common(p)
+    p.add_argument("value", type=int, choices=(0, 1))
+    p.set_defaults(func=cmd_bypass)
+
+    p = sub.add_parser("apply")
+    common(p)
+    p.add_argument("--bands")
+    p.add_argument("--preamp", type=float, default=0.0)
+    p.add_argument("--bypass", action="store_true")
+    p.add_argument("--state")
+    p.set_defaults(func=cmd_apply)
+
+    p = sub.add_parser("reset")
+    common(p)
+    p.set_defaults(func=cmd_reset)
+
+    p = sub.add_parser("open")
+    p.set_defaults(func=cmd_open)
+
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except EqError as exc:
+        print(f"eqctl: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

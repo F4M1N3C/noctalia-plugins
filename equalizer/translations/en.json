@@ -1,0 +1,38 @@
+{
+  "active": "Active · {preset}",
+  "apply_failed": "Could not apply the equalizer change.",
+  "bad_status": "Could not read the EasyEffects status.",
+  "bypassed": "Equalizer bypassed",
+  "close": "Close",
+  "ensure_failed": "Could not start EasyEffects or load the preset.",
+  "not_running": "EasyEffects is not running. Open the panel to start it.",
+  "open_easyeffects": "EasyEffects",
+  "open_settings": "Open settings",
+  "preamp": "Preamp",
+  "preset_bass": "Bass",
+  "preset_flat": "Flat",
+  "preset_label": "Preset: {preset}",
+  "preset_loudness": "Loudness",
+  "preset_treble": "Treble",
+  "preset_vocal": "Vocal",
+  "reset": "Reset",
+  "settings": {
+    "glyph": {
+      "description": "Icon shown in the bar.",
+      "label": "Bar glyph"
+    },
+    "pipeline": {
+      "description": "Apply the equalizer to playback (output) or microphone (input).",
+      "input": "Input",
+      "label": "Pipeline",
+      "output": "Output"
+    },
+    "preset": {
+      "description": "Preset that contains the equalizer plugin. Created automatically if missing.",
+      "label": "EasyEffects preset"
+    }
+  },
+  "title": "Equalizer",
+  "tooltip": "10-band equalizer",
+  "wrong_preset": "Loaded preset: {loaded} (expected {preset})."
+}

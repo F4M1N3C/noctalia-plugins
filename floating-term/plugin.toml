@@ -1,0 +1,127 @@
+# Lanzador de apps de terminal en ventanas flotantes de Hyprland.
+# Cada comando del mapa se convierte en un botón del panel; al pulsarlo se
+# abre kitty con clase/título propios y, si existe, su geometría en `layouts`.
+
+id = "faminec/floating-term"
+name = "Floating Term"
+version = "1.2.0"
+plugin_api = 26
+author = "faminec"
+license = "MIT"
+dependencies = ["kitty", "hyprland"]
+tags = ["utility", "hyprland", "bar", "panel"]
+icon = "terminal-2"
+description = "Launch terminal apps in floating windows with a per-command size, anchor and position."
+
+[[setting]]
+key = "commands"
+type = "string_map"
+label_key = "settings.commands.label"
+description_key = "settings.commands.description"
+default = { cava = "cava", cbonsai = "cbonsai -l -p", unimatrix = "unimatrix -s 96 -l o", pipes = "pipes.sh", lavat = "lavat -k green -c black", btop = "btop", lyrics = "lyrics-carousel" }
+
+[[setting]]
+key = "layouts"
+type = "string_map"
+label_key = "settings.layouts.label"
+description_key = "settings.layouts.description"
+default = { cava = "bottom-center, 1610x584", cbonsai = "top-center, 801x582", unimatrix = "right-center, 869x1424", pipes = "bottom-right, 900x520", btop = "top-left, 928x800", lavat = "bottom-left, 802x582", lyrics = "center, 1200x820" }
+
+[[setting]]
+key = "fonts"
+type = "string_map"
+label_key = "settings.fonts.label"
+description_key = "settings.fonts.description"
+default = { lyrics = "Departure Mono, 22" }
+
+[[setting]]
+key = "margin"
+type = "int"
+label_key = "settings.margin.label"
+description_key = "settings.margin.description"
+default = 16
+min = 0
+max = 500
+
+[[setting]]
+key = "output"
+type = "string"
+label_key = "settings.output.label"
+description_key = "settings.output.description"
+default = ""
+
+[[setting]]
+key = "reuse_existing"
+type = "bool"
+label_key = "settings.reuse_existing.label"
+description_key = "settings.reuse_existing.description"
+default = true
+
+[[setting]]
+key = "terminal"
+type = "string"
+label_key = "settings.terminal.label"
+description_key = "settings.terminal.description"
+default = "kitty"
+
+[[setting]]
+key = "width"
+type = "int"
+label_key = "settings.width.label"
+description_key = "settings.width.description"
+default = 900
+min = 200
+max = 3000
+
+[[setting]]
+key = "height"
+type = "int"
+label_key = "settings.height.label"
+description_key = "settings.height.description"
+default = 520
+min = 150
+max = 2000
+
+[[setting]]
+key = "x"
+type = "int"
+label_key = "settings.x.label"
+description_key = "settings.x.description"
+default = 120
+min = -3000
+max = 6000
+
+[[setting]]
+key = "y"
+type = "int"
+label_key = "settings.y.label"
+description_key = "settings.y.description"
+default = 140
+min = -2000
+max = 4000
+
+[[setting]]
+key = "glyph"
+type = "glyph"
+label_key = "settings.glyph.label"
+description_key = "settings.glyph.description"
+default = "terminal-2"
+
+[[setting]]
+key = "close_on_launch"
+type = "bool"
+label_key = "settings.close_on_launch.label"
+description_key = "settings.close_on_launch.description"
+default = true
+
+[[widget]]
+id = "launcher"
+entry = "widget.luau"
+
+[[panel]]
+id = "panel"
+entry = "panel.luau"
+width = 430
+height = 470
+placement = "attached"
+open_near_click = true

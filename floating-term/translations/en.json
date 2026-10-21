@@ -1,0 +1,71 @@
+{
+  "close": "Close",
+  "empty": "No commands configured. Add some in Settings → Plugins.",
+  "focused_output": "focused monitor",
+  "hint": "Each row uses its entry in “Layouts”; if missing, the fallback geometry is used. Edit everything with the gear button.",
+  "launch_failed": "Could not launch the terminal.",
+  "layout_custom": "absolute",
+  "layout_global": "global · {width}×{height}",
+  "layout_invalid": "invalid layout",
+  "missing_command": "No command configured for {name}.",
+  "open_settings": "Open settings",
+  "overlap_tooltip": "When launching, a window that would collide with an open one moves to the closest free spot.",
+  "overlap_warning": "These windows overlap: {pairs}",
+  "settings": {
+    "close_on_launch": {
+      "description": "Close the panel as soon as a terminal is launched.",
+      "label": "Close panel after launch"
+    },
+    "commands": {
+      "description": "Name = shell command. Each entry becomes a button in the panel.",
+      "label": "Commands"
+    },
+    "fonts": {
+      "description": "Optional kitty font per command: \"Family, size\". E.g.: lyrics = Departure Mono, 22. Only applies when the terminal is kitty; the font must be installed.",
+      "label": "Per-command font"
+    },
+    "glyph": {
+      "description": "Icon shown in the bar.",
+      "label": "Bar glyph"
+    },
+    "height": {
+      "description": "Height for commands without a Layouts entry.",
+      "label": "Fallback height"
+    },
+    "layouts": {
+      "description": "One entry per command: anchor, size and optional offset. E.g.: cava = bottom-center, 1610x584; lavat = bottom-left, 802x582; unimatrix = right-center, 869x1424. Anchors: any combination of top, left, center, right and bottom. Use custom, WxH, x, y for absolute monitor coordinates.",
+      "label": "Per-command layouts"
+    },
+    "margin": {
+      "description": "Pixel margin from the monitor edges for anchored layouts.",
+      "label": "Margin"
+    },
+    "output": {
+      "description": "Monitor connector where windows should open (e.g. DP-1). Empty = focused monitor.",
+      "label": "Monitor"
+    },
+    "reuse_existing": {
+      "description": "If the command's window is already open, focus it and reapply its geometry instead of opening another one.",
+      "label": "Reuse open window"
+    },
+    "terminal": {
+      "description": "Terminal prefix (kitty-style flags: --class, --title, -e).",
+      "label": "Terminal command"
+    },
+    "width": {
+      "description": "Width for commands without a Layouts entry.",
+      "label": "Fallback width"
+    },
+    "x": {
+      "description": "Fallback horizontal position (monitor coordinates) for commands without Layouts.",
+      "label": "Fallback X position"
+    },
+    "y": {
+      "description": "Fallback vertical position (monitor coordinates) for commands without Layouts.",
+      "label": "Fallback Y position"
+    }
+  },
+  "subtitle": "{terminal} · {margin} px margin · {output}",
+  "title": "Floating Terminal",
+  "tooltip": "Floating terminal apps"
+}

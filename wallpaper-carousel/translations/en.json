@@ -1,0 +1,60 @@
+{
+  "applied": "Wallpaper applied",
+  "apply": "Apply wallpaper",
+  "apply_failed": "Could not apply the wallpaper.",
+  "close": "Close",
+  "empty": "No images found in {directory}.",
+  "empty_hint": "Choose another folder in Settings → Plugins.",
+  "filename": "{name}",
+  "folder": "Open folder",
+  "hint": "← → browse · Enter apply · Esc close",
+  "missing_file": "The file no longer exists.",
+  "next": "Next wallpaper",
+  "prev": "Previous wallpaper",
+  "random": "Random",
+  "refresh": "Rescan",
+  "settings": {
+    "apply_all": {
+      "description": "Apply to every monitor; when off, only the focused monitor.",
+      "label": "Apply to all outputs"
+    },
+    "card_scale": {
+      "description": "Initial card size (also adjustable from the panel slider).",
+      "label": "Card scale"
+    },
+    "close_on_apply": {
+      "description": "Close the carousel after applying a wallpaper.",
+      "label": "Close after applying"
+    },
+    "directory": {
+      "description": "Leave empty to use Noctalia's configured wallpaper folder.",
+      "label": "Wallpaper folder"
+    },
+    "gap": {
+      "description": "Horizontal space between cards, in pixels.",
+      "label": "Gap"
+    },
+    "glyph": {
+      "description": "Icon shown in the bar.",
+      "label": "Bar glyph"
+    },
+    "parallax": {
+      "description": "How much each thumbnail crop shifts based on its position.",
+      "label": "Parallax strength"
+    },
+    "show_filenames": {
+      "description": "Show the selected file name in the panel footer.",
+      "label": "Show filenames"
+    },
+    "visible": {
+      "description": "How many cards to try to show at once.",
+      "label": "Visible cards"
+    }
+  },
+  "size": "Size",
+  "subtitle": "{count} wallpapers · {directory}",
+  "thumb_error": "Could not generate thumbnails. Showing the original wallpapers.",
+  "title": "Wallpapers",
+  "tooltip": "Open the wallpaper carousel",
+  "tooltip_close": "Close the wallpaper carousel"
+}

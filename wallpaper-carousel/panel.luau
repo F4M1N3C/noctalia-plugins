@@ -768,7 +768,6 @@ selectIndex = function(index)
   if index == selected then
     return
   end
-  noctalia.log(string.format("wc-dbg select %d -> %d", selected, index))
   selected = index
   animating = true
   panel.setNeedsFrameTick(true)
@@ -944,13 +943,8 @@ function onScroll(offset, _maxOffset)
   scrollOffset = newOffset
 end
 
-local frameCount = 0
 function onFrameTick(deltaMs)
   local dt = tonumber(deltaMs) or 16
-  frameCount = frameCount + 1
-  if frameCount % 40 == 0 then
-    noctalia.log(string.format("wc-dbg frame %d dt=%.1f heldKey=%s heldElapsed=%.0f", frameCount, dt, tostring(heldKey), heldElapsed))
-  end
 
   -- 0. El primer frame recentra el scroll, para que la rueda tenga recorrido
   --    hacia arriba desde el principio, y pide las miniaturas.
@@ -974,6 +968,7 @@ function onFrameTick(deltaMs)
     local accumulated = scrollAccum
     scrollAccum = 0
     local steps = math.floor(math.abs(accumulated) / SCROLL_STEP + 0.5)
+    noctalia.log(string.format("wc-dbg wheel accumulated=%.1f steps=%d", accumulated, steps))
     if steps > 0 then
       move(accumulated > 0 and steps or -steps)
     end
@@ -1053,6 +1048,11 @@ function onKey(chord, pressed)
 end
 
 function onIpc(event, _payload)
+  if event == "wheeltest" and opened then
+    -- TEST: simula un dentado de rueda
+    onScroll(scrollOffset + 56, maxScrollOffset())
+    return
+  end
   if event == "refresh" and opened then
     reload(true)
   elseif event == "next" and opened then

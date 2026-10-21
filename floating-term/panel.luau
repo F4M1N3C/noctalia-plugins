@@ -110,6 +110,10 @@ local function loadConfig()
   cfg.avoidCollisions = noctalia.getConfig("avoid_collisions") ~= false
 end
 
+local function widgetNames()
+  return util.sortedKeys(state.commands)
+end
+
 -- Fusiona defaults + Ajustes + store propio y aplica los borrados.
 local function loadWidgets()
   local base = defaults.load()
@@ -126,10 +130,7 @@ local function loadWidgets()
     state.store.layouts,
     state.store.removed
   )
-end
-
-local function widgetNames()
-  return util.sortedKeys(state.commands)
+  noctalia.log("floating-term: widgets -> " .. table.concat(widgetNames(), ", "))
 end
 
 local function classMap()

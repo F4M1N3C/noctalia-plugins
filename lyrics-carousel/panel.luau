@@ -711,7 +711,7 @@ render = function()
       }),
       ui.button({
         key = "close-panel",
-        glyph = "close",
+        glyph = "x",
         variant = "ghost",
         tooltip = tr("close"),
         onClick = function()

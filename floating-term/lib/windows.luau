@@ -428,19 +428,22 @@ function M.rotate(windows, mode, swapSizes, callback)
   local moves = {}
   for _, key in ipairs(order) do
     local group = sortByAngle(groups[key])
-    local mapping = permutation(group, mode)
-    for index = 1, #group do
-      local source = group[index]
-      local target = group[mapping[index]]
-      table.insert(moves, {
-        address = source.address,
-        selector = M.addressSelector(source.address),
-        x = target.x,
-        y = target.y,
-        w = target.w,
-        h = target.h,
-        resize = swapSizes == true,
-      })
+    -- Un grupo de una sola ventana no tiene con quién rotar.
+    if #group > 1 then
+      local mapping = permutation(group, mode)
+      for index = 1, #group do
+        local source = group[index]
+        local target = group[mapping[index]]
+        table.insert(moves, {
+          address = source.address,
+          selector = M.addressSelector(source.address),
+          x = target.x,
+          y = target.y,
+          w = target.w,
+          h = target.h,
+          resize = swapSizes == true,
+        })
+      end
     end
   end
 

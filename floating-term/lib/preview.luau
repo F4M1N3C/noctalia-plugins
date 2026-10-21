@@ -92,7 +92,8 @@ function M.toolsAvailable()
   return noctalia.fileExists(script)
 end
 
--- Limpia las capturas antiguas de un widget (mismo nombre, otra geometría).
+-- Limpia las capturas antiguas de un widget (mismo nombre, otra geometría) y
+-- los archivos de lote que se hayan quedado por el camino.
 local function prune(name, keepPath)
   local dir = M.cacheDir()
   if dir == nil then
@@ -104,7 +105,9 @@ local function prune(name, keepPath)
     return
   end
   for _, file in ipairs(files) do
-    if file:sub(1, #prefix) == prefix and file:sub(-4) == ".png" then
+    if file:sub(1, 6) == "batch-" or file == "batch.json" then
+      pcall(noctalia.removeFile, dir .. "/" .. file)
+    elseif file:sub(1, #prefix) == prefix and file:sub(-4) == ".png" then
       local path = dir .. "/" .. file
       if path ~= keepPath then
         pcall(noctalia.removeFile, path)
@@ -181,6 +184,8 @@ function M.capture(entries, callback)
     script,
     batchPath,
   }, function(result)
+    -- El archivo de lote ya no sirve: se borra para no dejar basura.
+    pcall(noctalia.removeFile, batchPath)
     if result.exitCode ~= 0 then
       local detail = util.trim(result.stderr or "")
       if detail ~= "" then
@@ -195,6 +200,7 @@ function M.capture(entries, callback)
     end
   end)
   if not started then
+    pcall(noctalia.removeFile, batchPath)
     if callback ~= nil then
       callback()
     end

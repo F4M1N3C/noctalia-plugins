@@ -194,7 +194,16 @@ local thumbPathCache = {}
 -- entra en la clave de caché: si el usuario lo cambia, las tarjetas se
 -- regeneran al tamaño correcto.
 local function thumbPath(source, bucket)
-  local cacheKey = source .. "|" .. tostring(bucket) .. "|" .. tostring(uiScale())
+  local info = fileInfoFor(source)
+  -- La clave incluye mtime y tamaño: si el wallpaper se edita, la ruta de la
+  -- miniatura cambia y no se queda la imagen vieja cacheada.
+  local cacheKey = table.concat({
+    source,
+    tostring(bucket),
+    string.format("%.2f", uiScale()),
+    tostring(info.mtime or 0),
+    tostring(info.size or 0),
+  }, "|")
   local cached = thumbPathCache[cacheKey]
   if cached ~= nil then
     return cached
@@ -204,7 +213,6 @@ local function thumbPath(source, bucket)
     thumbPathCache[cacheKey] = source
     return source
   end
-  local info = fileInfoFor(source)
   local key = table.concat({
     source,
     tostring(info.mtime or 0),
@@ -259,6 +267,7 @@ local function scanWallpapers()
   fileInfoCache = {}
   thumbReady = {}
   thumbRequested = {}
+  thumbPathCache = {}
   scanError = nil
 
   local configured = cfg.directory
@@ -381,10 +390,13 @@ local function metrics()
   if pad < 0 then
     pad = 0
   end
-  -- Distancia desde la cinta hasta el ancla. El ancla tiene que quedar por
-  -- debajo de la ventana para que al revelarla el scroll salte hacia arriba,
-  -- y a la vez el salto tiene que dejar la cinta en el mismo sitio.
-  local anchorGap = viewport - 1 - pad - ribbonHeight
+  -- Distancia desde la cinta hasta el ancla del scroll. El ancla tiene que
+  -- quedar por debajo de la ventana (para que al revelarla el scroll salte
+  -- hacia arriba) y a la vez el salto tiene que dejar la cinta en el mismo
+  -- sitio de la pantalla. La segunda condición fija esta distancia: el
+  -- relleno del scroll se mueve lo mismo que el desplazamiento, así que hace
+  -- falta que el ancla quede a `viewport - relleno - alto` del borde.
+  local anchorGap = viewport - 1 - pad + 8 / uiScale() - 2 * ribbonHeight
   if anchorGap < 0 then
     anchorGap = 0
   end
@@ -856,13 +868,15 @@ end
 -- salta SCROLL_JUMP px hacia arriba, dejando sitio para seguir subiendo. El
 -- relleno se adelanta al salto para que la cinta no dé un tirón.
 local function recenterScroll()
+  noctalia.log(string.format("wc-dbg recenter desde %.1f", scrollOffset))
   local m = metrics()
   local scale = uiScale()
   -- El scroll salta hacia arriba para reabrir el recorrido. El salto se
   -- calcula con el relleno que Noctalia va a dejar puesto (revealKey apunta
   -- al ancla), de modo que la cinta no se mueve ni un píxel.
   local target = scrollOffset + SCROLL_JUMP * scale
-  local anchorOffset = (m.ribbonHeight + m.anchorGap) * scale
+  -- Distancia del ancla al inicio del contenido (en px de la superficie).
+  local anchorOffset = (2 * m.ribbonHeight + m.anchorGap) * scale
   local viewport = panelHeight() - VIEWPORT_PADDING * 2
   scrollComp = (target - anchorOffset - scale + viewport) / scale
   scrollResetting = true
@@ -922,6 +936,7 @@ end
 -- solo dentado mueva un solo fondo aunque la animación dure varios frames.
 function onScroll(offset, _maxOffset)
   local newOffset = tonumber(offset) or 0
+  noctalia.log(string.format("wc-dbg onScroll off=%.1f reset=%s scrollOffset=%.1f", newOffset, tostring(scrollResetting), scrollOffset))
 
   if scrollResetting then
     scrollResetting = false
@@ -943,8 +958,11 @@ function onScroll(offset, _maxOffset)
   scrollOffset = newOffset
 end
 
+local fc = 0
 function onFrameTick(deltaMs)
   local dt = tonumber(deltaMs) or 16
+  fc = fc + 1
+  if fc % 60 == 0 then noctalia.log(string.format("wc-dbg fc=%d off=%.1f seen=%.1f acc=%.1f settled=%s", fc, scrollOffset, scrollSeen, scrollAccum, tostring(scrollSettled))) end
 
   -- 0. El primer frame recentra el scroll, para que la rueda tenga recorrido
   --    hacia arriba desde el principio, y pide las miniaturas.
@@ -1048,9 +1066,10 @@ function onKey(chord, pressed)
 end
 
 function onIpc(event, _payload)
+  noctalia.log(string.format("wc-dbg onIpc event=%s opened=%s", tostring(event), tostring(opened)))
   if event == "wheeltest" and opened then
     -- TEST: simula un dentado de rueda
-    onScroll(scrollOffset + 56, maxScrollOffset())
+    onScroll(scrollOffset + 56, scrollOffset + 1000)
     return
   end
   if event == "refresh" and opened then

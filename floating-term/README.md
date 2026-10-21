@@ -160,5 +160,7 @@ runtime is created on demand.
   keeps the mock thumbnail.
 - Clicking a card twice in a row does not open two windows: a short debounce (and the
   `reuse_existing` behaviour) keeps a single window per command.
+- A widget without a command stays in the list (so it is visible and can be fixed)
+  and complains with a notification when it is launched.
 - The plugin spawns `kitty`, `hyprctl` and (for the previews) `grim`; it makes no network
   requests.

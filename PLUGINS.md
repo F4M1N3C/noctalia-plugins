@@ -18,11 +18,11 @@
 | Plugin | Probado | Versión | Bloqueo exacto |
 | --- | --- | --- | --- |
 | `faminec/equalizer` | **8/8** ✅ | 1.0.0 | **Ninguno** (retirado del sistema, el código sigue publicado y verificado) |
-| `faminec/floating-term` | 0/17 | 2.0.0 "Term Deck" | El tag `terminal` **no está en la lista permitida** por la tienda → el validador oficial falla (1 error). Los 3 bugs de core ya tienen rodeo en el plugin, falta probar |
+| `faminec/floating-term` | 0/17 | 2.0.0 "Term Deck" | El tag `terminal` ya está corregido y el validador pasa. Los 3 bugs de core ya tienen rodeo en el plugin, falta probar |
 | `faminec/wallpaper-carousel` | 0/16 | 2.0.0 (v2 inclinada) | La v2 está en el repo pero **sin commitear**; cambia ajustes y miniatura → hay que regenerar el `thumbnail.webp` y el README antes del PR |
 | `faminec/notes` | 0/14 | 1.1.0 | El plugin ya está; falta probarlo y probar la app en el móvil. `tailscale funnel` sin activar en la cuenta |
 | `faminec/cmf-buds` | 0/20 | 1.0.0 | **La rueda del ratón no llega a los `ui.slider`** (falta `wheelAdjustEnabled` en el reconciliador del core). El parche está preparado pero **no aplicado** |
-| `faminec/lyrics-carousel` | 0/18 | 1.0.0 | El fix de los ajustes lostos está **solo en la copia instalada**, no en el repo. El repo tiene la versión antigua con `overrides.json` |
+| `faminec/lyrics-carousel` | 0/18 | 1.0.0 | Traducciones anidadas, etiquetas válidas y README en inglés ya están en el repo (validado). El fix de los ajustes lostos también se sincronizó con la copia instalada |
 | `ntimer` (utilidad) | 0/9 | — | — |
 | `notes-mobile` (utilidad) | 0/8 | — | Sin HTTPS estable (el túnel de Cloudflare cambia de URL) → la PWA no se instala de verdad; probar en el móvil |
 
@@ -32,10 +32,10 @@
 | --- | --- |
 | Repo personal `F4M1N3C/noctalia-plugins` | `main` en `7181b02` + 1 commit sin pushear (`feat(notes): add service entry for the IPC bridge`) + trabajo sin commitear de las otras sesiones |
 | Fork `F4M1N3C/community-plugins` | Creado y sincronizado con `noctalia-dev/community-plugins` (`main` = `f62bad56`) |
-| Ramas en el fork | `feat/cmf-buds`, `feat/equalizer`, `feat/floating-term`, `feat/lyrics-carousel`, `feat/notes`, `feat/wallpaper-carousel` — 1 commit sobre `main` de upstream, un solo directorio cada una |
+| Ramas en el fork | `feat/cmf-buds`, `feat/equalizer`, `feat/floating-term`, `feat/lyrics-carousel`, `feat/notes`, `feat/notes-sync`, `feat/wallpaper-carousel` — 1 commit sobre `main` de upstream, un solo directorio cada una |
 | PRs abiertos | **Ninguno** |
 | Cuerpos de PR | Los 6 generados y validados contra `enforce-pr-template.py` → **0 errores** (listos para abrir) |
-| Validador oficial | `Validated 6 plugin manifest(s).` en el estado de las 16:07; **ahora falla 1 error** por el tag `terminal` de `floating-term` v2 |
+| Validador oficial | **`Validated 7 plugin manifest(s).`** (21/10 18:05): los 7 plugins pasan. Se corrigieron el tag `terminal`, las traducciones planas de `lyrics-carousel`, sus etiquetas de opciones, su README y el tipo `password` de `notes-sync` |
 | Conflictos de nombre con la tienda | Ninguno: `notes`, `equalizer`, `cmf-buds`, `floating-term`, `lyrics-carousel` y `wallpaper-carousel` están libres |
 
 ---
@@ -47,7 +47,7 @@
 | Floating Term | `faminec/floating-term` | Listo (v2.0.0 "Term Deck") | Sí | `feat/floating-term` | ☐ 0/17 |
 | Wallpaper Carousel | `faminec/wallpaper-carousel` | Listo (v2.0.0, inclinada) | Sí | `feat/wallpaper-carousel` | ☐ 0/16 |
 | Notes | `faminec/notes` | Listo | Sí | `feat/notes` | ☐ 0/14 |
-| Notes Sync | `faminec/notes-sync` | Listo (nuevo) | No | — | ☐ 0/9 |
+| Notes Sync | `faminec/notes-sync` | Listo (nuevo) | Sí | `feat/notes-sync` | ☐ 0/9 |
 | CMF Buds | `faminec/cmf-buds` | Listo | Sí | `feat/cmf-buds` | ☐ 0/20 |
 | Lyrics Carousel | `faminec/lyrics-carousel` | Listo | Sí | `feat/lyrics-carousel` | ☐ 0/18 |
 | Equalizer | `faminec/equalizer` | Listo pero **retirado** | Sí | `feat/equalizer` | ☑ **8/8** |

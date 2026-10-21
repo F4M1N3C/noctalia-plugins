@@ -1,102 +1,160 @@
 {
-  "tooltip": "Lyrics carousel",
-  "title": "Lyrics Carousel",
-  "subtitle": "Nothing is playing",
-  "launch": "Open the carousel",
-  "launch_failed": "Could not open the terminal.",
-  "write_failed": "Could not save the setting.",
-  "open_settings": "Open settings",
+  "accent": "Active line colour",
+  "accent_blue": "blue",
+  "accent_custom": "custom",
+  "accent_cyan": "cyan",
+  "accent_green": "green",
+  "accent_magenta": "magenta",
+  "accent_primary": "primary",
+  "accent_red": "red",
+  "accent_yellow": "yellow",
+  "active_scale": "Active line size",
+  "anchor": "Window position",
+  "anchor_bottom_center": "bot mid",
+  "anchor_bottom_left": "bot left",
+  "anchor_bottom_right": "bot right",
+  "anchor_center": "center",
+  "anchor_left_center": "left mid",
+  "anchor_right_center": "right mid",
+  "anchor_top_center": "top mid",
+  "anchor_top_left": "top left",
+  "anchor_top_right": "top right",
   "close": "Close",
-  "section_display": "Display",
-  "section_lyrics": "Lyrics",
-  "section_window": "Window",
-  "section_font": "Font",
-  "render_mode": "Rendering",
-  "mode_text": "text",
-  "mode_image": "image",
   "direction": "Direction",
   "down": "down",
-  "up": "up",
-  "karaoke": "Karaoke glow",
-  "marker": "Active line marker",
-  "header": "Header (title / artist)",
-  "footer": "Time bar",
-  "hints": "Keyboard hints",
   "equalizer": "Sound visualiser",
+  "font_size": "Size",
+  "footer": "Time bar",
   "ghost": "Soft transitions",
-  "active_scale": "Active line size",
+  "header": "Header (title / artist)",
+  "height": "Height",
+  "hint": "Changes apply live. In text mode the font restarts the window.",
+  "hints": "Keyboard hints",
+  "image_only_fonts": "Image mode only (proportional):",
+  "karaoke": "Karaoke glow",
+  "launch": "Open the carousel",
+  "launch_failed": "Could not open the terminal.",
+  "marker": "Active line marker",
+  "mode_image": "image",
+  "mode_text": "text",
+  "open_settings": "Open settings",
+  "render_mode": "Rendering",
+  "section_display": "Display",
+  "section_font": "Font",
+  "section_lyrics": "Lyrics",
+  "section_window": "Window",
+  "settings": {
+    "accent": {
+      "description": "The primary colour follows the wallpaper; the rest are ANSI colours from the theme.",
+      "label": "Active line colour",
+      "primary": "Primary",
+      "green": "Green",
+      "yellow": "Yellow",
+      "blue": "Blue",
+      "magenta": "Magenta",
+      "cyan": "Cyan",
+      "red": "Red",
+      "custom": "Custom"
+    },
+    "active_scale": {
+      "description": "Size multiplier of the line being sung (image mode only).",
+      "label": "Active line size"
+    },
+    "anchor": {
+      "description": "Where the window opens: center, top-left, bottom-right...",
+      "label": "Window position"
+    },
+    "animation_ms": {
+      "description": "Duration of the scroll between lines, in milliseconds. 0 = instant.",
+      "label": "Transition"
+    },
+    "custom_color": {
+      "description": "Hex colour (#rrggbb) used when the accent is \"custom\".",
+      "label": "Custom colour"
+    },
+    "direction": {
+      "description": "Down: the lyrics come from the top. Up: the lyrics come from the bottom.",
+      "down": "Down",
+      "label": "Scroll direction",
+      "up": "Up"
+    },
+    "equalizer": {
+      "description": "Show the animated bars.",
+      "label": "Sound visualiser"
+    },
+    "font_family": {
+      "description": "Font used for the lyrics. Image mode accepts any font; text mode only accepts monospaced ones.",
+      "label": "Font family"
+    },
+    "font_size": {
+      "description": "Size of the lyrics in pixels.",
+      "label": "Font size"
+    },
+    "footer": {
+      "description": "Show the elapsed time and the progress bar.",
+      "label": "Time bar"
+    },
+    "ghost": {
+      "description": "Dim the block slightly while it moves for a softer feel.",
+      "label": "Soft transitions"
+    },
+    "glyph": {
+      "description": "Icon shown in the bar.",
+      "label": "Bar glyph"
+    },
+    "header": {
+      "description": "Show the title, the artist and the status tags.",
+      "label": "Header"
+    },
+    "height": {
+      "description": "Height of the terminal window in pixels.",
+      "label": "Window height"
+    },
+    "hints": {
+      "description": "Show the keyboard shortcuts at the bottom.",
+      "label": "Keyboard hints"
+    },
+    "karaoke": {
+      "description": "Light up the active line character by character as the song plays.",
+      "label": "Karaoke glow"
+    },
+    "marker": {
+      "description": "Show a marker next to the line being sung.",
+      "label": "Active line marker"
+    },
+    "offset_ms": {
+      "description": "Shift the lyrics in milliseconds to fine tune the sync.",
+      "label": "Lyrics offset"
+    },
+    "render_mode": {
+      "description": "Text: drawn by the terminal. Image: drawn with Pillow, allows other line sizes and any font.",
+      "label": "Rendering mode",
+      "image": "Image",
+      "text": "Text"
+    },
+    "spacing": {
+      "description": "Blank rows between lyrics (text mode).",
+      "label": "Line spacing"
+    },
+    "visible_above": {
+      "description": "How many lines are drawn above the active line.",
+      "label": "Visible lines above"
+    },
+    "visible_below": {
+      "description": "How many lines are drawn below the active line.",
+      "label": "Visible lines below"
+    },
+    "width": {
+      "description": "Width of the terminal window in pixels.",
+      "label": "Window width"
+    }
+  },
+  "subtitle": "Nothing is playing",
+  "title": "Lyrics Carousel",
+  "tooltip": "Lyrics carousel",
+  "up": "up",
   "visible_above": "Lines above",
   "visible_below": "Lines below",
-  "accent": "Active line colour",
-  "accent_primary": "primary",
-  "accent_green": "green",
-  "accent_yellow": "yellow",
-  "accent_blue": "blue",
-  "accent_magenta": "magenta",
-  "accent_cyan": "cyan",
-  "accent_red": "red",
-  "accent_custom": "custom",
-  "anchor": "Window position",
-  "anchor_top_left": "top left",
-  "anchor_top_center": "top mid",
-  "anchor_top_right": "top right",
-  "anchor_left_center": "left mid",
-  "anchor_center": "center",
-  "anchor_right_center": "right mid",
-  "anchor_bottom_left": "bot left",
-  "anchor_bottom_center": "bot mid",
-  "anchor_bottom_right": "bot right",
   "width": "Width",
-  "height": "Height",
-  "font_size": "Size",
-  "image_only_fonts": "Image mode only (proportional):",
-  "hint": "Changes apply live. In text mode the font restarts the window.",
-  "settings.font_family.label": "Font family",
-  "settings.font_family.description": "Font used for the lyrics. Image mode accepts any font; text mode only accepts monospaced ones.",
-  "settings.font_size.label": "Font size",
-  "settings.font_size.description": "Size of the lyrics in pixels.",
-  "settings.render_mode.label": "Rendering mode",
-  "settings.render_mode.description": "Text: drawn by the terminal. Image: drawn with Pillow, allows other line sizes and any font.",
-  "settings.direction.label": "Scroll direction",
-  "settings.direction.description": "Down: the lyrics come from the top. Up: the lyrics come from the bottom.",
-  "settings.direction.down": "Down",
-  "settings.direction.up": "Up",
-  "settings.marker.label": "Active line marker",
-  "settings.marker.description": "Show a marker next to the line being sung.",
-  "settings.karaoke.label": "Karaoke glow",
-  "settings.karaoke.description": "Light up the active line character by character as the song plays.",
-  "settings.equalizer.label": "Sound visualiser",
-  "settings.equalizer.description": "Show the animated bars.",
-  "settings.footer.label": "Time bar",
-  "settings.footer.description": "Show the elapsed time and the progress bar.",
-  "settings.hints.label": "Keyboard hints",
-  "settings.hints.description": "Show the keyboard shortcuts at the bottom.",
-  "settings.header.label": "Header",
-  "settings.header.description": "Show the title, the artist and the status tags.",
-  "settings.spacing.label": "Line spacing",
-  "settings.spacing.description": "Blank rows between lyrics (text mode).",
-  "settings.animation_ms.label": "Transition",
-  "settings.animation_ms.description": "Duration of the scroll between lines, in milliseconds. 0 = instant.",
-  "settings.ghost.label": "Soft transitions",
-  "settings.ghost.description": "Dim the block slightly while it moves for a softer feel.",
-  "settings.offset_ms.label": "Lyrics offset",
-  "settings.offset_ms.description": "Shift the lyrics in milliseconds to fine tune the sync.",
-  "settings.width.label": "Window width",
-  "settings.width.description": "Width of the terminal window in pixels.",
-  "settings.height.label": "Window height",
-  "settings.height.description": "Height of the terminal window in pixels.",
-  "settings.anchor.label": "Window position",
-  "settings.anchor.description": "Where the window opens: center, top-left, bottom-right...",
-  "settings.accent.label": "Active line colour",
-  "settings.accent.description": "The primary colour follows the wallpaper; the rest are ANSI colours from the theme.",
-  "settings.custom_color.label": "Custom colour",
-  "settings.custom_color.description": "Hex colour (#rrggbb) used when the accent is \"custom\".",
-  "settings.active_scale.label": "Active line size",
-  "settings.active_scale.description": "Size multiplier of the line being sung (image mode only).",
-  "settings.visible_above.label": "Visible lines above",
-  "settings.visible_below.label": "Visible lines below",
-  "settings.visible_above.description": "How many lines are drawn above the active line.",
-  "settings.visible_below.description": "How many lines are drawn below the active line.",
-  "settings.glyph.label": "Bar glyph",
-  "settings.glyph.description": "Icon shown in the bar."
+  "write_failed": "Could not save the setting."
 }

@@ -24,7 +24,7 @@ default = "http://127.0.0.1:8787"
 
 [[setting]]
 key = "token"
-type = "password"
+type = "string"
 label_key = "settings.token.label"
 description_key = "settings.token.description"
 default = ""

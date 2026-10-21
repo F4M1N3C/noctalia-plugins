@@ -14,7 +14,7 @@ plugin_api = 34
 author = "faminec"
 license = "MIT"
 dependencies = ["kitty", "hyprland", "playerctl", "python3"]
-tags = ["music", "terminal", "utility", "lyrics"]
+tags = ["music", "system", "utility", "media"]
 icon = "music"
 description = "Carrusel de letras sincronizadas en una ventana de terminal flotante, con letra grande para la linea activa."
 

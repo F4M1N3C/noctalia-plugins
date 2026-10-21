@@ -1,98 +1,116 @@
 # Lyrics Carousel
 
-Carrusel de letras sincronizadas en una ventana flotante de kitty, al estilo de
-`cava`, `lavat` o `unimatrix`.
+Synced lyrics in a floating kitty window, in the spirit of `cava`, `lavat` or `unimatrix`.
 
-- Widget de barra (`faminec/lyrics-carousel:widget`) con el icono de música.
-- Panel (`faminec/lyrics-carousel:panel`) con interruptores rápidos.
-- Script propio (`bin/lyrics-carousel`) que lee el reproductor MPRIS con
-  `playerctl` y busca la letra.
+## Plugin
 
-## Dos modos de dibujo
+| Field | Value |
+| --- | --- |
+| ID | `faminec/lyrics-carousel` |
+| Entries | Bar widget: `widget`; panel: `panel` |
 
-| Modo | Qué usa | Ventajas | Inconvenientes |
+## Requirements
+
+The following executables must be installed and available on `PATH`:
+
+- `kitty` — the terminal the window runs in, and the graphics protocol used by the image
+  renderer.
+- `hyprland` — the compositor; the window is opened with the Hyprland 0.56 Lua API.
+- `playerctl` — reads the active MPRIS player.
+- `python3` with `python-pillow` — draws the lyrics in image mode.
+
+The lyrics themselves come from the Noctalia Lyrics plugin's source adapter
+(`lyric_sources.py`), so the same providers and the same configuration are reused:
+LRCLIB, NetEase, SPlayer, QQ Music, Kugou and, with credentials, Spotify, Apple Music
+or Musixmatch.
+
+## Usage
+
+Add the `widget` bar icon and click it to open the lyrics window. The panel that opens
+with it holds the quick switches.
+
+The panel can also be opened directly:
+
+```sh
+noctalia msg panel-toggle faminec/lyrics-carousel:panel
+```
+
+### Two rendering modes
+
+| Mode | What it uses | Advantages | Trade-offs |
 | --- | --- | --- | --- |
-| `image` (por defecto) | Pillow + protocolo de gráficos de kitty | La línea activa se dibuja más grande, el desplazamiento es a nivel de píxel y admite cualquier tipografía | Necesita kitty y Pillow; el texto no es seleccionable |
-| `text` | La propia terminal | Ligero, nítido, el texto es seleccionable | Un solo tamaño de letra para toda la ventana |
+| `image` (default) | Pillow and the kitty graphics protocol | The active line is drawn larger, the scroll is pixel-accurate and any font works | Needs kitty and Pillow; the text cannot be selected |
+| `text` | The terminal itself | Lightweight and crisp, the text is selectable | One font size for the whole window |
 
-En modo imagen la ventana se dibuja como una imagen PNG con transparencia
-(1653×1368 px en una ventana de 87×36 celdas), así que el fondo de pantalla se
-sigue viendo a través.
+In image mode the window is drawn as a transparent PNG (1653×1368 px in an 87×36 cell
+window), so the desktop wallpaper stays visible through it.
 
-## De dónde sale la letra
+The providers are queried in parallel and the first one to answer wins, so the lyrics
+usually show up in under a second. The result is cached in `~/.cache/lyrics-carousel`.
 
-El script reutiliza el adaptador de fuentes del plugin Lyrics de Noctalia
-(`lyric_sources.py`), así que comparte con él las mismas fuentes y la misma
-configuración: LRCLIB, NetEase, SPlayer, QQ Music, Kugou y, si tienes
-credenciales, Spotify, Apple Music o Musixmatch.
+### Keyboard shortcuts
 
-Las fuentes se consultan **en paralelo** y gana la primera que responde, así que
-normalmente la letra aparece en menos de un segundo. El resultado se guarda en
-`~/.cache/lyrics-carousel` para no volver a buscar lo que ya sabes.
+| Key | Action |
+| --- | --- |
+| `q` | Quit |
+| `space` | Pause / resume |
+| `d` | Reverse the scroll direction |
+| `k` | Toggle the karaoke effect |
+| `r` | Look the lyrics up again |
 
-## Ajustes
+`d` and `k` also write their value to `settings.toml`.
 
-Todos los ajustes viven en el `settings.toml` de Noctalia
-(`[plugin_settings."faminec/lyrics-carousel"]`). El panel los escribe ahí con
-`bin/set-setting.py` y recarga la configuración, de modo que **la página de
-ajustes y el panel muestran siempre lo mismo** (no hay dos fuentes de verdad).
-El script lee ese mismo fichero cada 1,2 s, así que los cambios se aplican en
-caliente a la ventana que ya esté abierta.
+## Settings
 
-| Clave | Por defecto | Descripción |
-| --- | --- | --- |
-| `font_family` | `Departure Mono` | Tipografía de la letra. |
-| `font_size` | `22` | Tamaño de la letra en píxeles. |
-| `render_mode` | `image` | `image` (Pillow) o `text` (terminal). |
-| `direction` | `down` | `down`: las letras entran por arriba. `up`: por abajo. |
-| `marker` | `false` | Marca `>` junto a la línea activa. |
-| `karaoke` | `true` | Ilumina la línea activa carácter a carácter. |
-| `equalizer` | `false` | Barras animadas. |
-| `footer` | `false` | Tiempo transcurrido y barra de progreso. |
-| `hints` | `false` | Atajos de teclado abajo. |
-| `header` | `false` | Título, artista y etiquetas de estado. |
-| `spacing` | `2` | Separación entre renglones. |
-| `animation_ms` | `650` | Duración del desplazamiento entre líneas. |
-| `ghost` | `true` | Atenúa el bloque mientras se mueve. |
-| `offset_ms` | `0` | Desfase para afinar la sincronía. |
-| `width` / `height` | `1200` / `820` | Tamaño de la ventana. |
-| `anchor` | `center` | Posición: `center`, `top-left`, `bottom-right`... |
-| `accent` | `primary` | Color de la línea activa: `primary` (sigue al fondo), ANSI o `custom`. |
-| `custom_color` | `#e46767` | Color hexadecimal para `accent = custom`. |
-| `active_scale` | `1.35` | Multiplicador de tamaño de la línea que se canta (modo imagen). |
-| `visible_above` / `visible_below` | `6` / `6` | Renglones visibles a cada lado. |
-| `glyph` | `music` | Icono de la barra. |
+Configure the plugin in **Settings → Plugins → Lyrics Carousel**. The panel writes the
+same file and reloads the configuration, so the settings page and the panel always
+agree; the script re-reads that file every 1.2 s, so changes apply live to a window
+that is already open.
 
-La posición y el tamaño de la ventana se aplican **en caliente** sobre la
-ventana existente (sin recrearla). La tipografía solo necesita reiniciar la
-ventana en modo texto; en modo imagen se aplica al instante.
+| Setting | Type | Default | Description |
+| --- | --- | --- | --- |
+| `font_family` | `string` | `Departure Mono` | Font used for the lyrics. |
+| `font_size` | `int` | `22` | Size of the lyrics, in pixels. |
+| `render_mode` | `select` | `image` | `image` (Pillow) or `text` (terminal). |
+| `direction` | `select` | `down` | `down`: the lyrics come in from the top. `up`: from the bottom. |
+| `marker` | `bool` | `false` | Shows a `>` next to the active line. |
+| `karaoke` | `bool` | `true` | Lights the active line character by character. |
+| `equalizer` | `bool` | `false` | Animated bars. |
+| `footer` | `bool` | `false` | Elapsed time and a progress bar. |
+| `hints` | `bool` | `false` | Keyboard hints at the bottom. |
+| `header` | `bool` | `false` | Title, artist and status tags. |
+| `spacing` | `int` | `2` | Space between the lines. |
+| `animation_ms` | `int` | `650` | Duration of the scroll between lines. |
+| `ghost` | `bool` | `true` | Dims the block while it moves. |
+| `offset_ms` | `int` | `0` | Offset to fine-tune the synchronisation. |
+| `width` | `int` | `1200` | Window width. |
+| `height` | `int` | `820` | Window height. |
+| `anchor` | `string` | `center` | Window anchor: `center`, `top-left`, `bottom-right`… |
+| `accent` | `select` | `primary` | Colour of the active line: `primary` (follows the wallpaper), an ANSI colour or `custom`. |
+| `custom_color` | `string` | `#e46767` | Hex colour used when `accent = custom`. |
+| `active_scale` | `double` | `1.35` | Size multiplier of the line being sung (image mode). |
+| `visible_above` | `int` | `6` | Lines visible above the active one. |
+| `visible_below` | `int` | `6` | Lines visible below the active one. |
+| `glyph` | `glyph` | `music` | Bar icon. |
 
-## Tipografías
+The position and the size are applied live to the running window, without recreating
+it. The font only needs a restart in text mode; in image mode it applies instantly.
 
-Kitty solo acepta fuentes monoespaciadas, así que en modo texto la lista es:
+## IPC
 
-- `Departure Mono` — pixel lo-fi, la que más se parece al logo de OpenCode.
-- `Press Start 2P` — pixel 8×8 clásico, el aire de `tty-clock`.
-- `Space Mono`, `NType 82 Mono`, `Lettera Mono LL` — de la colección Nothing.
-- `IBM Plex Mono` — el cuerpo tipográfico de la web de OpenCode.
+```sh
+noctalia msg panel-toggle faminec/lyrics-carousel:panel
+```
 
-En modo imagen se puede usar cualquier otra (`Nothing Font (5x7)`, `Ndot 57`…),
-también las proporcionales.
+## Notes
 
-## Atajos dentro de la ventana
-
-- `q` salir
-- `espacio` pausar / reanudar
-- `d` invertir el sentido del carrusel
-- `k` activar o desactivar el efecto karaoke
-- `r` volver a buscar la letra
-
-Los atajos `d` y `k` además guardan el valor en el `settings.toml`.
-
-## Notas
-
-- La ventana se abre con `hl.dsp.exec_cmd(...)` y la clase
-  `noctalia-lyrics-carousel`; el script se puede lanzar a mano con `lyrics-carousel`.
-- Fuera de kitty (o sin Pillow) el script cae al modo texto automáticamente.
-- El color de acento se lee del tema que Noctalia genera para kitty, así que
-  sigue al fondo de pantalla.
+- The window is opened with `hl.dsp.exec_cmd(...)` and the class
+  `noctalia-lyrics-carousel`; the script can also be run by hand as `lyrics-carousel`.
+- Outside kitty (or without Pillow) the script falls back to text mode on its own.
+- The accent colour is read from the theme Noctalia generates for kitty, so it follows
+  the wallpaper.
+- Kitty only accepts monospaced fonts, so in text mode the usable list is
+  `Departure Mono`, `Press Start 2P`, `Space Mono`, `NType 82 Mono`, `Lettera Mono LL`
+  and `IBM Plex Mono`. Image mode accepts any font.
+- The plugin makes network requests to the lyrics providers; nothing else leaves the
+  machine.

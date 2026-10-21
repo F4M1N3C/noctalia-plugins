@@ -107,7 +107,8 @@ class ModifierTracker:
         self.held = set()
         self.available = False
         self.log = log or (lambda msg: None)
-        self._fds = {}
+        self._fds = {}       # fd -> ruta
+        self._by_path = {}   # ruta -> fd
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -123,6 +124,7 @@ class ModifierTracker:
             except Exception:
                 pass
         self._fds.clear()
+        self._by_path.clear()
 
     def modifiers(self):
         with self._lock:
@@ -139,6 +141,48 @@ class ModifierTracker:
             except Exception:
                 continue
             self._fds[fd] = path
+            self._by_path[path] = fd
+        self.available = bool(self._fds)
+
+    def _refresh_devices(self):
+        """Reescanea /dev/input.
+
+        Un nodo puede pasar a apuntar a otro dispositivo (por ejemplo, si se
+        reinicia un teclado virtual: el nodo /dev/input/eventN se recrea). Sin
+        este refresco, el fd antiguo queda colgado al dispositivo borrado y los
+        modificadores dejan de detectarse para siempre.
+        """
+        paths = _list_event_devices()
+        current = set(paths)
+        for path in paths:
+            fd = self._by_path.get(path)
+            if fd is not None:
+                try:
+                    if os.fstat(fd).st_ino == os.stat(path).st_ino:
+                        continue
+                except OSError:
+                    pass
+                # el nodo apunta a otro dispositivo: se reabre
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                self._fds.pop(fd, None)
+                self._by_path.pop(path, None)
+            try:
+                nfd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            except OSError:
+                continue
+            self._fds[nfd] = path
+            self._by_path[path] = nfd
+        for fd, path in list(self._fds.items()):
+            if path not in current:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                self._fds.pop(fd, None)
+                self._by_path.pop(path, None)
         self.available = bool(self._fds)
 
     def _loop(self):
@@ -151,8 +195,13 @@ class ModifierTracker:
             self.log("Sin dispositivos de entrada: no se detectaran modificadores")
             return
         buf_size = INPUT_EVENT_SIZE
+        last_refresh = 0.0
         while not self._stop.is_set():
             try:
+                now = time.monotonic()
+                if now - last_refresh > 2.0:
+                    last_refresh = now
+                    self._refresh_devices()
                 ready, _, _ = select.select(list(self._fds.keys()), [], [], 0.5)
                 for fd in ready:
                     try:

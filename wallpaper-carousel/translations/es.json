@@ -2,17 +2,11 @@
   "applied": "Fondo aplicado",
   "apply": "Aplicar fondo",
   "apply_failed": "No se pudo aplicar el fondo.",
-  "close": "Cerrar",
   "empty": "No se encontraron imágenes en {directory}.",
   "empty_hint": "Elige otra carpeta en Ajustes → Plugins.",
-  "filename": "{name}",
-  "folder": "Abrir carpeta",
   "hint": "← → navegar · rueda navegar · Enter aplicar · Esc cerrar",
   "missing_file": "El archivo ya no existe.",
-  "next": "Fondo siguiente",
   "open_settings": "Abrir ajustes",
-  "prev": "Fondo anterior",
-  "random": "Aleatorio",
   "refresh": "Volver a escanear",
   "settings": {
     "apply_all": {
@@ -76,8 +70,6 @@
       "description": "Mueve el carrusel con la rueda del ratón. Desactivado la rueda no hace nada."
     }
   },
-  "size": "Tamaño",
-  "subtitle": "{count} fondos · {directory}",
   "thumb_error": "No se pudieron generar las miniaturas. Se muestran los fondos originales.",
   "title": "Fondos de pantalla",
   "tooltip": "Abrir el carrusel de fondos",

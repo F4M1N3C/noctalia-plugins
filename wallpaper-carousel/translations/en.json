@@ -2,17 +2,11 @@
   "applied": "Wallpaper applied",
   "apply": "Apply wallpaper",
   "apply_failed": "Could not apply the wallpaper.",
-  "close": "Close",
   "empty": "No images found in {directory}.",
   "empty_hint": "Choose another folder in Settings → Plugins.",
-  "filename": "{name}",
-  "folder": "Open folder",
   "hint": "← → browse · scroll browse · Enter apply · Esc close",
   "missing_file": "The file no longer exists.",
-  "next": "Next wallpaper",
   "open_settings": "Open settings",
-  "prev": "Previous wallpaper",
-  "random": "Random",
   "refresh": "Rescan",
   "settings": {
     "apply_all": {
@@ -76,8 +70,6 @@
       "description": "Move the carousel with the mouse wheel. Off disables the wheel."
     }
   },
-  "size": "Size",
-  "subtitle": "{count} wallpapers · {directory}",
   "thumb_error": "Could not generate thumbnails. Showing the original wallpapers.",
   "title": "Wallpapers",
   "tooltip": "Open the wallpaper carousel",

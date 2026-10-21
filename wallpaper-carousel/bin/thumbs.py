@@ -57,6 +57,11 @@ def render(item: dict[str, Any]) -> None:
     blur = item["blur"]
     darken = item["darken"]
 
+    # Si la miniatura ya está en caché no se vuelve a generar: así el plugin
+    # puede pedir un rango amplio de tarjetas sin repetir trabajo.
+    if os.path.exists(output):
+        return
+
     os.makedirs(os.path.dirname(output), exist_ok=True)
     temp = output + ".tmp"
 

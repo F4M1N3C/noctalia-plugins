@@ -43,6 +43,7 @@ local applying = false
 local thumbErrorShown = false
 local fileInfoCache = {}
 local thumbReady = {}
+local thumbRequested = {}
 
 -- Forward declarations: render and the navigation helpers call each other.
 local render, selectIndex, move, randomWallpaper, apply, reload
@@ -185,6 +186,7 @@ local function scanWallpapers()
   wallpapers = {}
   fileInfoCache = {}
   thumbReady = {}
+  thumbRequested = {}
   scanError = nil
 
   local configured = cfg.directory
@@ -347,9 +349,10 @@ local function ensureThumbs()
     return
   end
 
-  -- Se generan las miniaturas de todas las tarjetas visibles, no solo las
-  -- cercanas a la seleccionada.
-  local half = cardLayout().half
+  -- Se encolan las miniaturas de un rango amplio alrededor de la seleccionada
+  -- (para que al desplazarse siempre haya imágenes listas). El helper descarta
+  -- las que ya existen, así que repetir el trabajo es barato.
+  local half = math.max(cardLayout().half, 6)
   local first = selected - half
   local last = selected + half
   local items = {}
@@ -360,8 +363,9 @@ local function ensureThumbs()
     if source then
       for _, bucket in ipairs(BUCKETS) do
         local output = thumbPath(source, bucket)
-        if not seen[output] and not noctalia.fileExists(output) then
+        if not seen[output] and not thumbRequested[output] then
           seen[output] = true
+          thumbRequested[output] = true
           table.insert(items, {
             source = source,
             output = output,

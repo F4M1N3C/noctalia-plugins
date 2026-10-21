@@ -1,0 +1,38 @@
+{
+  "bad_extension": "Ajuste de extensión de archivo no válido – se usará md",
+  "confirm_delete": "¿Borrar?",
+  "counts": "{words} palabras · {chars} caracteres",
+  "editing": "Editando…",
+  "editor_placeholder": "Escribe tu nota…",
+  "empty": "Aún no hay notas – crea una con +",
+  "launcher": {
+    "append_title": "Añadir a notas rápidas",
+    "appended": "Añadido a notas rápidas",
+    "clip_title": "Nueva nota desde el portapapeles",
+    "home_subtitle": "Ver todas las notas",
+    "home_title": "Abrir notas",
+    "new_title": "Nueva nota",
+    "open_subtitle": "Abrir nota"
+  },
+  "rename_exists": "Ya existe una nota con ese nombre",
+  "save_failed": "No se pudo guardar la nota",
+  "saved": "Guardado",
+  "scratchpad": "Notas rápidas",
+  "settings": {
+    "extension": {
+      "description": "Extensión de los archivos de notas (sin el punto); solo se listan los archivos con esta extensión",
+      "label": "Extensión de archivo"
+    },
+    "glyph": {
+      "label": "Glifo de la barra"
+    },
+    "notes_dir": {
+      "description": "Dónde se guardan los archivos de notas"
+    },
+    "watch": {
+      "description": "Refresca el panel cuando las notas cambian fuera de él (app móvil, herramientas de sincronización)",
+      "label": "Vigilar carpeta"
+    }
+  },
+  "title": "Notas"
+}

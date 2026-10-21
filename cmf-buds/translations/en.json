@@ -1,0 +1,208 @@
+{
+  "action": {
+    "game_mode": "Game mode",
+    "no_action": "No action",
+    "noise_control": "Cycle ANC",
+    "play_pause": "Play / pause",
+    "skip_back": "Previous track",
+    "skip_forward": "Next track",
+    "voice_assistant": "Voice assistant",
+    "volume_control": "Volume control",
+    "volume_down": "Volume down",
+    "volume_up": "Volume up"
+  },
+  "anc": {
+    "adaptive": "Adaptive",
+    "cancel": "Noise cancelling",
+    "high": "High",
+    "hint": "The change is applied to the earbuds instantly.",
+    "level": "Strength",
+    "low": "Low",
+    "mid": "Mid",
+    "off": "Off",
+    "title": "Noise control",
+    "transparency": "Transparency"
+  },
+  "battery": {
+    "case": "Case",
+    "left": "Left",
+    "right": "Right"
+  },
+  "button": {
+    "apply": "Apply",
+    "close": "Close",
+    "connect": "Connect",
+    "reconnect": "Reconnect",
+    "refresh": "Refresh",
+    "settings": "Plugin settings"
+  },
+  "controls": {
+    "case": "Case dial",
+    "case_hint": "The CMF Buds Pro 2 case dial can be mapped to these gestures.",
+    "left": "Left earbud",
+    "right": "Right earbud"
+  },
+  "eq": {
+    "bass": "Bass",
+    "custom": "Custom EQ",
+    "hint": "Custom mode stores the curve on the earbuds.",
+    "mid": "Mids",
+    "preset": {
+      "balanced": "Balanced",
+      "classical": "Classical",
+      "custom": "Custom",
+      "electronic": "Electronic",
+      "pop": "Pop",
+      "rock": "Rock",
+      "vocal": "Vocals"
+    },
+    "title": "Equalizer",
+    "treble": "Treble",
+    "ultra": "Ultra Bass",
+    "ultra_level": "Level"
+  },
+  "error": {
+    "daemon": "Could not start the earbuds daemon.",
+    "generic": "The operation could not be completed.",
+    "no_state": "The daemon has not written any state yet.",
+    "not_connected": "The earbuds are not connected over RFCOMM."
+  },
+  "fit": {
+    "bad": "Bad seal",
+    "error": "No data",
+    "good": "Good seal",
+    "hint": "Place both earbuds in and press Start. It takes a few seconds.",
+    "left": "Left",
+    "right": "Right",
+    "running": "Measuring the seal…",
+    "start": "Start test",
+    "stop": "Stop test",
+    "title": "Ear tip fit test"
+  },
+  "gesture": {
+    "double": "Double press",
+    "double_hold": "Double press and hold",
+    "hold": "Press and hold",
+    "rotate": "Rotate the dial",
+    "single": "Single press",
+    "triple": "Triple press"
+  },
+  "hint": {
+    "phone": "If the channel is busy, close Nothing X on your phone or disable the phone connection."
+  },
+  "info": {
+    "address": "Address",
+    "battery": "Battery",
+    "firmware": "Firmware",
+    "model": "Model",
+    "serial": "Serial",
+    "title": "Information"
+  },
+  "loading": "Reading the earbuds…",
+  "ring": {
+    "left": "Ring left",
+    "right": "Ring right",
+    "stop": "Stop",
+    "title": "Find my earbuds"
+  },
+  "settings": {
+    "device_mac": {
+      "description": "Optional. When set, this address is always used.",
+      "label": "Device MAC"
+    },
+    "device_name": {
+      "description": "Bluetooth name used when no MAC is configured.",
+      "label": "Device name"
+    },
+    "glyph": {
+      "description": "Icon shown in the bar.",
+      "label": "Bar glyph"
+    },
+    "poll_seconds": {
+      "description": "How often the earbuds are queried for their state.",
+      "label": "Poll interval"
+    },
+    "volume_step": {
+      "description": "How much the volume changes when scrolling over the widget.",
+      "label": "Volume step"
+    }
+  },
+  "shortcut": {
+    "add": "Add rule",
+    "command_label": "Command",
+    "command_placeholder": "hyprctl dispatch workspace next",
+    "delete": "Delete rule",
+    "gesture": {
+      "dial_down": "Dial wheel down",
+      "dial_up": "Dial wheel up"
+    },
+    "gesture_label": "Gesture",
+    "hint": "El dial del estuche sendseñala al PC como un cambio de volumen. Aquí decides qué hace esa señal: con SUPER pulsado, por ejemplo, cambiar de workspace en lugar de tocar el volumen. Las pulsaciones repetidas se agrupan para detectar dobles y triples.",
+    "last": "{trigger} x{presses}{modifiers} → {command}",
+    "last_label": "Last event",
+    "modifier": {
+      "alt": "ALT",
+      "ctrl": "CTRL",
+      "no_super": "Without SUPER",
+      "none": "None",
+      "shift": "SHIFT",
+      "super": "SUPER"
+    },
+    "modifier_label": "Modifier",
+    "mods_held": "Held: {mods}",
+    "mods_label": "Modifiers",
+    "mods_unavailable": "No access to /dev/input",
+    "none": "—",
+    "note": "For the signal to reach the PC, the gesture must be mapped to a volume action (e.g. triple press of the case button → Volume up).",
+    "notify": "Notify",
+    "presses": {
+      "any": "Any"
+    },
+    "presses_label": "Repeats",
+    "restore": "Restore volume",
+    "rule_title": "{trigger} · {modifier}",
+    "test": "Test",
+    "title": "Local shortcuts"
+  },
+  "status": {
+    "connected": "Connected",
+    "connecting": "Connecting…",
+    "disconnected": "Disconnected",
+    "error": "Error"
+  },
+  "subtitle": "RFCOMM CONTROL · NOTHING X FOR LINUX",
+  "system": {
+    "dual": "Dual connection",
+    "dual_desc": "Keeps two devices connected at once.",
+    "in_ear": "In-ear detection",
+    "in_ear_desc": "Pauses playback when you remove an earbud.",
+    "low_latency": "Low latency",
+    "low_latency_desc": "Game mode; reduces Bluetooth delay.",
+    "spatial": "Spatial audio",
+    "spatial_desc": "Immersive sound for music and video.",
+    "title": "Device settings"
+  },
+  "tab": {
+    "actions": "Shortcuts",
+    "controls": "Controls",
+    "sound": "Sound",
+    "system": "System"
+  },
+  "title": "CMF Buds",
+  "tooltip": {
+    "anc": "ANC",
+    "battery": "Battery",
+    "connected": "Connected",
+    "connection": "Connection",
+    "disconnected": "Disconnected",
+    "eq": "Equalizer",
+    "error": "Error",
+    "volume": "Volume"
+  },
+  "volume": {
+    "mute": "Mute",
+    "system": "System volume · {sink}",
+    "title": "Volume",
+    "unmute": "Unmute"
+  }
+}

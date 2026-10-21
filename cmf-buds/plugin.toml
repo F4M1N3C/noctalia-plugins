@@ -1,0 +1,94 @@
+# Control nativo de los CMF Buds Pro 2 (B172) desde Noctalia.
+# Habla RFCOMM con los auriculares: ANC, volumen, EQ, Ultra Bass, gestos del
+# dial del estuche, audio espacial, detección in-ear, latencia baja, multipunto,
+# batería, ring my buds y test de ajuste.
+
+id = "faminec/cmf-buds"
+name = "CMF Buds"
+version = "1.0.0"
+plugin_api = 34
+author = "faminec"
+license = "MIT"
+dependencies = ["python3", "bluetoothctl", "pactl"]
+tags = ["audio", "hardware", "utility", "bar", "panel", "service"]
+icon = "headphones"
+description = "Full control of the CMF Buds Pro 2: ANC, EQ, Ultra Bass, case gestures, spatial audio and more."
+
+[[setting]]
+key = "device_name"
+type = "string"
+label_key = "settings.device_name.label"
+description_key = "settings.device_name.description"
+default = "CMF Buds Pro 2"
+
+[[setting]]
+key = "device_mac"
+type = "string"
+label_key = "settings.device_mac.label"
+description_key = "settings.device_mac.description"
+default = ""
+
+[[setting]]
+key = "glyph"
+type = "glyph"
+label_key = "settings.glyph.label"
+description_key = "settings.glyph.description"
+default = "headphones"
+
+[[setting]]
+key = "volume_step"
+type = "int"
+label_key = "settings.volume_step.label"
+description_key = "settings.volume_step.description"
+default = 5
+min = 1
+max = 25
+
+[[setting]]
+key = "poll_seconds"
+type = "int"
+label_key = "settings.poll_seconds.label"
+description_key = "settings.poll_seconds.description"
+default = 60
+min = 20
+max = 300
+
+[[widget]]
+id = "widget"
+entry = "widget.luau"
+
+[[panel]]
+id = "panel-sound"
+entry = "panel_sound.luau"
+width = 600
+height = 910
+placement = "floating"
+position = "center_right"
+
+[[panel]]
+id = "panel-controls"
+entry = "panel_controls.luau"
+width = 600
+height = 560
+placement = "floating"
+position = "center_right"
+
+[[panel]]
+id = "panel-actions"
+entry = "panel_actions.luau"
+width = 600
+height = 1010
+placement = "floating"
+position = "center_right"
+
+[[panel]]
+id = "panel-system"
+entry = "panel_system.luau"
+width = 600
+height = 930
+placement = "floating"
+position = "center_right"
+
+[[service]]
+id = "service"
+entry = "service.luau"

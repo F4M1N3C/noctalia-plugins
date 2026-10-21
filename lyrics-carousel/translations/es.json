@@ -1,0 +1,95 @@
+{
+  "close": "Cerrar",
+  "direction": "Sentido",
+  "down": "abajo",
+  "equalizer": "Visualizador de sonido",
+  "font_size": "Tamaño",
+  "footer": "Barra de tiempo",
+  "ghost": "Transiciones suaves",
+  "header": "Cabecera (título / artista)",
+  "hint": "Los cambios se aplican en caliente. La tipografía necesita reiniciar la ventana.",
+  "hints": "Atajos de teclado",
+  "karaoke": "Efecto karaoke",
+  "launch": "Abrir el carrusel",
+  "launch_failed": "No se pudo abrir la terminal.",
+  "marker": "Marca de la línea activa",
+  "open_settings": "Abrir ajustes",
+  "section_display": "Presentación",
+  "section_font": "Tipografía",
+  "settings": {
+    "anchor": {
+      "description": "Dónde se abre la ventana: center, top-left, bottom-right...",
+      "label": "Posición"
+    },
+    "animation_ms": {
+      "description": "Duración del desplazamiento entre líneas, en milisegundos. 0 = instantáneo.",
+      "label": "Transición"
+    },
+    "direction": {
+      "description": "Abajo: las letras entran por arriba. Arriba: las letras entran por abajo.",
+      "down": "Abajo",
+      "label": "Sentido del carrusel",
+      "up": "Arriba"
+    },
+    "equalizer": {
+      "description": "Muestra las barras animadas en la esquina superior derecha.",
+      "label": "Visualizador de sonido"
+    },
+    "font_family": {
+      "description": "Fuente usada por la ventana de kitty, p. ej. Departure Mono, Nothing Font (5x7) o ttyclock.",
+      "label": "Tipografía"
+    },
+    "font_size": {
+      "description": "Tamaño en píxeles de la fuente de la terminal.",
+      "label": "Tamaño de letra"
+    },
+    "footer": {
+      "description": "Muestra el tiempo transcurrido y la barra de progreso.",
+      "label": "Barra de tiempo"
+    },
+    "ghost": {
+      "description": "Atenúa ligeramente el bloque mientras se mueve para un acabado más suave.",
+      "label": "Transiciones suaves"
+    },
+    "glyph": {
+      "description": "Icono que se muestra en la barra.",
+      "label": "Icono de la barra"
+    },
+    "header": {
+      "description": "Muestra el título, el artista y las etiquetas de estado.",
+      "label": "Cabecera"
+    },
+    "height": {
+      "description": "Alto de la ventana de terminal en píxeles.",
+      "label": "Alto de la ventana"
+    },
+    "hints": {
+      "description": "Muestra los atajos de teclado abajo.",
+      "label": "Atajos de teclado"
+    },
+    "karaoke": {
+      "description": "Ilumina la línea activa carácter a carácter según avanza la canción.",
+      "label": "Efecto karaoke"
+    },
+    "marker": {
+      "description": "Muestra un marcador junto a la línea que se está cantando.",
+      "label": "Marca de la línea activa"
+    },
+    "offset_ms": {
+      "description": "Desplaza la letra en milisegundos para afinar la sincronía.",
+      "label": "Desfase de la letra"
+    },
+    "spacing": {
+      "description": "Filas en blanco entre letras (1 = compacto, 2 = aireado).",
+      "label": "Separación entre líneas"
+    },
+    "width": {
+      "description": "Ancho de la ventana de terminal en píxeles.",
+      "label": "Ancho de la ventana"
+    }
+  },
+  "subtitle": "No está sonando nada",
+  "title": "Carrusel de letras",
+  "tooltip": "Carrusel de letras",
+  "up": "arriba"
+}

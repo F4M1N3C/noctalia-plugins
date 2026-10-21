@@ -1,0 +1,95 @@
+{
+  "close": "Close",
+  "direction": "Direction",
+  "down": "down",
+  "equalizer": "Sound visualiser",
+  "font_size": "Size",
+  "footer": "Time bar",
+  "ghost": "Soft transitions",
+  "header": "Header (title / artist)",
+  "hint": "Changes apply live. The font needs a restart of the window.",
+  "hints": "Keyboard hints",
+  "karaoke": "Karaoke glow",
+  "launch": "Open the carousel",
+  "launch_failed": "Could not open the terminal.",
+  "marker": "Active line marker",
+  "open_settings": "Open settings",
+  "section_display": "Display",
+  "section_font": "Font",
+  "settings": {
+    "anchor": {
+      "description": "Where the window opens: center, top-left, bottom-right...",
+      "label": "Position"
+    },
+    "animation_ms": {
+      "description": "Duration of the scroll between lines, in milliseconds. 0 = instant.",
+      "label": "Transition"
+    },
+    "direction": {
+      "description": "Down: the lyrics come from the top. Up: the lyrics come from the bottom.",
+      "down": "Down",
+      "label": "Scroll direction",
+      "up": "Up"
+    },
+    "equalizer": {
+      "description": "Show the animated bars in the top right corner.",
+      "label": "Sound visualiser"
+    },
+    "font_family": {
+      "description": "Font used by the kitty window, e.g. Departure Mono, Nothing Font (5x7) or ttyclock.",
+      "label": "Font family"
+    },
+    "font_size": {
+      "description": "Size in pixels of the terminal font.",
+      "label": "Font size"
+    },
+    "footer": {
+      "description": "Show the elapsed time and the progress bar.",
+      "label": "Time bar"
+    },
+    "ghost": {
+      "description": "Dim the block slightly while it moves for a softer feel.",
+      "label": "Soft transitions"
+    },
+    "glyph": {
+      "description": "Icon shown in the bar.",
+      "label": "Bar glyph"
+    },
+    "header": {
+      "description": "Show the title, the artist and the status tags.",
+      "label": "Header"
+    },
+    "height": {
+      "description": "Height of the terminal window in pixels.",
+      "label": "Window height"
+    },
+    "hints": {
+      "description": "Show the keyboard shortcuts at the bottom.",
+      "label": "Keyboard hints"
+    },
+    "karaoke": {
+      "description": "Light up the active line character by character as the song plays.",
+      "label": "Karaoke glow"
+    },
+    "marker": {
+      "description": "Show a marker next to the line being sung.",
+      "label": "Active line marker"
+    },
+    "offset_ms": {
+      "description": "Shift the lyrics in milliseconds to fine tune the sync.",
+      "label": "Lyrics offset"
+    },
+    "spacing": {
+      "description": "Blank rows between lyrics (1 = compact, 2 = airy).",
+      "label": "Line spacing"
+    },
+    "width": {
+      "description": "Width of the terminal window in pixels.",
+      "label": "Window width"
+    }
+  },
+  "subtitle": "Nothing is playing",
+  "title": "Lyrics Carousel",
+  "tooltip": "Lyrics carousel",
+  "up": "up"
+}

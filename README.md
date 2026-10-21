@@ -10,6 +10,15 @@ one can be contributed with a single pull request.
 | [floating-term](floating-term/) | `faminec/floating-term` | Launches terminal apps in floating windows with a per-command size, anchor and position. |
 | [equalizer](equalizer/) | `faminec/equalizer` | A 10-band graphic equalizer with preamp, bypass and presets on top of EasyEffects. |
 | [wallpaper-carousel](wallpaper-carousel/) | `faminec/wallpaper-carousel` | A full-screen wallpaper carousel with vertical cards and a parallax crop. |
+| [notes](notes/) | `faminec/notes` | Quick text notes in a side panel, with live sync from outside the panel. |
+| [cmf-buds](cmf-buds/) | `faminec/cmf-buds` | Native control of the Nothing CMF Buds Pro 2 over RFCOMM: ANC, EQ, gestures, spatial audio. |
+| [lyrics-carousel](lyrics-carousel/) | `faminec/lyrics-carousel` | Synced lyrics rendered in a floating terminal window. |
+
+Every plugin passes the official validator
+(`python3 .github/workflows/scripts/validate-plugins.py` in the community repository).
+
+The state of each plugin and the **testing checklist** live in
+[PLUGINS.md](PLUGINS.md).
 
 ## Install from this repository
 
@@ -20,6 +29,9 @@ noctalia msg plugins source add dev path ~/noctalia-plugins
 noctalia msg plugins enable faminec/floating-term
 noctalia msg plugins enable faminec/equalizer
 noctalia msg plugins enable faminec/wallpaper-carousel
+noctalia msg plugins enable faminec/notes
+noctalia msg plugins enable faminec/cmf-buds
+noctalia msg plugins enable faminec/lyrics-carousel
 ```
 
 ## Contributing a plugin upstream
@@ -36,7 +48,7 @@ directory:
 
 The plugin `id` must be `<author>/<plugin>` and the directory name must match the part
 after the `/`. `version` follows semver and is bumped on every change, `plugin_api` is
-the oldest API level the plugin needs, and the `description` is limited to 120
+the oldest API level the plugin needs, and `description` is limited to 120
 characters. `translations/en.json` is the only translation file that has to be shipped;
 other locales are handled by the Noctalia translation platform.
 

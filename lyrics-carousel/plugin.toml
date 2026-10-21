@@ -1,0 +1,167 @@
+# Carrusel de letras sincronizadas en la terminal, al estilo de cava/unimatrix.
+#
+# Lee el reproductor MPRIS con playerctl, busca la letra (LRCLIB, NetEase y el
+# adaptador de fuentes del plugin Lyrics de Noctalia) y la dibuja en una
+# ventana flotante de kitty con desplazamiento vertical.
+#
+# El script de Python lee estos mismos ajustes (settings.toml) y un fichero de
+# overrides que escribe el panel para los interruptores rápidos.
+
+id = "faminec/lyrics-carousel"
+name = "Lyrics Carousel"
+version = "1.0.0"
+plugin_api = 34
+author = "faminec"
+license = "MIT"
+dependencies = ["kitty", "hyprland", "playerctl", "python3"]
+tags = ["music", "utility", "bar", "panel"]
+icon = "music"
+description = "Synced lyrics carousel in a floating terminal window, driven by your MPRIS player."
+
+[[setting]]
+key = "font_family"
+type = "string"
+label_key = "settings.font_family.label"
+description_key = "settings.font_family.description"
+default = "Departure Mono"
+
+[[setting]]
+key = "font_size"
+type = "int"
+label_key = "settings.font_size.label"
+description_key = "settings.font_size.description"
+default = 22
+min = 8
+max = 48
+
+[[setting]]
+key = "direction"
+type = "select"
+label_key = "settings.direction.label"
+description_key = "settings.direction.description"
+default = "down"
+options = [
+  { value = "down", label_key = "settings.direction.down" },
+  { value = "up", label_key = "settings.direction.up" },
+]
+
+[[setting]]
+key = "marker"
+type = "bool"
+label_key = "settings.marker.label"
+description_key = "settings.marker.description"
+default = false
+
+[[setting]]
+key = "karaoke"
+type = "bool"
+label_key = "settings.karaoke.label"
+description_key = "settings.karaoke.description"
+default = true
+
+[[setting]]
+key = "equalizer"
+type = "bool"
+label_key = "settings.equalizer.label"
+description_key = "settings.equalizer.description"
+default = false
+
+[[setting]]
+key = "footer"
+type = "bool"
+label_key = "settings.footer.label"
+description_key = "settings.footer.description"
+default = false
+
+[[setting]]
+key = "hints"
+type = "bool"
+label_key = "settings.hints.label"
+description_key = "settings.hints.description"
+default = false
+
+[[setting]]
+key = "header"
+type = "bool"
+label_key = "settings.header.label"
+description_key = "settings.header.description"
+default = false
+
+[[setting]]
+key = "spacing"
+type = "int"
+label_key = "settings.spacing.label"
+description_key = "settings.spacing.description"
+default = 2
+min = 1
+max = 6
+
+[[setting]]
+key = "animation_ms"
+type = "int"
+label_key = "settings.animation_ms.label"
+description_key = "settings.animation_ms.description"
+default = 650
+min = 0
+max = 3000
+
+[[setting]]
+key = "ghost"
+type = "bool"
+label_key = "settings.ghost.label"
+description_key = "settings.ghost.description"
+default = true
+
+[[setting]]
+key = "offset_ms"
+type = "int"
+label_key = "settings.offset_ms.label"
+description_key = "settings.offset_ms.description"
+default = 0
+min = -3000
+max = 3000
+
+[[setting]]
+key = "width"
+type = "int"
+label_key = "settings.width.label"
+description_key = "settings.width.description"
+default = 1200
+min = 400
+max = 3840
+
+[[setting]]
+key = "height"
+type = "int"
+label_key = "settings.height.label"
+description_key = "settings.height.description"
+default = 820
+min = 200
+max = 2160
+
+[[setting]]
+key = "anchor"
+type = "string"
+label_key = "settings.anchor.label"
+description_key = "settings.anchor.description"
+default = "center"
+
+[[setting]]
+key = "glyph"
+type = "glyph"
+label_key = "settings.glyph.label"
+description_key = "settings.glyph.description"
+default = "music"
+
+[[widget]]
+id = "widget"
+entry = "widget.luau"
+
+[[panel]]
+id = "panel"
+entry = "panel.luau"
+width = 470
+height = 700
+placement = "floating"
+position = "center"
+open_near_click = true

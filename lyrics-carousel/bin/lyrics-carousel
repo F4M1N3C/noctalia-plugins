@@ -1,0 +1,1895 @@
+#!/usr/bin/env python3
+"""lyrics-carousel — carrusel vertical de la letra que está sonando.
+
+Lee el reproductor MPRIS activo con playerctl, busca la letra (LRCLIB y, si
+está disponible, el adaptador de fuentes del plugin Lyrics de Noctalia) y la
+dibuja en la terminal con desplazamiento vertical continuo.
+
+La tipografía pixel se aplica al lanzar kitty desde Floating Term; el script
+no necesita saber nada del font.
+"""
+
+from __future__ import annotations
+
+import argparse
+import bisect
+import hashlib
+import json
+import math
+import os
+import re
+import select
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unicodedata
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib
+    except ImportError:
+        tomllib = None
+import urllib.error
+import urllib.parse
+import urllib.request
+
+APP = "lyrics-carousel"
+VERSION = "1.0.0"
+
+CACHE_DIR = os.path.join(
+    os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
+    "lyrics-carousel",
+)
+
+# --------------------------------------------------------------------------
+# utilidades
+# --------------------------------------------------------------------------
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(value: str) -> str:
+    return ANSI_RE.sub("", value)
+
+
+def cell_width(value: str) -> int:
+    """Ancho en celdas de terminal (sin ANSI)."""
+    value = strip_ansi(value)
+    total = 0
+    for char in value:
+        if unicodedata.combining(char):
+            continue
+        if unicodedata.east_asian_width(char) in ("W", "F"):
+            total += 2
+        else:
+            total += 1
+    return total
+
+
+def truncate(value: str, width: int, ellipsis: str = "…") -> str:
+    if width <= 0:
+        return ""
+    if cell_width(value) <= width:
+        return value
+    ell = cell_width(ellipsis)
+    limit = max(0, width - ell)
+    out = []
+    used = 0
+    for char in value:
+        char_width = 0 if unicodedata.combining(char) else (
+            2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+        )
+        if used + char_width > limit:
+            break
+        out.append(char)
+        used += char_width
+    return "".join(out).rstrip() + (ellipsis if width >= ell else "")
+
+
+def normalize_text(value: str) -> str:
+    value = unicodedata.normalize("NFC", value or "")
+    value = value.replace("\t", " ").replace("\r", " ").replace("\n", " ")
+    value = "".join(ch for ch in value if ch == " " or unicodedata.category(ch)[0] != "C")
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def mmss(seconds: float) -> str:
+    seconds = max(0, int(seconds or 0))
+    return f"{seconds // 60:02d}:{seconds % 60:02d}"
+
+
+def clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def blend(a, b, t: float):
+    t = clamp(t, 0.0, 1.0)
+    return (
+        int(a[0] + (b[0] - a[0]) * t),
+        int(a[1] + (b[1] - a[1]) * t),
+        int(a[2] + (b[2] - a[2]) * t),
+    )
+
+
+def fg(color, bold: bool = False, italic: bool = False) -> str:
+    codes = []
+    if bold:
+        codes.append("1")
+    if italic:
+        codes.append("3")
+    codes.append(f"38;2;{color[0]};{color[1]};{color[2]}")
+    return "\x1b[" + ";".join(codes) + "m"
+
+
+RESET = "\x1b[0m"
+
+
+# --------------------------------------------------------------------------
+# tema (lee los colores reales de kitty, incluido el include de Noctalia)
+# --------------------------------------------------------------------------
+
+class Theme:
+    COLOR_KEYS = {
+        "foreground",
+        "background",
+        "color0",
+        "color1",
+        "color4",
+        "color7",
+        "color8",
+        "color15",
+        "selection_background",
+    }
+
+    def __init__(self):
+        self.foreground = (243, 242, 242)
+        self.background = (31, 31, 31)
+        self.accent = (228, 103, 103)
+        self.past = (105, 105, 105)
+        self.bright = (243, 242, 242)
+        self.faint = (150, 146, 146)
+        self.source = ""
+        self.reload()
+
+    @staticmethod
+    def _parse_hex(value: str):
+        value = value.strip().strip('"').strip("'")
+        if not value.startswith("#"):
+            return None
+        value = value[1:]
+        if len(value) == 3:
+            value = "".join(ch * 2 for ch in value)
+        if len(value) != 6:
+            return None
+        try:
+            return tuple(int(value[i : i + 2], 16) for i in (0, 2, 4))
+        except ValueError:
+            return None
+
+    def reload(self):
+        paths = []
+        base = os.path.join(
+            os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+            "kitty",
+            "kitty.conf",
+        )
+        seen = set()
+
+        def read_config(path: str, depth: int = 0):
+            if depth > 3 or not os.path.isfile(path) or path in seen:
+                return
+            seen.add(path)
+            try:
+                with open(path, encoding="utf-8", errors="replace") as handle:
+                    lines = handle.readlines()
+            except OSError:
+                return
+            for raw in lines:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("include "):
+                    include = line.split(None, 1)[1].strip().strip('"').strip("'")
+                    include = os.path.expanduser(include)
+                    if not os.path.isabs(include):
+                        include = os.path.join(os.path.dirname(path), include)
+                    read_config(include, depth + 1)
+                    continue
+                parts = line.split(None, 1)
+                if len(parts) != 2:
+                    continue
+                key, value = parts[0].lower(), parts[1].strip()
+                if key in self.COLOR_KEYS:
+                    color = self._parse_hex(value)
+                    if color is not None:
+                        paths.append((key, color))
+
+        read_config(base)
+        colors = dict(paths)
+        self.foreground = colors.get("foreground", self.foreground)
+        self.background = colors.get("background", self.background)
+        self.accent = colors.get("color1") or colors.get("color4") or self.accent
+        self.past = colors.get("color8", self.past)
+        self.bright = colors.get("color15") or colors.get("color7") or self.bright
+        self.faint = blend(self.foreground, self.background, 0.45)
+
+    def color(self, base, fade: float = 1.0):
+        return blend(self.background, base, fade)
+
+
+# --------------------------------------------------------------------------
+# reproductor
+# --------------------------------------------------------------------------
+
+class Track:
+    __slots__ = ("title", "artist", "album", "duration", "player", "status", "position", "stamp")
+
+    def __init__(self, title="", artist="", album="", duration=0.0, player="", status="Stopped"):
+        self.title = title
+        self.artist = artist
+        self.album = album
+        self.duration = duration
+        self.player = player
+        self.status = status
+        self.position = 0.0
+        self.stamp = 0.0
+
+    @property
+    def key(self) -> str:
+        return "|".join(
+            (normalize_text(self.title), normalize_text(self.artist), normalize_text(self.album), str(int(self.duration)))
+        )
+
+    @property
+    def playing(self) -> bool:
+        return self.status == "Playing"
+
+    def current_position(self) -> float:
+        pos = self.position
+        if self.playing and self.stamp:
+            pos += time.monotonic() - self.stamp
+        if self.duration > 0:
+            pos = min(pos, self.duration)
+        return max(0.0, pos)
+
+
+class PlayerWatcher:
+    FORMAT = (
+        "{{playerName}}\t{{playerInstance}}\t{{status}}\t{{title}}\t"
+        "{{artist}}\t{{album}}\t{{mpris:length}}\t{{position}}"
+    )
+
+    def __init__(self, preferred: str = ""):
+        self.preferred = preferred
+        self.track = Track()
+        self.previous: Track | None = None
+        self._selected = ""
+        self._last_poll = 0.0
+
+    @staticmethod
+    def _run(args, timeout=2.0):
+        try:
+            return subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    def _candidates(self):
+        result = self._run(["playerctl", "-a", "metadata", "--format", self.FORMAT])
+        if result is None or not result.stdout.strip():
+            return []
+        candidates = []
+        for raw in result.stdout.splitlines():
+            parts = raw.split("\t")
+            if len(parts) < 8:
+                continue
+            name, instance, status, title, artist, album, length, position = parts[:8]
+            title = normalize_text(title)
+            artist = normalize_text(artist)
+            if not title and not artist:
+                continue
+            try:
+                duration = float(length) / 1_000_000.0
+            except ValueError:
+                duration = 0.0
+            try:
+                pos = float(position) / 1_000_000.0
+            except ValueError:
+                pos = 0.0
+            rank = 2 if status == "Playing" else 1 if status == "Paused" else 0
+            preferred = instance if instance else name
+            match = 1 if preferred == self.preferred or name == self.preferred else 0
+            candidates.append(
+                (
+                    rank,
+                    match,
+                    1 if preferred == self._selected else 0,
+                    Track(title, artist, normalize_text(album), duration, preferred, status),
+                    pos,
+                )
+            )
+        candidates.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3].key))
+        return candidates
+
+    def poll(self, force: bool = False) -> Track | None:
+        now = time.monotonic()
+        if not force and now - self._last_poll < 0.35:
+            return None
+        self._last_poll = now
+
+        candidates = self._candidates()
+        if not candidates:
+            self._selected = ""
+            if self.track.title or self.track.artist:
+                self.previous, self.track = self.track, Track()
+                return self.track
+            return None
+
+        _, _, _, fresh, measured = candidates[0]
+        self._selected = fresh.player
+        old = self.track
+        changed = (
+            fresh.key != old.key
+            or fresh.status != old.status
+            or fresh.player != old.player
+        )
+        fresh.stamp = now
+        # El metadata de MPRIS se actualiza a saltos; conservamos la
+        # extrapolación si la diferencia es pequeña para no vibrar.
+        if changed:
+            fresh.position = measured
+        else:
+            estimate = old.current_position()
+            if abs(estimate - measured) > 0.75:
+                fresh.position = measured
+            else:
+                fresh.position = old.position
+                fresh.stamp = old.stamp
+        self.previous, self.track = old, fresh
+        return fresh
+
+
+# --------------------------------------------------------------------------
+# letras
+# --------------------------------------------------------------------------
+
+LRC_TAG = re.compile(r"\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]")
+LRC_OFFSET = re.compile(r"\[offset:([+-]?\d+)\]", re.I)
+ENHANCED_TAG = re.compile(r"<[^>]*>")
+
+
+class LyricLine:
+    __slots__ = ("start", "duration", "text", "chars")
+
+    def __init__(self, start: float, duration: float, text: str, chars=None):
+        self.start = float(start)
+        if self.start < 0:
+            self.start = -1.0
+        self.duration = max(0.0, float(duration or 0))
+        self.text = normalize_text(text)
+        self.chars = chars or []
+
+    def as_json(self):
+        out = [round(self.start, 3), round(self.duration, 3), self.text]
+        if self.chars:
+            out.append([round(value, 3) for value in self.chars])
+        return out
+
+    @classmethod
+    def from_json(cls, value):
+        if not isinstance(value, list) or len(value) < 3:
+            return None
+        chars = value[3] if len(value) > 3 and isinstance(value[3], list) else []
+        text = normalize_text(str(value[2]))
+        if not text:
+            return None
+        return cls(float(value[0]), float(value[1]), text, chars)
+
+
+def parse_lrc(text: str):
+    text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    offset = 0.0
+    match = LRC_OFFSET.search(text)
+    if match:
+        try:
+            offset = int(match.group(1)) / 1000.0
+        except ValueError:
+            offset = 0.0
+
+    found = {}
+    for raw in text.splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        tags = list(LRC_TAG.finditer(raw))
+        if not tags:
+            continue
+        body = ENHANCED_TAG.sub("", LRC_TAG.sub("", raw)).strip()
+        if not body:
+            continue
+        if re.match(r"^(ar|al|ti|by|re|ve|length|offset):", body, re.I):
+            continue
+        for tag in tags:
+            minutes = int(tag.group(1))
+            seconds = float(tag.group(2))
+            fraction = tag.group(3) or "0"
+            if len(fraction) == 1:
+                fraction_value = int(fraction) / 10.0
+            elif len(fraction) == 2:
+                fraction_value = int(fraction) / 100.0
+            else:
+                fraction_value = int(fraction) / 1000.0
+            start = minutes * 60 + seconds + fraction_value + offset
+            if start < 0:
+                continue
+            found[round(start, 3)] = body
+
+    lines = []
+    times = sorted(found)
+    for index, start in enumerate(times):
+        end = times[index + 1] if index + 1 < len(times) else start + 6.0
+        duration = clamp(end - start, 0.0, 10.0)
+        lines.append(LyricLine(start, duration, found[start]))
+    return lines
+
+
+CREDIT_RE = re.compile(
+    r"^(lyrics?\s+by|composed\s+by|written\s+by|produced\s+by|arranged\s+by|"
+    r"lyricist|composer|arranger|作词|作曲|编曲|制作人)\s*[:：]",
+    re.I,
+)
+
+
+def clean_lyric_lines(lines):
+    result = []
+    for line in lines or []:
+        if not line.text or CREDIT_RE.match(line.text):
+            continue
+        if (
+            result
+            and line.text == result[-1].text
+            and abs(line.start - result[-1].start) < 0.35
+        ):
+            continue
+        result.append(line)
+    return result
+
+
+def plain_lines(text: str, duration: float):
+    raw = [
+        normalize_text(line)
+        for line in (text or "").splitlines()
+        if normalize_text(line)
+    ]
+    if not raw:
+        return []
+    if duration > 20:
+        start = min(6.0, duration * 0.05)
+        end = max(start + 1, duration - 4.0)
+        step = (end - start) / max(1, len(raw))
+    else:
+        start = 1.0
+        step = 4.0
+    lines = []
+    for index, value in enumerate(raw):
+        lines.append(LyricLine(start + index * step, step * 0.92, value))
+    return lines
+
+
+def _normalize_match(value: str) -> str:
+    value = unicodedata.normalize("NFKD", value or "")
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
+    return "".join(ch.lower() for ch in value if ch.isalnum())
+
+
+def _http_json(url: str, headers=None, timeout=12.0):
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": f"{APP}/{VERSION}",
+            "Accept": "application/json",
+            **(headers or {}),
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        payload = response.read().decode("utf-8", "replace")
+    return json.loads(payload)
+
+
+def fetch_lrclib(track: Track, log):
+    params = {
+        "track_name": track.title,
+        "artist_name": track.artist,
+    }
+    if track.album:
+        params["album_name"] = track.album
+    url = "https://lrclib.net/api/search?" + urllib.parse.urlencode(params)
+    try:
+        data = _http_json(url, timeout=3.0)
+    except urllib.error.HTTPError as error:
+        log(f"lrclib HTTP {error.code}")
+        return [], f"http {error.code}"
+    except Exception as error:  # noqa: BLE001
+        log(f"lrclib error: {error!r}")
+        return [], "red"
+    if not isinstance(data, list) or not data:
+        log("lrclib sin resultados")
+        return [], None
+
+    wanted_title = _normalize_match(track.title)
+    wanted_artist = _normalize_match(track.artist)
+    best = None
+    best_score = -1.0
+    for candidate in data:
+        if not isinstance(candidate, dict):
+            continue
+        ctitle = _normalize_match(candidate.get("trackName", ""))
+        cartist = _normalize_match(candidate.get("artistName", ""))
+        synced = bool(candidate.get("syncedLyrics"))
+        score = 0.0
+        if ctitle == wanted_title:
+            score += 5.0
+        elif ctitle and (ctitle in wanted_title or wanted_title in ctitle):
+            score += 2.5
+        if wanted_artist and cartist:
+            if cartist == wanted_artist:
+                score += 4.0
+            elif wanted_artist in cartist or cartist in wanted_artist:
+                score += 2.0
+            else:
+                # artistas separados por comas: basta con uno en común
+                wanted_parts = {part.strip() for part in track.artist.split(",") if part.strip()}
+                if any(_normalize_match(part) in cartist for part in wanted_parts):
+                    score += 1.5
+        if synced:
+            score += 3.0
+        try:
+            cduration = float(candidate.get("duration") or 0)
+            if track.duration > 0 and cduration > 0:
+                score += max(0.0, 2.0 - abs(cduration - track.duration) / 20.0)
+        except (TypeError, ValueError):
+            pass
+        if score > best_score:
+            best_score = score
+            best = candidate
+
+    if best is None:
+        return [], None
+    lrc = best.get("syncedLyrics") or ""
+    if lrc:
+        lines = parse_lrc(lrc)
+        if lines:
+            log(f"lrclib: {best.get('trackName')} / {best.get('artistName')} (sync)")
+            return lines, None
+    plain = best.get("plainLyrics") or ""
+    if plain:
+        lines = plain_lines(plain, track.duration)
+        if lines:
+            log(f"lrclib: {best.get('trackName')} / {best.get('artistName')} (plain)")
+            return lines, None
+    return [], None
+
+
+def fetch_netease(track: Track, log):
+    query = f"{track.title} {track.artist}".strip()
+    if not query:
+        return []
+    search_url = "https://music.163.com/api/search/get?" + urllib.parse.urlencode(
+        {"type": 1, "s": query, "limit": 5}
+    )
+    try:
+        data = _http_json(search_url, headers={"Referer": "https://music.163.com"}, timeout=10.0)
+    except Exception as error:  # noqa: BLE001
+        log(f"netease búsqueda: {error!r}")
+        return [], "red"
+    songs = (((data or {}).get("result") or {}).get("songs") or []) if isinstance(data, dict) else []
+    if not songs:
+        log("netease sin resultados")
+        return [], None
+
+    wanted_title = _normalize_match(track.title)
+    wanted_artist = _normalize_match(track.artist)
+    chosen = None
+    best_score = -1.0
+    for song in songs:
+        if not isinstance(song, dict):
+            continue
+        title = _normalize_match(song.get("name", ""))
+        artists = " ".join(
+            _normalize_match(artist.get("name", ""))
+            for artist in (song.get("artists") or [])
+            if isinstance(artist, dict)
+        )
+        score = 0.0
+        if title == wanted_title:
+            score += 4.0
+        elif title and (title in wanted_title or wanted_title in title):
+            score += 2.0
+        if wanted_artist and artists and (wanted_artist in artists or artists in wanted_artist):
+            score += 3.0
+        if score > best_score:
+            best_score = score
+            chosen = song
+    if not chosen:
+        return [], None
+    song_id = str(chosen.get("id") or "")
+    if not song_id.isdigit():
+        return [], None
+    lyric_url = "https://music.163.com/api/song/lyric?" + urllib.parse.urlencode(
+        {"id": song_id, "lv": 1, "kv": 1, "tv": -1}
+    )
+    try:
+        data = _http_json(lyric_url, headers={"Referer": "https://music.163.com"}, timeout=10.0)
+    except Exception as error:  # noqa: BLE001
+        log(f"netease letra: {error!r}")
+        return [], "red"
+    lrc = (((data or {}).get("lrc") or {}).get("lyric") or "") if isinstance(data, dict) else ""
+    lines = parse_lrc(lrc)
+    if lines:
+        log(f"netease: {chosen.get('name')} (sync)")
+        return lines, None
+    # Algunas canciones solo traen la letra "traducida" o texto plano.
+    text = ENHANCED_TAG.sub("", lrc).strip()
+    if text:
+        lines = plain_lines(text, track.duration)
+        if lines:
+            log(f"netease: {chosen.get('name')} (plain)")
+            return lines, None
+    return [], None
+
+
+def find_lyric_adapter():
+    roots = [
+        os.path.expanduser("~/.local/state/noctalia/plugins/materialized"),
+        os.path.expanduser("~/.local/share/noctalia/plugins"),
+    ]
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for current, dirs, files in os.walk(root):
+            if "lyric_sources.py" in files and "music_sources.py" in files:
+                return os.path.join(current, "lyric_sources.py")
+    return ""
+
+
+def fetch_adapter(track: Track, log):
+    script = find_lyric_adapter()
+    if not script:
+        return [], None
+    workdir = os.path.dirname(script)
+    sources = ("splayer", "qqmusic", "kugou")
+    failed = False
+    for source in sources:
+        request = {
+            "source": source,
+            "track": {
+                "title": track.title,
+                "artist": track.artist,
+                "album": track.album,
+                "duration": int(track.duration * 1_000_000),
+            },
+            "options": {},
+        }
+        path = ""
+        try:
+            fd, path = tempfile.mkstemp(prefix="lyrics-", suffix=".json", dir=CACHE_DIR)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(request, handle)
+            result = subprocess.run(
+                [sys.executable, script, path],
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                timeout=22,
+                check=False,
+            )
+            if not result.stdout.strip():
+                log(f"{source}: sin salida")
+                failed = True
+                continue
+            data = json.loads(result.stdout)
+            raw = data.get("lines") if isinstance(data, dict) else None
+            if not raw:
+                diag = data.get("diag") if isinstance(data, dict) else None
+                log(f"{source}: {diag}")
+                continue
+            lines = []
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                text = normalize_text(item.get("text", ""))
+                if not text and item.get("translation"):
+                    text = normalize_text(item.get("translation", ""))
+                if not text:
+                    continue
+                start = float(item.get("time", -1))
+                duration = float(item.get("duration", 0))
+                if start > 10_000:
+                    start /= 1000.0
+                    duration /= 1000.0
+                elif start < 0:
+                    continue
+                chars = item.get("chars") or []
+                if chars and isinstance(chars, list):
+                    chars = [float(value) / 1000.0 for value in chars]
+                lines.append(LyricLine(start, duration, text, chars))
+            if lines:
+                log(f"{source}: {len(lines)} líneas")
+                return lines, None
+        except subprocess.TimeoutExpired:
+            log(f"{source}: timeout")
+            failed = True
+        except Exception as error:  # noqa: BLE001
+            log(f"{source}: {error!r}")
+            failed = True
+        finally:
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+    return [], ("red" if failed else None)
+
+
+def load_lyrics_settings():
+    """Lee los ajustes del plugin Lyrics de Noctalia si están disponibles."""
+    result = {
+        "sources": ["lrclib", "netease", "splayer", "qqmusic", "kugou"],
+        "credentials": {},
+        "translation": "zh-Hans",
+    }
+    path = os.path.expanduser(
+        "~/.local/state/noctalia/settings.toml"
+    )
+    if not os.path.isfile(path) or tomllib is None:
+        return result
+    try:
+        with open(path, "rb") as handle:
+            data = tomllib.load(handle)
+    except Exception:  # noqa: BLE001
+        return result
+    section = (data.get("plugin_settings") or {}).get('h465855hgg/lyrics') or {}
+    sources = section.get("lyrics_sources")
+    if isinstance(sources, list) and sources:
+        result["sources"] = [str(item).strip().lower() for item in sources if str(item).strip()]
+    result["translation"] = str(section.get("translation_language") or result["translation"])
+    for key in (
+        "spotify_sp_dc", "spotify_access_token", "apple_developer_token",
+        "apple_user_token", "apple_storefront", "musixmatch_token",
+        "qishui_token", "qishui_api_url", "splayer_api_url",
+    ):
+        value = section.get(key)
+        if value is not None:
+            result["credentials"][key] = str(value)
+    return result
+
+
+def adapter_track(track: Track, art_url: str = ""):
+    return {
+        "title": track.title,
+        "artist": track.artist,
+        "album": track.album,
+        "duration": int(track.duration * 1_000_000),
+        "artUrl": art_url,
+    }
+
+
+def adapter_request(source: str, track: Track, settings: dict):
+    creds = dict(settings.get("credentials", {}))
+    if source == "splayer":
+        creds.setdefault(
+            "splayer_api_url",
+            settings.get("credentials", {}).get("splayer_api_url", "http://127.0.0.1:25884"),
+        )
+    request = {
+        "source": source,
+        "track": adapter_track(track),
+        "credentials": creds,
+        "options": {"translation_language": settings.get("translation", "zh-Hans")},
+    }
+    return request
+
+
+def run_adapter(source: str, track: Track, settings: dict, log):
+    script = find_lyric_adapter()
+    if not script:
+        return [], None
+    workdir = os.path.dirname(script)
+    request = adapter_request(source, track, settings)
+    path = ""
+    try:
+        fd, path = tempfile.mkstemp(prefix="lyrics-", suffix=".json", dir=CACHE_DIR)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(request, handle)
+        result = subprocess.run(
+            [sys.executable, script, path],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        if not result.stdout.strip():
+            log(f"{source}: sin salida")
+            return [], "red"
+        data = json.loads(result.stdout)
+        if not isinstance(data, dict):
+            return [], None
+        raw = data.get("lines")
+        if not raw:
+            diag = data.get("diag") if isinstance(data.get("diag"), list) else []
+            log(f"{source}: {diag}")
+            return [], None
+        lines = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            text = normalize_text(item.get("text", ""))
+            if not text and item.get("translation"):
+                text = normalize_text(item.get("translation", ""))
+            if not text:
+                continue
+            start = float(item.get("time", -1))
+            duration = float(item.get("duration", 0))
+            # El adaptador siempre devuelve milisegundos (-1 = sin tiempo).
+            if start < 0:
+                start = -1.0
+            else:
+                start /= 1000.0
+            if duration > 0:
+                duration /= 1000.0
+            chars = item.get("chars") or []
+            if chars and isinstance(chars, list):
+                chars = [float(value) / 1000.0 for value in chars]
+            lines.append(LyricLine(start, duration, text, chars))
+        if lines:
+            log(f"{source}: {len(lines)} líneas")
+            return lines, None
+        return [], None
+    except subprocess.TimeoutExpired:
+        log(f"{source}: timeout")
+        return [], "red"
+    except Exception as error:  # noqa: BLE001
+        log(f"{source}: {error!r}")
+        return [], "red"
+    finally:
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+def cache_key(track: Track) -> str:
+    raw = "\n".join(
+        (
+            normalize_text(track.title).casefold(),
+            normalize_text(track.artist).casefold(),
+            normalize_text(track.album).casefold(),
+            str(int(track.duration)),
+        )
+    )
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def load_cache(track: Track):
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    path = os.path.join(CACHE_DIR, cache_key(track) + ".json")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        lines = [LyricLine.from_json(value) for value in data.get("lines", [])]
+        lines = [line for line in lines if line and line.text]
+        if lines:
+            return lines, data.get("source", "cache"), bool(data.get("synced", True))
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def save_cache(track: Track, lines, source: str, synced: bool):
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    path = os.path.join(CACHE_DIR, cache_key(track) + ".json")
+    payload = {
+        "title": track.title,
+        "artist": track.artist,
+        "album": track.album,
+        "duration": round(track.duration, 2),
+        "source": source,
+        "synced": bool(synced),
+        "saved": int(time.time()),
+        "lines": [line.as_json() for line in lines],
+    }
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+    except OSError:
+        pass
+
+
+def mark_missing(track: Track):
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    path = os.path.join(CACHE_DIR, cache_key(track) + ".none")
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(str(int(time.time())))
+    except OSError:
+        pass
+
+
+def missing_recent(track: Track, hours=0.4) -> bool:
+    path = os.path.join(CACHE_DIR, cache_key(track) + ".none")
+    try:
+        if not os.path.isfile(path):
+            return False
+        with open(path, encoding="utf-8") as handle:
+            saved = int(handle.read().strip() or 0)
+        return time.time() - saved < hours * 3600
+    except (OSError, ValueError):
+        return False
+
+
+def estimate_times(lines, duration: float):
+    """Asigna tiempos estimados a líneas sin marca temporal (letra plain)."""
+    usable = [line for line in lines if line.text]
+    if not usable or any(line.start >= 0 for line in usable[:3]):
+        return lines
+    if duration and duration > 20:
+        start = min(6.0, duration * 0.05)
+        end = max(start + 1, duration - 4.0)
+        step = (end - start) / max(1, len(usable))
+    else:
+        start = 1.0
+        step = 4.0
+    index = 0
+    for line in lines:
+        if line.text:
+            line.start = start + index * step
+            if line.duration <= 0:
+                line.duration = step * 0.92
+            index += 1
+    return lines
+
+def fetch_lyrics(track: Track, force: bool, log):
+    if not force:
+        cached = load_cache(track)
+        if cached:
+            lines, source, synced = cached
+            log(f"cache: {len(lines)} líneas ({source})")
+            return lines, source, synced
+        if missing_recent(track):
+            log("sin letra (caché negativa)")
+            return [], "cache", False
+
+    settings = load_lyrics_settings()
+    sources = list(settings.get("sources") or ["lrclib", "netease"])
+    # Filtra las fuentes que necesitan credenciales ausentes.
+    available = []
+    for source in sources:
+        source = source.strip().lower()
+        if source in ("spotify",) and not (
+            settings.get("credentials", {}).get("spotify_sp_dc")
+            or settings.get("credentials", {}).get("spotify_access_token")
+        ):
+            continue
+        if source in ("apple_music",) and not (
+            settings.get("credentials", {}).get("apple_developer_token")
+            or settings.get("credentials", {}).get("apple_user_token")
+        ):
+            continue
+        if source in ("musixmatch",) and not settings.get("credentials", {}).get("musixmatch_token"):
+            continue
+        if source in ("qishui",) and not settings.get("credentials", {}).get("qishui_api_url"):
+            continue
+        if source not in available:
+            available.append(source)
+
+    # Trabajadores en paralelo: el primero que encuentra letra gana.
+    result = {"lines": None, "source": "", "synced": False}
+    result_lock = threading.Lock()
+    result_event = threading.Event()
+
+    def publish(lines, source):
+        lines = clean_lyric_lines(lines)
+        if not lines:
+            return False
+        lines = estimate_times(lines, track.duration)
+        synced = len(lines) > 1 and any(line.start >= 0 for line in lines)
+        with result_lock:
+            if result["lines"] is None:
+                result["lines"] = lines
+                result["source"] = source
+                result["synced"] = synced
+                result_event.set()
+        # Guardamos la caché la primera vez (el resto se ignora).
+        try:
+            save_cache(track, lines, source, synced)
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+
+    def worker_builtin_lrclib():
+        for attempt in (0, 1):
+            try:
+                lines, error = fetch_lrclib(track, log)
+            except Exception as exc:  # noqa: BLE001
+                log(f"lrclib: excepción {exc!r}")
+                return
+            if lines:
+                publish(lines, "lrclib")
+                return
+            if error is None:
+                return
+            if attempt == 0:
+                time.sleep(1.0)
+
+    def worker_adapter(source):
+        try:
+            lines, error = run_adapter(source, track, settings, log)
+            if lines:
+                publish(lines, source)
+        except Exception as exc:  # noqa: BLE001
+            log(f"{source}: excepción {exc!r}")
+
+    threads = []
+    for source in available:
+        if source == "lrclib":
+            t = threading.Thread(target=worker_builtin_lrclib, daemon=True)
+        else:
+            t = threading.Thread(target=worker_adapter, args=(source,), daemon=True)
+        threads.append(t)
+
+    if not threads:
+        mark_missing(track)
+        return [], "", False
+
+    for t in threads:
+        t.start()
+
+    # Espera al primer éxito o a que todos terminen (máx. 18 s).
+    deadline = time.monotonic() + 4.0
+    while not result_event.is_set() and time.monotonic() < deadline:
+        if not any(t.is_alive() for t in threads):
+            break
+        time.sleep(0.1)
+    result_event.wait(timeout=0.05)
+
+    # Cancelación best-effort: se dejan terminar los hilos (daemon).
+    with result_lock:
+        lines = result["lines"]
+        source = result["source"]
+        synced = result["synced"]
+
+    if lines:
+        return lines, source, synced
+    mark_missing(track)
+    return [], "", False
+
+
+class Fetcher:
+    def __init__(self, log):
+        self.log = log
+        self._lock = threading.Lock()
+        self._request = None
+        self._generation = 0
+        self._result = None
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
+
+    def start(self, track: Track, force: bool = False):
+        with self._lock:
+            self._generation += 1
+            self._request = (track, force, self._generation)
+            self._result = None
+
+    def take(self):
+        with self._lock:
+            result = self._result
+            self._result = None
+            return result
+
+    def _worker(self):
+        while True:
+            with self._lock:
+                request = self._request
+                self._request = None
+            if request is None:
+                time.sleep(0.08)
+                continue
+            track, force, generation = request
+            try:
+                lines, source, synced = fetch_lyrics(track, force, self.log)
+            except Exception as error:  # noqa: BLE001
+                self.log(f"fetch: {error!r}")
+                lines, source, synced = [], "", False
+            with self._lock:
+                if generation == self._generation:
+                    self._result = (lines, source, synced)
+
+
+# --------------------------------------------------------------------------
+# render
+# --------------------------------------------------------------------------
+
+EQ = "▁▂▃▄▅▆▇█"
+
+
+PLUGIN_ID = "faminec/lyrics-carousel"
+
+DEFAULTS = {
+    "font_family": "Departure Mono",
+    "font_size": 22,
+    "direction": "down",
+    "marker": False,
+    "karaoke": True,
+    "equalizer": False,
+    "footer": False,
+    "hints": False,
+    "header": False,
+    "spacing": 2,
+    "animation_ms": 650,
+    "ghost": True,
+    "offset_ms": 0,
+    "width": 1200,
+    "height": 820,
+}
+
+BOOL_KEYS = ("marker", "karaoke", "equalizer", "footer", "hints", "header", "ghost")
+INT_KEYS = ("font_size", "spacing", "animation_ms", "offset_ms", "width", "height")
+
+
+def write_override(key: str, value):
+    """Guarda un ajuste rápido (lo usa también el panel del plugin)."""
+    path = override_path()
+    data = {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            loaded = json.load(handle)
+        if isinstance(loaded, dict):
+            data = loaded
+    except Exception:  # noqa: BLE001
+        data = {}
+    data[key] = value
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=1)
+    except OSError:
+        pass
+
+
+def override_path() -> str:
+    return os.path.expanduser(
+        f"~/.local/state/noctalia/plugins/data/{PLUGIN_ID}/overrides.json"
+    )
+
+
+def load_settings() -> dict:
+    """Ajustes del plugin: valores por defecto + settings.toml + overrides."""
+    cfg = dict(DEFAULTS)
+
+    path = os.path.expanduser("~/.local/state/noctalia/settings.toml")
+    if os.path.isfile(path) and tomllib is not None:
+        try:
+            with open(path, "rb") as handle:
+                data = tomllib.load(handle)
+            section = (data.get("plugin_settings") or {}).get(PLUGIN_ID) or {}
+            for key, value in section.items():
+                if key in cfg and value is not None:
+                    cfg[key] = value
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        with open(override_path(), encoding="utf-8") as handle:
+            data = json.load(handle)
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if key in cfg and value is not None:
+                    cfg[key] = value
+    except Exception:  # noqa: BLE001
+        pass
+
+    for key in BOOL_KEYS:
+        cfg[key] = bool(cfg[key])
+    for key in INT_KEYS:
+        try:
+            cfg[key] = int(cfg[key])
+        except (TypeError, ValueError):
+            cfg[key] = DEFAULTS[key]
+    cfg["font_size"] = max(6, min(80, cfg["font_size"]))
+    cfg["spacing"] = max(1, min(6, cfg["spacing"]))
+    cfg["animation_ms"] = max(0, min(3000, cfg["animation_ms"]))
+    cfg["offset_ms"] = max(-5000, min(5000, cfg["offset_ms"]))
+    cfg["width"] = max(300, min(4000, cfg["width"]))
+    cfg["height"] = max(200, min(3000, cfg["height"]))
+    if cfg["direction"] not in ("down", "up"):
+        cfg["direction"] = "down"
+    cfg["font_family"] = str(cfg["font_family"] or DEFAULTS["font_family"])
+    return cfg
+
+
+class LyricsCarousel:
+    def __init__(self, args):
+        self.args = args
+        self.theme = Theme()
+        self.fetcher = Fetcher(self.log)
+        self.cfg = load_settings()
+        if args.direction:
+            self.cfg["direction"] = args.direction
+        if args.no_karaoke:
+            self.cfg["karaoke"] = False
+        self.direction = 1 if self.cfg["direction"] == "down" else -1
+        self.karaoke = bool(self.cfg["karaoke"])
+        self.spacing = int(self.cfg["spacing"])
+        self.last_cfg = 0.0
+        self.track = Track()
+        self.lines: list[LyricLine] = []
+        self.source = ""
+        self.synced = False
+        self.state = "idle"  # idle | loading | lyrics | empty
+        self.track_key = ""
+        self.started_at = time.monotonic()
+        self.demo = args.demo
+        self.width = 0
+        self.height = 0
+        self.prev_rows = []
+        self.scroll = 0.0
+        self.scroll_from = 0.0
+        self.scroll_to = 0.0
+        self.scroll_started = 0.0
+        self.scroll_duration = 0.0
+        self.active_index = 0
+        self.last_active = -1
+        self.moving = False
+        self.last_draw = 0.0
+        self.last_reload = 0.0
+        self.last_fetch = 0.0
+        self.status_message = ""
+        self.dirty = True
+        self.stop_requested = False
+        self.need_clear = True
+        self._player = PlayerWatcher(args.player) if not self.demo else None
+        self._demo_start = time.monotonic() - max(0.0, args.demo_offset)
+        if self.demo:
+            self._load_demo()
+        self.update_size()
+
+    # ---- utilidades de terminal -------------------------------------
+
+    def log(self, message: str):
+        if not self.args.debug:
+            return
+        try:
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            with open(os.path.join(CACHE_DIR, "debug.log"), "a", encoding="utf-8") as handle:
+                handle.write(f"{time.strftime('%H:%M:%S')} {message}\n")
+        except OSError:
+            pass
+
+    def update_size(self):
+        size = shutil.get_terminal_size(fallback=(96, 30))
+        width = max(30, size.columns)
+        height = max(12, size.lines)
+        if width != self.width or height != self.height:
+            self.width = width
+            self.height = height
+            self.prev_rows = [""] * self.height
+            self.need_clear = True
+            self.dirty = True
+
+    # ---- datos --------------------------------------------------------
+
+    def _load_demo(self):
+        sample = [
+            (0.0, "Luz de neón sobre la ciudad"),
+            (4.6, "y el asfalto guarda tu nombre"),
+            (9.4, "un tren vacío cruza el puente"),
+            (14.2, "mientras la noche se deshace"),
+            (19.0, "Si el tiempo vuelve a preguntar"),
+            (23.8, "dile que aquí sigo esperando"),
+            (28.6, "que la marea traiga tu voz"),
+            (33.4, "y el silencio se vaya apagando"),
+            (38.2, "Somos dos puntos en la oscuridad"),
+            (43.0, "dos señales que no saben volver"),
+            (47.8, "y aunque la ciudad se duerma"),
+            (52.6, "yo sigo aquí, mirando al sur"),
+            (57.4, "La radio suena en otra habitación"),
+            (62.2, "con una canción que no sé nombrar"),
+            (67.0, "todo se mueve, todo se queda"),
+            (71.8, "como una ola contra el cristal"),
+            (76.6, "Y si mañana no estoy"),
+            (81.4, "recuerda lo que te di"),
+            (86.2, "porque la vida es un viaje"),
+            (91.0, "y yo ya decidí"),
+        ]
+        self.lines = [LyricLine(start, 4.6, text) for start, text in sample]
+        self.source = "demo"
+        self.synced = True
+        self.state = "lyrics"
+        self.track = Track("Eternamente", "Stranger Beats, Inexistente y BabyG", "Extraños Clika II", 96.0, "demo", "Playing")
+        self.track.stamp = time.monotonic()
+        self.demo_duration = 96.0
+        self.active_index = 0
+        self.last_active = -1
+        self.moving = False
+        self.scroll = 0.0
+        self.scroll_to = 0.0
+        self.scroll_from = 0.0
+
+    def _demo_position(self):
+        elapsed = (time.monotonic() - self._demo_start) % (self.demo_duration + 4)
+        return min(elapsed, self.demo_duration), self.demo_duration
+
+    def _apply_track(self, track: Track):
+        if track.key == self.track_key and self.track.title:
+            self.track = track
+            return
+        self.track = track
+        self.track_key = track.key
+        if not track.title and not track.artist:
+            self.track_key = ""
+            self.state = "idle"
+            self.lines = []
+            self.source = ""
+            self.synced = False
+            self.dirty = True
+            return
+        self.reload_lyrics(force=self.args.force)
+        self.args.force = False
+
+    def reload_lyrics(self, force: bool = False):
+        track = self.track
+        if not track.title and not track.artist:
+            return
+        cached = None if force else load_cache(track)
+        if cached:
+            self.lines, self.source, self.synced = cached
+            self.state = "lyrics" if self.lines else "empty"
+            self._snap_scroll()
+            self.log(f"tema: {track.title} — {track.artist} (cache)")
+        else:
+            self.state = "loading"
+            self.lines = []
+            self.source = ""
+            self.synced = False
+            self.fetcher.start(track, force=force)
+            self.last_fetch = time.monotonic()
+            self.log(f"tema: {track.title} — {track.artist} (buscando)")
+        self.dirty = True
+
+    def _snap_scroll(self):
+        self.last_active = -1
+        self.active_index = 0
+        self.scroll = 0.0
+        self.scroll_from = 0.0
+        self.scroll_to = 0.0
+        self.scroll_duration = 0.0
+
+    def _reload_config(self):
+        cfg = load_settings()
+        if self.args.direction:
+            cfg["direction"] = self.args.direction
+        if self.args.no_karaoke:
+            cfg["karaoke"] = False
+        if cfg == self.cfg:
+            return
+        self.cfg = cfg
+        self.direction = 1 if cfg["direction"] == "down" else -1
+        self.karaoke = bool(cfg["karaoke"])
+        self.spacing = int(cfg["spacing"])
+        self.dirty = True
+        self.need_clear = True
+        self.log("ajustes: " + json.dumps(cfg, ensure_ascii=False))
+
+    def _poll_data(self):
+        if self.demo:
+            position, duration = self._demo_position()
+            now = time.monotonic()
+            self.track.position = position
+            self.track.duration = duration
+            self.track.stamp = now
+            self.track.status = "Playing"
+            self.track_key = self.track.key
+            return
+
+        fresh = self._player.poll() if self._player else None
+        if fresh is not None:
+            if fresh.title or fresh.artist:
+                self._apply_track(fresh)
+            else:
+                self._apply_track(fresh)
+
+        result = self.fetcher.take()
+        if result is not None:
+            lines, source, synced = result
+            if self.track.title or self.track.artist:
+                self.lines = lines
+                self.source = source
+                self.synced = synced
+                self.state = "lyrics" if lines else "empty"
+                self._snap_scroll()
+                self.dirty = True
+                self.log(f"resultado: {len(lines)} líneas ({source})")
+
+        if (
+            self.state == "empty"
+            and self.track.title
+            and time.monotonic() - self.last_fetch > 180
+        ):
+            # La letra puede no estar disponible la primera vez (API caída o
+            # canción recién añadida): se reintenta cada pocos minutos.
+            self.last_fetch = time.monotonic()
+            self.fetcher.start(self.track, force=True)
+            self.log("reintento automático de la letra")
+
+        if time.monotonic() - self.last_cfg > 1.2:
+            self.last_cfg = time.monotonic()
+            self._reload_config()
+
+        if time.monotonic() - self.last_reload > 15:
+            self.last_reload = time.monotonic()
+            self.theme.reload()
+
+    # ---- cálculo de la línea activa ----------------------------------
+
+    def _position(self):
+        if self.demo:
+            position, _ = self._demo_position()
+            return position
+        if not self.track:
+            return 0.0
+        return self.track.current_position()
+
+    def _update_scroll(self, position):
+        """El desplazamiento es función del tiempo de reproducción.
+
+        El bloque empieza a moverse justo antes de que entre la línea nueva y
+        termina exactamente cuando le toca, así que el movimiento es continuo
+        y no un salto seco.
+        """
+        if not self.lines:
+            return
+        times = [line.start for line in self.lines]
+        index = bisect.bisect_right(times, position + 0.05) - 1
+        index = max(0, min(index, len(self.lines) - 1))
+        step = float(self.spacing)
+        duration = self.cfg["animation_ms"] / 1000.0
+        self.active_index = index
+        self.last_active = index
+        target = index * step
+        self.moving = False
+
+        nxt = index + 1
+        if nxt < len(times) and duration > 0:
+            t_next = times[nxt]
+            anticipation = min(1.2, max(0.2, duration * 0.5))
+            start = t_next - anticipation
+            if start <= position < t_next:
+                progress = clamp((position - start) / max(0.001, anticipation), 0.0, 1.0)
+                eased = 1 - (1 - progress) ** 2
+                target = index * step + (nxt - index) * step * eased
+                self.moving = True
+        self.scroll = target
+
+    # ---- colores ------------------------------------------------------
+
+    def _line_color(self, index, active, past, fade):
+        if active:
+            return self.theme.accent
+        base = self.theme.past if past else self.theme.foreground
+        factor = (0.9 if past else 1.0) * fade
+        return blend(self.theme.background, base, factor)
+
+    # ---- piezas de UI -------------------------------------------------
+
+    def _equalizer(self, t, playing=True):
+        bars = []
+        for index in range(5):
+            if playing:
+                level = 0.18 + 0.82 * abs(math.sin(t * 3.1 + index * 0.9)) * (
+                    0.55 + 0.45 * abs(math.sin(t * 1.7 + index))
+                )
+            else:
+                level = 0.12 + index * 0.03
+            bars.append(EQ[min(len(EQ) - 1, int(level * (len(EQ) - 1)))])
+        return "".join(bars)
+
+    def _equalizer_only(self, rows, t):
+        """Solo el ecualizador, arriba a la derecha (opcional)."""
+        eq = self._equalizer(t, self.track.playing or self.demo)
+        pad = max(0, self.width - cell_width(eq) - 2)
+        rows[0] = " " * pad + fg(self.theme.accent) + eq + RESET
+
+    def _header(self, rows, t, position, duration):
+        theme = self.theme
+        left_plain = "▌ lyrics"
+        left = fg(theme.accent) + "▌" + RESET + " " + fg(theme.bright) + "lyrics" + RESET
+        status = ""
+        if self.state == "loading":
+            dots = "." * (int(t * 2.5) % 4)
+            status = f"buscando{dots}"
+        elif self.state == "empty":
+            status = "sin letra"
+        elif self.state == "lyrics":
+            status = "synced" if self.synced else "sin sync"
+            if not self.track.playing:
+                status += " · pausa"
+        elif self.state == "idle":
+            status = "en espera"
+        eq = self._equalizer(t, self.track.playing or self.demo)
+        status = truncate(status, max(0, self.width - cell_width(left_plain) - cell_width(eq) - 6))
+        right_plain = f"{eq}  [{status}]" if status else eq
+        right = fg(theme.accent, bold=False) + eq + RESET
+        if status:
+            right += "  " + fg(theme.faint) + f"[{status}]" + RESET
+        gap = max(1, self.width - cell_width(left_plain) - cell_width(right_plain))
+        rows[0] = left + " " * gap + right
+
+        title = self.track.title or "nada sonando"
+        artist = (" — " + self.track.artist) if self.track.artist else ""
+        max_title = max(10, self.width - 2)
+        if cell_width(title) + cell_width(artist) > max_title:
+            artist = ""
+            title = truncate(title, max_title)
+        else:
+            title = truncate(title, max_title - cell_width(artist))
+        title_line = "  " + fg(theme.bright, bold=True) + title + RESET
+        if artist:
+            title_line += fg(theme.faint) + artist + RESET
+        rows[1] = title_line
+
+        rule = "─" * max(1, self.width)
+        rows[2] = fg(blend(theme.background, theme.faint, 0.35)) + rule + RESET
+
+    def _footer(self, rows, position, duration):
+        """Barra de tiempo y progreso (opcional)."""
+        theme = self.theme
+        width = self.width
+        left = mmss(position)
+        right = mmss(duration) if duration > 0 else "--:--"
+        bar_width = max(4, width - 2 * len(left) - 2 * len(right) - 8)
+        ratio = clamp(position / duration, 0.0, 1.0) if duration > 0 else 0.0
+        filled = int(bar_width * ratio)
+        bar = fg(theme.accent) + ("\u2501" * filled) + ("\u2578" if filled < bar_width else "") + RESET
+        if filled < bar_width:
+            bar += fg(blend(theme.background, theme.past, 0.5)) + "\u2500" * (bar_width - filled - 1) + RESET
+        left_text = fg(theme.faint) + left + RESET
+        right_text = fg(theme.faint) + right + RESET
+        rows[self.height - 2] = "  " + left_text + "  " + bar + "  " + right_text
+
+    def _hints(self, rows):
+        """Fila con los atajos de teclado (opcional)."""
+        theme = self.theme
+        width = self.width
+        source = truncate(self.source or "", 18)
+        candidates = [
+            "[q] salir  [espacio] pausa  [d] direcci\u00f3n  [r] recargar",
+            "[q] salir  [espacio] pausa  [d] dir  [r] recargar",
+            "[q] salir  [espacio] pausa  [r] recargar",
+            "[q] salir  [espacio] pausa",
+            "[q] salir",
+        ]
+        hint = ""
+        for candidate in candidates:
+            if cell_width(candidate) + cell_width(source) + 4 <= width:
+                hint = candidate
+                break
+        if not hint:
+            hint = truncate(candidates[-1], max(0, width - 4 - cell_width(source)))
+        space = width - 2 - cell_width(hint) - cell_width(source) - 2
+        left_hint = fg(blend(theme.background, theme.faint, 0.65)) + hint + RESET
+        if source and space >= 1:
+            rows[self.height - 1] = "  " + left_hint + " " * space + fg(theme.faint) + source + RESET + "  "
+        else:
+            rows[self.height - 1] = "  " + left_hint
+
+    def _idle_block(self, rows, t, message, detail, top, bottom):
+        center = (top + bottom) // 2
+        if center - 2 >= top:
+            rows[center - 2] = fg(self.theme.faint) + " " * max(0, (self.width - cell_width(message)) // 2) + message + RESET
+        if detail and center - 1 <= bottom:
+            detail = truncate(detail, self.width - 4)
+            rows[center - 1] = fg(self.theme.bright) + " " * max(0, (self.width - cell_width(detail)) // 2) + detail + RESET
+        eq = self._equalizer(t, self.track.playing or self.demo)
+        pad = max(0, (self.width - cell_width(eq)) // 2)
+        if center + 1 <= bottom:
+            rows[center + 1] = " " * pad + fg(self.theme.accent) + eq + RESET
+
+    def _render_lyrics(self, rows, t, position, top, bottom):
+        theme = self.theme
+        center = (top + bottom) / 2.0
+        if not self.lines:
+            return
+        active = self.active_index
+        times = [line.start for line in self.lines]
+        step = float(self.spacing)
+
+        # Durante el desplazamiento el bloque se atenua un poco (motion
+        # blur) y la linea activa aparece con un fundido suave.
+        motion = 1.0
+        if self.cfg["ghost"] and self.moving:
+            motion = 0.78
+
+        for index, line in enumerate(self.lines):
+            pos = index * step
+            y = int(round(center + self.direction * (self.scroll - pos)))
+            if y < top or y > bottom:
+                continue
+            highlight = index == active and position >= line.start - 0.05
+            past = index < active or (index == active and not highlight)
+            if highlight:
+                fade = 1.0
+            else:
+                distance = abs(y - center)
+                fade = clamp(
+                    1.0 - (distance / max(1.0, (bottom - top) * 0.72)) ** 1.0,
+                    0.30,
+                    1.0,
+                )
+            base_color = self._line_color(index, highlight, past, fade)
+            if not highlight:
+                base_color = blend(theme.background, base_color, motion)
+            prefix = "> " if (self.cfg["marker"] and index == active) else "  "
+            max_text = max(4, self.width - 8)
+            text = truncate(line.text, max_text)
+            plain = prefix + text
+            left = max(0, (self.width - cell_width(plain)) // 2)
+            pad = " " * left
+            prefix_color = fg(theme.accent, bold=True) if (highlight and self.cfg["marker"]) else fg(theme.background)
+            if highlight and self.karaoke:
+                end = line.start + (line.duration or 4.0)
+                if index + 1 < len(times) and times[index + 1] > line.start:
+                    end = min(end, times[index + 1]) if line.duration else times[index + 1]
+                fraction = clamp((position - line.start) / max(0.35, end - line.start), 0.0, 1.0)
+                if line.chars and len(line.chars) >= len(text):
+                    count = 0
+                    for value in line.chars[: len(text)]:
+                        if value <= position:
+                            count += 1
+                    cut = count
+                else:
+                    cut = int(round(len(text) * fraction))
+                cut = max(0, min(len(text), cut))
+                sung = blend(theme.background, theme.accent, 1.0)
+                unsung = blend(theme.background, theme.accent, 0.42)
+                body = (
+                    fg(sung, bold=True) + text[:cut]
+                    + fg(unsung) + text[cut:]
+                    + RESET
+                )
+            else:
+                body = fg(base_color, bold=highlight) + text + RESET
+            rows[y] = pad + prefix_color + prefix + RESET + body
+
+    def build_frame(self):
+        rows = [""] * self.height
+        t = time.monotonic()
+        cfg = self.cfg
+        if self.demo:
+            position, duration = self._demo_position()
+        else:
+            position = self.track.current_position() if self.track else 0.0
+            duration = self.track.duration if self.track else 0.0
+        position = max(0.0, position + cfg["offset_ms"] / 1000.0)
+
+        top = 0
+        bottom = self.height - 1
+        if cfg["header"]:
+            self._header(rows, t, position, duration)
+            top = 3
+        elif cfg["equalizer"]:
+            self._equalizer_only(rows, t)
+        if cfg["footer"]:
+            bottom = self.height - 2
+            self._footer(rows, position, duration)
+        if cfg["hints"]:
+            bottom = bottom - 1
+            self._hints(rows)
+
+        if self.state == "idle":
+            self._idle_block(
+                rows, t, "nada sonando",
+                "abre YouTube Music o cualquier reproductor MPRIS",
+                top, bottom,
+            )
+        elif self.state == "loading":
+            self._idle_block(
+                rows, t, "buscando letra",
+                (self.track.title + " \u2014 " + self.track.artist).strip(" \u2014"),
+                top, bottom,
+            )
+        elif self.state == "empty":
+            self._idle_block(
+                rows, t, "sin letra para esta canci\u00f3n",
+                "prueba otra fuente o vuelve a intentarlo con [r]",
+                top, bottom,
+            )
+        else:
+            self._render_lyrics(rows, t, position, top, bottom)
+        return rows
+
+    def draw(self, force=False):
+        now = time.monotonic()
+        if not force and now - self.last_draw < 0.05:
+            return
+        self.last_draw = now
+        rows = self.build_frame()
+        out = ["\x1b[?2026h"]
+        if self.need_clear:
+            out.append("\x1b[2J\x1b[H")
+            self.need_clear = False
+        for index, row in enumerate(rows):
+            if force or index >= len(self.prev_rows) or self.prev_rows[index] != row:
+                out.append(f"\x1b[{index + 1};1H{row}\x1b[K")
+        out.append("\x1b[?2026l")
+        if len(out) > 2:
+            sys.stdout.write("".join(out))
+            sys.stdout.flush()
+        self.prev_rows = rows
+
+    # ---- teclado ------------------------------------------------------
+
+    def handle_key(self, key: str) -> bool:
+        if key in ("q", "Q", "\x03"):
+            return False
+        if key == " ":
+            if self.track.player and self.track.player != "demo":
+                subprocess.run(
+                    ["playerctl", "-p", self.track.player, "play-pause"],
+                    capture_output=True,
+                    timeout=2,
+                    check=False,
+                )
+                time.sleep(0.15)
+                if self._player:
+                    self._player.poll(force=True)
+            return True
+        if key in ("d", "D"):
+            self.direction *= -1
+            self.cfg["direction"] = "down" if self.direction > 0 else "up"
+            write_override("direction", self.cfg["direction"])
+            self.dirty = True
+            return True
+        if key in ("k", "K"):
+            self.karaoke = not self.karaoke
+            self.cfg["karaoke"] = self.karaoke
+            write_override("karaoke", self.karaoke)
+            self.dirty = True
+            return True
+        if key in ("r", "R"):
+            if self.track.title or self.track.artist:
+                self.reload_lyrics(force=True)
+            return True
+        return True
+
+    def run(self):
+        interactive = not self.args.once
+        self._setup_terminal(interactive)
+        try:
+            while not self.stop_requested:
+                self.update_size()
+                self._poll_data()
+                position = self._position()
+                self._update_scroll(position)
+                self.draw(force=self.dirty)
+                self.dirty = False
+                if self.args.once:
+                    break
+                for key in self._read_keys():
+                    if not self.handle_key(key):
+                        self.stop_requested = True
+                        break
+                time.sleep(0.033)
+        finally:
+            self._restore_terminal(interactive)
+
+    def _setup_terminal(self, interactive: bool):
+        if not interactive or not sys.stdin.isatty():
+            return
+        import termios
+        import tty
+
+        self._term_fd = sys.stdin.fileno()
+        self._term_attrs = termios.tcgetattr(self._term_fd)
+        tty.setcbreak(self._term_fd)
+        sys.stdout.write("\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H")
+        sys.stdout.flush()
+
+    def _restore_terminal(self, interactive: bool):
+        if not interactive or not sys.stdin.isatty():
+            return
+        import termios
+
+        try:
+            termios.tcsetattr(self._term_fd, termios.TCSADRAIN, self._term_attrs)
+        except (OSError, termios.error):
+            pass
+        sys.stdout.write("\x1b[0m\x1b[?25h\x1b[?1049l")
+        sys.stdout.flush()
+
+    def _read_keys(self):
+        if not sys.stdin.isatty():
+            return []
+        try:
+            ready, _, _ = select.select([sys.stdin], [], [], 0)
+        except (OSError, ValueError):
+            return []
+        if not ready:
+            return []
+        try:
+            data = os.read(sys.stdin.fileno(), 16)
+        except OSError:
+            return []
+        return list(data.decode("utf-8", "ignore"))
+
+
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog=APP,
+        description="Carrusel vertical de la letra que está sonando.",
+    )
+    parser.add_argument("--direction", choices=("down", "up"), default=None, help="sentido del carrusel (por defecto: el del plugin)")
+    parser.add_argument("--player", default="", help="nombre de reproductor MPRIS (por defecto: el que esté sonando)")
+    parser.add_argument("--no-karaoke", action="store_true", help="no rellenar la línea activa carácter a carácter")
+    parser.add_argument("--no-keys", action="store_true", help="ocultar la ayuda de teclas")
+    parser.add_argument("--demo", action="store_true", help="letra de demostración sin reproductor")
+    parser.add_argument("--demo-offset", type=float, default=0.0, help=argparse.SUPPRESS)
+    parser.add_argument("--once", action="store_true", help="dibujar un cuadro y salir")
+    parser.add_argument("--force", action="store_true", help="ignorar la caché al buscar letra")
+    parser.add_argument("--debug", action="store_true", help="escribir diagnóstico en la caché")
+    parser.add_argument("--clear-cache", action="store_true", help="borrar la caché de letras y salir")
+    parser.add_argument("--version", action="version", version=f"{APP} {VERSION}")
+    args = parser.parse_args()
+
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except AttributeError:
+        pass
+
+    if args.clear_cache:
+        if os.path.isdir(CACHE_DIR):
+            for name in os.listdir(CACHE_DIR):
+                try:
+                    os.remove(os.path.join(CACHE_DIR, name))
+                except OSError:
+                    pass
+        print(f"caché borrada: {CACHE_DIR}")
+        return 0
+
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    app = LyricsCarousel(args)
+
+    def on_signal(_signum, _frame):
+        app.stop_requested = True
+
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        try:
+            signal.signal(sig, on_signal)
+        except (ValueError, OSError):
+            pass
+
+    try:
+        app.run()
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

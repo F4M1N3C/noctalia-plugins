@@ -91,6 +91,23 @@ nombre son globales**.
 > `local function`, el clic se ignora **en silencio** (no sale ningún error en
 > el log). Los cuatro manejadores del panel son globales por eso.
 
+### Comprobaciones estáticas
+
+Dos fallos de Luau son **silenciosos**: no sale ningún error, la función
+simplemente devuelve `nil` y el botón no hace nada.
+
+```sh
+~/notes-mobile/tools/run-checks.sh
+```
+
+| Comprobación | Qué detecta |
+| --- | --- |
+| `local` usado antes de su declaración | En Lua un `local` solo existe desde su declaración: si una función anterior lo menciona, el nombre se compila como global y la llamada revienta con *attempt to call a nil value*. |
+| Manejador por nombre declarado `local` | `onClick = "onXxx"` busca una función **global** (`hasGlobal`); si es local, el clic se ignora en silencio. |
+
+El analizador compila el fichero con `luac` y mira el bytecode: un nombre
+declarado como `local` pero leído (o escrito) como global es un bug.
+
 ## Published state
 
 The service publishes a snapshot under `notes_sync`:

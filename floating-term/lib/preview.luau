@@ -24,13 +24,26 @@ local function hashText(text)
   return string.format("%08x", math.floor(hash))
 end
 
+-- La carpeta de caché no cambia durante la vida del runtime: crearla en cada
+-- llamada cargaba al panel de disco y hacia que onOpen se pasara del
+-- presupuesto de CPU de Luau.
+local cachedDir = nil
+
 function M.cacheDir()
+  if cachedDir ~= nil then
+    if cachedDir == false then
+      return nil
+    end
+    return cachedDir
+  end
   local dir = noctalia.pluginDataDir()
   if dir == nil then
+    cachedDir = false
     return nil
   end
   local path = dir .. "/thumbs"
   noctalia.mkdirAll(path)
+  cachedDir = path
   return path
 end
 

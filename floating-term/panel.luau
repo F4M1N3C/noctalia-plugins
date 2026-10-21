@@ -20,8 +20,7 @@ local PANEL_WIDTH = 620
 local PANEL_PADDING = 12
 local CARD_GAP = 10
 local CARD_PADDING = 8
-local DETAILS_HEIGHT = 32
-local PREVIEW_RATIO = 0.5
+local PREVIEW_RATIO = 0.58
 -- Margen de tolerancia: dos ventanas que se tocan (1-2 px) no cuentan como
 -- solapadas, así una posición configurada no se mueve por un roce.
 local OVERLAP_TOLERANCE = 4
@@ -48,7 +47,6 @@ local state = {
   layouts = {},
   store = nil,
   windows = {},
-  hovered = nil,
   editing = false,
   editTarget = nil,
   editSession = 0,
@@ -727,26 +725,9 @@ local function cardPreview(name)
 end
 
 card = function(name)
-  local hovered = state.hovered == name
   local running = state.windows[name] ~= nil
   local command = state.commands[name] or ""
   local layout = layoutText(name)
-
-  local details = {}
-  append(details, ui.label({
-    text = command,
-    fontSize = 10,
-    color = "on_surface_variant",
-    maxLines = 1,
-    visible = hovered,
-  }))
-  append(details, ui.label({
-    text = layout,
-    fontSize = 10,
-    color = "on_surface_variant",
-    maxLines = 1,
-    visible = hovered,
-  }))
 
   local titleRow = {}
   append(titleRow, ui.label({
@@ -787,8 +768,9 @@ card = function(name)
     padding = CARD_PADDING,
     radius = 12,
     fill = "surface_variant/0.35",
-    border = hovered and "primary/0.6" or "outline/0.2",
+    border = "outline/0.2",
     borderWidth = 1,
+    -- Comando y posición salen en el tooltip al pasar el ratón por encima.
     tooltip = string.format("%s\n%s", command, layout),
   }
 
@@ -797,24 +779,10 @@ card = function(name)
       launch(name)
     end
   end
-  cardProps.onHover = function(hoverState, _key)
-    local next = nil
-    if hoverState == "true" then
-      next = name
-    end
-    if next == state.hovered then
-      return
-    end
-    state.hovered = next
-    if state.open then
-      render()
-    end
-  end
 
   local children = {}
   append(children, cardPreview(name))
   append(children, ui.row({ gap = 6, align = "center" }, titleRow))
-  append(children, ui.column({ height = DETAILS_HEIGHT, gap = 2, justify = "center" }, details))
 
   return ui.column(cardProps, children)
 end
@@ -999,7 +967,7 @@ render = function()
     padding = PANEL_PADDING,
   }, {
     header(),
-    ui.scroll({ flexGrow = 1, gap = CARD_GAP }, rows),
+    ui.scroll({ flexGrow = 1, gap = CARD_GAP, justify = "center" }, rows),
   }))
 end
 
@@ -1009,7 +977,6 @@ function onOpen(_context)
   state.open = true
   loadConfig()
   loadWidgets()
-  state.hovered = nil
   state.editing = false
   state.editTarget = nil
   render()
@@ -1022,7 +989,6 @@ end
 
 function onClose()
   state.open = false
-  state.hovered = nil
 end
 
 function onConfigChanged()

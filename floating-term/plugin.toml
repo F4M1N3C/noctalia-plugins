@@ -169,6 +169,6 @@ entry = "widget.luau"
 id = "panel"
 entry = "panel.luau"
 width = 620
-height = 820
+height = 900
 placement = "attached"
 open_near_click = true

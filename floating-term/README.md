@@ -138,6 +138,8 @@ noctalia msg plugin faminec/floating-term:panel all remove <name>
 noctalia msg plugin faminec/floating-term:panel all refresh
 ```
 
+The `add` payload is split on `|`, so the command itself cannot contain one.
+
 The panel entry is only reachable over IPC while the panel is open; the other session's
 runtime is created on demand.
 

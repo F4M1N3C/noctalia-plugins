@@ -94,6 +94,13 @@ local function tr(key, args)
   return noctalia.tr(key, args)
 end
 
+-- El host solo vuelve a pedir frames cuando el flag pasa de falso a true, asi
+-- que hay que apagarlo cuando no hay nada que animar: si no, tras recargar el
+-- plugin el tick se queda muerto y la rueda y la animacion dejan de funcionar.
+local function wakeUp()
+  panel.setNeedsFrameTick(true)
+end
+
 local function clamp(value, low, high)
   if value < low then
     return low
@@ -797,7 +804,7 @@ selectIndex = function(index)
   else
     animating = true
   end
-  panel.setNeedsFrameTick(true)
+  wakeUp()
   render()
 end
 
@@ -864,7 +871,7 @@ reload = function(keepSelection)
     selected = 1
     viewPos = 1.0
     animating = false
-    panel.setNeedsFrameTick(false)
+    panel.setNeedsFrameTick(true)
     render()
     return
   end
@@ -875,7 +882,13 @@ reload = function(keepSelection)
   scrollOffset = 0
   scrollSeen = 0
   scrollAccum = 0
-  panel.setNeedsFrameTick(false)
+  -- El frame tick no se apaga: lo NeedsFrameTick alimenta la animacion de la
+  -- cinta y el consumo de la rueda, asi que tiene que seguir vivo aunque el
+  -- panel se recargue por un cambio de ajustes.
+  panel.setNeedsFrameTick(true)
+  -- El scroll puede quedar desplazado de antes: se recentra para que la
+  -- compensacion siga siendo exacta.
+  pendingRecenter = true
   render()
   ensureThumbs()
 end
@@ -924,7 +937,7 @@ function onOpen(_context)
   thumbErrorShown = false
   -- El frame tick se queda activo siempre: sirve para la animación de la
   -- cinta, para el autorepeat de las teclas y para consumir la rueda.
-  panel.setNeedsFrameTick(true)
+  wakeUp()
   render()
   -- El scroll arranca en cero, sin recorrido hacia arriba: se recentra en el
   -- primer frame para que la rueda pueda ir en ambos sentidos. Las miniaturas
@@ -937,6 +950,8 @@ function onClose()
   opened = false
   animating = false
   heldKey = nil
+  -- Al cerrar se apaga el tick: al reabrir tiene que volver a encenderse (y
+  -- el host solo pide frames en esa transicion).
   panel.setNeedsFrameTick(false)
   noctalia.state.set("carousel.open", false)
 end
@@ -952,6 +967,7 @@ end
 -- que la cinta no se mueva de sitio) y el salto accumulated mueve el carrusel.
 function onScroll(offset, _maxOffset)
   local newOffset = tonumber(offset) or 0
+  wakeUp()
 
   if scrollResetting then
     scrollResetting = false
@@ -1044,18 +1060,30 @@ function onFrameTick(deltaMs)
       render()
       ensureThumbs()
     end
-    return
+  else
+    local timeConstant = 120 + math.min(380, math.abs(difference) * 12)
+    local factor = 1 - math.exp(-dt / timeConstant)
+    viewPos = viewPos + difference * factor
+    render()
   end
-  local timeConstant = 120 + math.min(380, math.abs(difference) * 12)
-  local factor = 1 - math.exp(-dt / timeConstant)
-  viewPos = viewPos + difference * factor
-  render()
+
+  -- 4. Si no queda nada que mover, se apaga el frame tick (ver wakeUp): el
+  --    host solo vuelve a pedir frames cuando el flag pasa de falso a true.
+  local busy = animating
+    or heldKey ~= nil
+    or pendingRecenter
+    or pendingThumbs
+    or math.abs(scrollOffset - scrollSeen) > 0.5
+  if not busy then
+    panel.setNeedsFrameTick(false)
+  end
 end
 
 function onKey(chord, pressed)
   if #wallpapers == 0 then
     return
   end
+  wakeUp()
   if chord == "Left" or chord == "h" or chord == "k" then
     if pressed then
       heldKey = -1
@@ -1104,3 +1132,9 @@ function onIpc(event, _payload)
     move(-1)
   end
 end
+
+-- Al cargar la entrada el flag del frame tick se pone a false. El host solo
+-- vuelve a pedir frames cuando el flag pasa de false a true, asi que tras una
+-- recarga en caliente (que deja el flag en true) el tick se quedaria muerto:
+-- con el flag a false, el siguiente wakeUp() lo vuelve a encender.
+panel.setNeedsFrameTick(false)

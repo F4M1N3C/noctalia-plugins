@@ -39,7 +39,16 @@ import urllib.parse
 import urllib.request
 
 APP = "lyrics-carousel"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+try:
+    from image_renderer import ImageRenderer
+except Exception:  # noqa: BLE001  (el modo imagen es opcional)
+    ImageRenderer = None
 
 CACHE_DIR = os.path.join(
     os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
@@ -116,6 +125,19 @@ def blend(a, b, t: float):
     )
 
 
+def parse_hex(value, fallback=(255, 255, 255)):
+    """Convierte "#rrggbb" o "rrggbb" en una tupla RGB."""
+    text = str(value or "").strip().lstrip("#")
+    if len(text) == 3:
+        text = "".join(char * 2 for char in text)
+    if len(text) != 6:
+        return fallback
+    try:
+        return tuple(int(text[i : i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return fallback
+
+
 def fg(color, bold: bool = False, italic: bool = False) -> str:
     codes = []
     if bold:
@@ -133,17 +155,38 @@ RESET = "\x1b[0m"
 # tema (lee los colores reales de kitty, incluido el include de Noctalia)
 # --------------------------------------------------------------------------
 
+ACCENT_NAMES = (
+    "primary", "red", "green", "yellow", "blue", "magenta", "cyan", "custom",
+)
+
+
 class Theme:
+    """Colores del tema de kitty que Noctalia genera desde el wallpaper.
+
+    El template de kitty exporta la paleta ANSI (color0..color15) y el color
+    primario del sistema en active_border_color/url_color; los colores
+    "primary", "green"... se mapean a esos valores para que el widget siga al
+    fondo de pantalla.
+    """
+
     COLOR_KEYS = {
         "foreground",
         "background",
         "color0",
         "color1",
+        "color2",
+        "color3",
         "color4",
+        "color5",
+        "color6",
         "color7",
         "color8",
         "color15",
         "selection_background",
+        "active_border_color",
+        "url_color",
+        "active_tab_background",
+        "inactive_border_color",
     }
 
     def __init__(self):
@@ -153,6 +196,15 @@ class Theme:
         self.past = (105, 105, 105)
         self.bright = (243, 242, 242)
         self.faint = (150, 146, 146)
+        self.accents = {
+            "primary": self.accent,
+            "red": self.accent,
+            "green": (110, 204, 111),
+            "yellow": (217, 228, 103),
+            "blue": (102, 204, 111),
+            "magenta": (228, 236, 147),
+            "cyan": (184, 233, 150),
+        }
         self.source = ""
         self.reload()
 
@@ -213,13 +265,34 @@ class Theme:
         colors = dict(paths)
         self.foreground = colors.get("foreground", self.foreground)
         self.background = colors.get("background", self.background)
-        self.accent = colors.get("color1") or colors.get("color4") or self.accent
         self.past = colors.get("color8", self.past)
         self.bright = colors.get("color15") or colors.get("color7") or self.bright
         self.faint = blend(self.foreground, self.background, 0.45)
 
+        # El primario del sistema lo exporta Noctalia como color de borde.
+        primary = (
+            colors.get("active_border_color")
+            or colors.get("url_color")
+            or colors.get("active_tab_background")
+        )
+        self.accents["primary"] = primary or self.accent
+        self.accents["red"] = colors.get("color1", self.accents["red"])
+        self.accents["green"] = colors.get("color2", self.accents["green"])
+        self.accents["yellow"] = colors.get("color3", self.accents["yellow"])
+        self.accents["blue"] = colors.get("color4", self.accents["blue"])
+        self.accents["magenta"] = colors.get("color5", self.accents["magenta"])
+        self.accents["cyan"] = colors.get("color6", self.accents["cyan"])
+        self.accent = self.accents["primary"]
+
     def color(self, base, fade: float = 1.0):
         return blend(self.background, base, fade)
+
+    def accent_color(self, cfg):
+        """Color del renglón activo según el ajuste `accent`."""
+        name = cfg.get("accent", "primary")
+        if name == "custom":
+            return parse_hex(cfg.get("custom_color", ""), self.accent)
+        return self.accents.get(name, self.accent)
 
 
 # --------------------------------------------------------------------------
@@ -1130,6 +1203,7 @@ PLUGIN_ID = "faminec/lyrics-carousel"
 DEFAULTS = {
     "font_family": "Departure Mono",
     "font_size": 22,
+    "render_mode": "image",
     "direction": "down",
     "marker": False,
     "karaoke": True,
@@ -1143,46 +1217,32 @@ DEFAULTS = {
     "offset_ms": 0,
     "width": 1200,
     "height": 820,
+    "anchor": "center",
+    "accent": "primary",
+    "custom_color": "#e46767",
+    "active_scale": 1.35,
+    "visible_above": 6,
+    "visible_below": 6,
 }
 
 BOOL_KEYS = ("marker", "karaoke", "equalizer", "footer", "hints", "header", "ghost")
-INT_KEYS = ("font_size", "spacing", "animation_ms", "offset_ms", "width", "height")
+INT_KEYS = (
+    "font_size", "spacing", "animation_ms", "offset_ms", "width", "height",
+    "visible_above", "visible_below",
+)
+FLOAT_KEYS = ("active_scale",)
 
 
-def write_override(key: str, value):
-    """Guarda un ajuste rápido (lo usa también el panel del plugin)."""
-    path = override_path()
-    data = {}
-    try:
-        with open(path, encoding="utf-8") as handle:
-            loaded = json.load(handle)
-        if isinstance(loaded, dict):
-            data = loaded
-    except Exception:  # noqa: BLE001
-        data = {}
-    data[key] = value
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, ensure_ascii=False, indent=1)
-    except OSError:
-        pass
-
-
-def override_path() -> str:
-    return os.path.expanduser(
-        f"~/.local/state/noctalia/plugins/data/{PLUGIN_ID}/overrides.json"
-    )
+SETTINGS_PATH = os.path.expanduser("~/.local/state/noctalia/settings.toml")
 
 
 def load_settings() -> dict:
-    """Ajustes del plugin: valores por defecto + settings.toml + overrides."""
+    """Ajustes del plugin: valores por defecto + settings.toml de Noctalia."""
     cfg = dict(DEFAULTS)
 
-    path = os.path.expanduser("~/.local/state/noctalia/settings.toml")
-    if os.path.isfile(path) and tomllib is not None:
+    if os.path.isfile(SETTINGS_PATH) and tomllib is not None:
         try:
-            with open(path, "rb") as handle:
+            with open(SETTINGS_PATH, "rb") as handle:
                 data = tomllib.load(handle)
             section = (data.get("plugin_settings") or {}).get(PLUGIN_ID) or {}
             for key, value in section.items():
@@ -1191,33 +1251,223 @@ def load_settings() -> dict:
         except Exception:  # noqa: BLE001
             pass
 
-    try:
-        with open(override_path(), encoding="utf-8") as handle:
-            data = json.load(handle)
-        if isinstance(data, dict):
-            for key, value in data.items():
-                if key in cfg and value is not None:
-                    cfg[key] = value
-    except Exception:  # noqa: BLE001
-        pass
-
     for key in BOOL_KEYS:
-        cfg[key] = bool(cfg[key])
+        value = cfg[key]
+        if isinstance(value, str):
+            cfg[key] = value.strip().lower() in ("1", "true", "yes", "on")
+        else:
+            cfg[key] = bool(value)
     for key in INT_KEYS:
         try:
             cfg[key] = int(cfg[key])
         except (TypeError, ValueError):
             cfg[key] = DEFAULTS[key]
-    cfg["font_size"] = max(6, min(80, cfg["font_size"]))
+    for key in FLOAT_KEYS:
+        try:
+            cfg[key] = float(cfg[key])
+        except (TypeError, ValueError):
+            cfg[key] = DEFAULTS[key]
+    cfg["font_size"] = max(6, min(96, cfg["font_size"]))
     cfg["spacing"] = max(1, min(6, cfg["spacing"]))
     cfg["animation_ms"] = max(0, min(3000, cfg["animation_ms"]))
     cfg["offset_ms"] = max(-5000, min(5000, cfg["offset_ms"]))
     cfg["width"] = max(300, min(4000, cfg["width"]))
     cfg["height"] = max(200, min(3000, cfg["height"]))
+    cfg["visible_above"] = max(0, min(20, cfg["visible_above"]))
+    cfg["visible_below"] = max(0, min(20, cfg["visible_below"]))
+    cfg["active_scale"] = max(1.0, min(2.5, cfg["active_scale"]))
     if cfg["direction"] not in ("down", "up"):
         cfg["direction"] = "down"
+    if cfg["render_mode"] not in ("image", "text"):
+        cfg["render_mode"] = DEFAULTS["render_mode"]
+    if cfg["accent"] not in ACCENT_NAMES:
+        cfg["accent"] = DEFAULTS["accent"]
     cfg["font_family"] = str(cfg["font_family"] or DEFAULTS["font_family"])
+    cfg["custom_color"] = str(cfg["custom_color"] or DEFAULTS["custom_color"])
     return cfg
+
+
+def write_setting(key: str, value) -> bool:
+    """Guarda un ajuste en el settings.toml de Noctalia (para los atajos)."""
+    if key not in DEFAULTS:
+        return False
+    if isinstance(value, bool):
+        raw = "true" if value else "false"
+    elif isinstance(value, int):
+        raw = str(value)
+    elif isinstance(value, float):
+        raw = str(value)
+    else:
+        raw = '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+    try:
+        with open(SETTINGS_PATH, encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        return False
+    updated = patch_settings(text, key, raw)
+    if updated == text:
+        return False
+    temporary = ""
+    try:
+        directory = os.path.dirname(SETTINGS_PATH)
+        handle = tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=directory, delete=False, suffix=".tmp"
+        )
+        temporary = handle.name
+        with handle:
+            handle.write(updated)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, SETTINGS_PATH)
+        temporary = ""
+    except OSError as error:
+        if temporary:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+        print(f"no se pudo guardar {key}: {error}", file=sys.stderr)
+        return False
+    # Comprobación: el ajuste tiene que estar realmente en el fichero.
+    try:
+        with open(SETTINGS_PATH, "rb") as handle:
+            check = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        print(f"el settings.toml quedó ilegible: {error}", file=sys.stderr)
+        return False
+    section = (check.get("plugin_settings") or {}).get(PLUGIN_ID) or {}
+    if key not in section:
+        print(f"no se pudo guardar {key}", file=sys.stderr)
+        return False
+    return True
+
+
+def patch_settings(text: str, key: str, raw_value: str) -> str:
+    """Inserta o reemplaza una clave dentro de la sección del plugin."""
+    section = f'[plugin_settings."{PLUGIN_ID}"]'
+    lines = text.split("\n")
+    start = None
+    end = len(lines)
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == section:
+            start = index
+            continue
+        if start is not None and stripped.startswith("[") and stripped.endswith("]"):
+            end = index
+            break
+    if start is None:
+        block = [section, f"{key} = {raw_value}"]
+        prefix = text if text.endswith("\n") else text + "\n"
+        if not prefix.strip():
+            return "\n".join(block) + "\n"
+        return prefix + "\n".join(block) + "\n"
+    body = lines[start + 1 : end]
+    for index, line in enumerate(body):
+        if line.strip().startswith(key + " "):
+            body[index] = f"{key} = {raw_value}"
+            break
+    else:
+        insert_at = len(body)
+        while insert_at > 0 and body[insert_at - 1].strip() == "":
+            insert_at -= 1
+        for index in range(insert_at):
+            name = body[index].split("=", 1)[0].strip()
+            if name and name > key:
+                insert_at = index
+                break
+        body.insert(insert_at, f"{key} = {raw_value}")
+    return "\n".join(lines[: start + 1] + body + lines[end:])
+
+
+
+ANCHOR_ALIASES = {
+    "topleft": "top-left", "topcenter": "top-center", "topright": "top-right",
+    "left": "left-center", "leftcenter": "left-center", "middle": "center",
+    "centre": "center", "centro": "center", "medio": "center",
+    "right": "right-center", "rightcenter": "right-center",
+    "bottomleft": "bottom-left", "bottomcenter": "bottom-center",
+    "bottomright": "bottom-right", "top": "top-center", "bottom": "bottom-center",
+    "arriba": "top-center", "abajo": "bottom-center",
+    "izquierda": "left-center", "derecha": "right-center",
+}
+
+
+def normalize_anchor(value) -> str:
+    key = str(value or "").strip().lower()
+    key = re.sub(r"[\s_]+", "-", key)
+    key = re.sub(r"-+", "-", key).strip("-")
+    if key in (
+        "top-left", "top-center", "top-right", "left-center", "center",
+        "right-center", "bottom-left", "bottom-center", "bottom-right",
+    ):
+        return key
+    return ANCHOR_ALIASES.get(key, "center")
+
+
+def focused_monitor():
+    try:
+        result = subprocess.run(
+            ["hyprctl", "monitors", "-j"], capture_output=True, text=True, timeout=3
+        )
+        monitors = json.loads(result.stdout or "[]")
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(monitors, list) or not monitors:
+        return None
+    for monitor in monitors:
+        if isinstance(monitor, dict) and monitor.get("focused"):
+            return monitor
+    first = monitors[0]
+    return first if isinstance(first, dict) else None
+
+
+def apply_geometry(cfg):
+    """Mueve y redimensiona la ventana en caliente (sin recrearla)."""
+    monitor = focused_monitor()
+    if monitor is None:
+        return False
+    try:
+        screen_w = int(monitor.get("width") or 0)
+        screen_h = int(monitor.get("height") or 0)
+    except (TypeError, ValueError):
+        return False
+    if screen_w <= 0 or screen_h <= 0:
+        return False
+    width = int(cfg["width"])
+    height = int(cfg["height"])
+    anchor = normalize_anchor(cfg.get("anchor", "center"))
+    margin = 16
+    if anchor in ("top-left", "left-center", "bottom-left"):
+        x = margin
+    elif anchor in ("top-right", "right-center", "bottom-right"):
+        x = screen_w - width - margin
+    else:
+        x = (screen_w - width) // 2
+    if anchor in ("top-left", "top-center", "top-right"):
+        y = margin
+    elif anchor in ("bottom-left", "bottom-center", "bottom-right"):
+        y = screen_h - height - margin
+    else:
+        y = (screen_h - height) // 2
+    window = "class:^noctalia-lyrics-carousel$"
+    expressions = (
+        f"hl.dsp.window.resize({{ x = {width}, y = {height}, window = \"{window}\" }})",
+        f"hl.dsp.window.move({{ x = {x}, y = {y}, window = \"{window}\" }})",
+    )
+    ok = False
+    for expression in expressions:
+        try:
+            result = subprocess.run(
+                ["hyprctl", "dispatch", expression],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            ok = ok or result.returncode == 0
+        except Exception:  # noqa: BLE001
+            continue
+    return ok
 
 
 class LyricsCarousel:
@@ -1230,6 +1480,12 @@ class LyricsCarousel:
             self.cfg["direction"] = args.direction
         if args.no_karaoke:
             self.cfg["karaoke"] = False
+        if args.render_mode:
+            self.cfg["render_mode"] = args.render_mode
+        if args.active_scale:
+            self.cfg["active_scale"] = args.active_scale
+        if args.accent:
+            self.cfg["accent"] = args.accent
         self.direction = 1 if self.cfg["direction"] == "down" else -1
         self.karaoke = bool(self.cfg["karaoke"])
         self.spacing = int(self.cfg["spacing"])
@@ -1260,7 +1516,15 @@ class LyricsCarousel:
         self.dirty = True
         self.stop_requested = False
         self.need_clear = True
+        self.last_counters = 0.0
         self._player = PlayerWatcher(args.player) if not self.demo else None
+        self.image = None
+        if ImageRenderer is not None:
+            try:
+                self.image = ImageRenderer(self)
+            except Exception:  # noqa: BLE001
+                self.image = None
+        self.last_mode = ""
         self._demo_start = time.monotonic() - max(0.0, args.demo_offset)
         if self.demo:
             self._load_demo()
@@ -1383,8 +1647,18 @@ class LyricsCarousel:
             cfg["direction"] = self.args.direction
         if self.args.no_karaoke:
             cfg["karaoke"] = False
+        if self.args.render_mode:
+            cfg["render_mode"] = self.args.render_mode
+        if self.args.active_scale:
+            cfg["active_scale"] = self.args.active_scale
+        if self.args.accent:
+            cfg["accent"] = self.args.accent
         if cfg == self.cfg:
             return
+        previous = self.cfg
+        if previous.get("render_mode") != cfg.get("render_mode"):
+            self.image_disabled = False
+            self.image_failures = 0
         self.cfg = cfg
         self.direction = 1 if cfg["direction"] == "down" else -1
         self.karaoke = bool(cfg["karaoke"])
@@ -1392,6 +1666,14 @@ class LyricsCarousel:
         self.dirty = True
         self.need_clear = True
         self.log("ajustes: " + json.dumps(cfg, ensure_ascii=False))
+        if (
+            previous.get("width") != cfg["width"]
+            or previous.get("height") != cfg["height"]
+            or previous.get("anchor") != cfg["anchor"]
+        ):
+            # La geometría se aplica a la ventana viva, sin recrearla.
+            if apply_geometry(cfg):
+                self.log("geometría aplicada en caliente")
 
     def _poll_data(self):
         if self.demo:
@@ -1452,6 +1734,40 @@ class LyricsCarousel:
             return 0.0
         return self.track.current_position()
 
+    def position(self):
+        """Posición de reproducción con el desfase aplicado."""
+        return max(0.0, self._position() + self.cfg["offset_ms"] / 1000.0)
+
+    def scroll_state(self, position):
+        """(línea cantada, línea en el centro, progreso de la transición)."""
+        if not self.lines:
+            return 0, 0, 0.0
+        times = [line.start for line in self.lines]
+        index = bisect.bisect_right(times, position + 0.05) - 1
+        index = max(0, min(index, len(self.lines) - 1))
+        focus = index
+        progress = 0.0
+        duration = self.cfg["animation_ms"] / 1000.0
+        nxt = index + 1
+        if nxt < len(times) and duration > 0:
+            anticipation = min(1.2, max(0.2, duration * 0.5))
+            start = times[nxt] - anticipation
+            if start <= position < times[nxt]:
+                progress = (position - start) / anticipation
+                focus = nxt
+        return index, focus, progress
+
+    def equalizer_text(self):
+        return self._equalizer(time.monotonic(), self.track.playing or self.demo)
+
+    def terminal_pixels(self):
+        try:
+            from graphics import terminal_cells
+
+            return terminal_cells()[2:]
+        except Exception:  # noqa: BLE001
+            return 0, 0
+
     def _update_scroll(self, position):
         """El desplazamiento es función del tiempo de reproducción.
 
@@ -1487,7 +1803,7 @@ class LyricsCarousel:
 
     def _line_color(self, index, active, past, fade):
         if active:
-            return self.theme.accent
+            return self.theme.accent_color(self.cfg)
         base = self.theme.past if past else self.theme.foreground
         factor = (0.9 if past else 1.0) * fade
         return blend(self.theme.background, base, factor)
@@ -1622,7 +1938,11 @@ class LyricsCarousel:
         if self.cfg["ghost"] and self.moving:
             motion = 0.78
 
+        limit_above = self.cfg["visible_above"]
+        limit_below = self.cfg["visible_below"]
         for index, line in enumerate(self.lines):
+            if index < active - limit_above or index > active + limit_below:
+                continue
             pos = index * step
             y = int(round(center + self.direction * (self.scroll - pos)))
             if y < top or y > bottom:
@@ -1720,11 +2040,85 @@ class LyricsCarousel:
             self._render_lyrics(rows, t, position, top, bottom)
         return rows
 
+    def use_image(self):
+        if self.cfg["render_mode"] != "image":
+            return False
+        if getattr(self, "image_disabled", False):
+            return False
+        if self.image is None or not self.image.gfx.supported:
+            return False
+        # Sin tamaño en píxeles (terminales que no lo dan) no se puede
+        # colocar la imagen: se usa el modo texto.
+        try:
+            from graphics import terminal_cells
+
+            return terminal_cells()[2] > 0
+        except Exception:  # noqa: BLE001
+            return False
+
+    def draw_image(self, force=False):
+        if self.last_mode != "image":
+            sys.stdout.write("\x1b[2J\x1b[H")
+            sys.stdout.flush()
+            self.last_mode = "image"
+            self.need_clear = False
+        try:
+            rendered = self.image.render()
+        except OSError as error:
+            # Terminal redimensionado o cerrado: no cuenta como fallo de render.
+            self.log(f"escritura: {error!r}")
+            return
+        except Exception as error:  # noqa: BLE001
+            import traceback
+
+            self.image_failures = getattr(self, "image_failures", 0) + 1
+            self.log(
+                "imagen: " + repr(error) + "\n" + traceback.format_exc()
+            )
+            if self.image_failures >= 3:
+                self.log("modo imagen desactivado tras varios fallos")
+                self.image_disabled = True
+                self.cfg["render_mode"] = "text"
+                self.need_clear = True
+                self.last_mode = ""
+                self._draw_text_frame()
+            return
+        if not rendered:
+            # No se ha podido colocar la imagen (p. ej. sin tamaño en píxeles).
+            self.image_failures = getattr(self, "image_failures", 0) + 1
+            if self.image_failures >= 3:
+                self.log("modo imagen desactivado: no se puede dibujar")
+                self.image_disabled = True
+                self.cfg["render_mode"] = "text"
+            self.last_mode = ""
+            self.need_clear = True
+            self._draw_text_frame()
+            return
+        self.image_failures = 0
+
     def draw(self, force=False):
         now = time.monotonic()
-        if not force and now - self.last_draw < 0.05:
+        # El modo imagen dibuja a 12 fps: suficiente para el efecto karaoke
+        # y mucho más ligero que ir a 20.
+        interval = 0.08 if self.use_image() else 0.05
+        if not force and now - self.last_draw < interval:
             return
         self.last_draw = now
+        if self.use_image():
+            self.draw_image(force)
+            return
+        if self.last_mode == "image":
+            # Se borra la imagen anterior antes de volver al texto.
+            try:
+                if self.image is not None:
+                    self.image.gfx.clear()
+            except Exception:  # noqa: BLE001
+                pass
+            self.last_mode = ""
+            self.need_clear = True
+        self._draw_text_frame(force)
+
+    def _draw_text_frame(self, force=False):
         rows = self.build_frame()
         out = ["\x1b[?2026h"]
         if self.need_clear:
@@ -1735,11 +2129,25 @@ class LyricsCarousel:
                 out.append(f"\x1b[{index + 1};1H{row}\x1b[K")
         out.append("\x1b[?2026l")
         if len(out) > 2:
-            sys.stdout.write("".join(out))
-            sys.stdout.flush()
+            try:
+                sys.stdout.write("".join(out))
+                sys.stdout.flush()
+            except OSError:
+                pass
         self.prev_rows = rows
 
     # ---- teclado ------------------------------------------------------
+
+    def _reload_noctalia(self):
+        """Pide a Noctalia que vuelva a leer el settings.toml."""
+        try:
+            subprocess.Popen(
+                ["noctalia", "msg", "config-reload"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            pass
 
     def handle_key(self, key: str) -> bool:
         if key in ("q", "Q", "\x03"):
@@ -1759,13 +2167,15 @@ class LyricsCarousel:
         if key in ("d", "D"):
             self.direction *= -1
             self.cfg["direction"] = "down" if self.direction > 0 else "up"
-            write_override("direction", self.cfg["direction"])
+            write_setting("direction", self.cfg["direction"])
+            self._reload_noctalia()
             self.dirty = True
             return True
         if key in ("k", "K"):
             self.karaoke = not self.karaoke
             self.cfg["karaoke"] = self.karaoke
-            write_override("karaoke", self.karaoke)
+            write_setting("karaoke", self.karaoke)
+            self._reload_noctalia()
             self.dirty = True
             return True
         if key in ("r", "R"):
@@ -1847,6 +2257,9 @@ def main():
     parser.add_argument("--direction", choices=("down", "up"), default=None, help="sentido del carrusel (por defecto: el del plugin)")
     parser.add_argument("--player", default="", help="nombre de reproductor MPRIS (por defecto: el que esté sonando)")
     parser.add_argument("--no-karaoke", action="store_true", help="no rellenar la línea activa carácter a carácter")
+    parser.add_argument("--render-mode", choices=("image", "text"), default=None, help="forzar el modo de render")
+    parser.add_argument("--active-scale", type=float, default=None, help="tamaño de la línea activa")
+    parser.add_argument("--accent", default=None, help="color de la línea activa")
     parser.add_argument("--no-keys", action="store_true", help="ocultar la ayuda de teclas")
     parser.add_argument("--demo", action="store_true", help="letra de demostración sin reproductor")
     parser.add_argument("--demo-offset", type=float, default=0.0, help=argparse.SUPPRESS)

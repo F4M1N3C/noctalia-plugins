@@ -14,9 +14,9 @@ plugin_api = 34
 author = "faminec"
 license = "MIT"
 dependencies = ["kitty", "hyprland", "playerctl", "python3"]
-tags = ["music", "utility", "bar", "panel"]
+tags = ["music", "terminal", "utility", "lyrics"]
 icon = "music"
-description = "Synced lyrics carousel in a floating terminal window, driven by your MPRIS player."
+description = "Carrusel de letras sincronizadas en una ventana de terminal flotante, con letra grande para la linea activa."
 
 [[setting]]
 key = "font_family"
@@ -31,8 +31,19 @@ type = "int"
 label_key = "settings.font_size.label"
 description_key = "settings.font_size.description"
 default = 22
-min = 8
-max = 48
+min = 6
+max = 96
+
+[[setting]]
+key = "render_mode"
+type = "select"
+label_key = "settings.render_mode.label"
+description_key = "settings.render_mode.description"
+default = "image"
+options = [
+  { value = "image", label_key = "settings.render_mode.image" },
+  { value = "text", label_key = "settings.render_mode.text" },
+]
 
 [[setting]]
 key = "direction"
@@ -147,6 +158,57 @@ description_key = "settings.anchor.description"
 default = "center"
 
 [[setting]]
+key = "accent"
+type = "select"
+label_key = "settings.accent.label"
+description_key = "settings.accent.description"
+default = "primary"
+options = [
+  { value = "primary", label_key = "settings.accent.primary" },
+  { value = "green", label_key = "settings.accent.green" },
+  { value = "yellow", label_key = "settings.accent.yellow" },
+  { value = "blue", label_key = "settings.accent.blue" },
+  { value = "magenta", label_key = "settings.accent.magenta" },
+  { value = "cyan", label_key = "settings.accent.cyan" },
+  { value = "red", label_key = "settings.accent.red" },
+  { value = "custom", label_key = "settings.accent.custom" },
+]
+
+[[setting]]
+key = "custom_color"
+type = "string"
+label_key = "settings.custom_color.label"
+description_key = "settings.custom_color.description"
+default = "#e46767"
+
+[[setting]]
+key = "active_scale"
+type = "double"
+label_key = "settings.active_scale.label"
+description_key = "settings.active_scale.description"
+default = 1.35
+min = 1.0
+max = 2.5
+
+[[setting]]
+key = "visible_above"
+type = "int"
+label_key = "settings.visible_above.label"
+description_key = "settings.visible_above.description"
+default = 6
+min = 0
+max = 20
+
+[[setting]]
+key = "visible_below"
+type = "int"
+label_key = "settings.visible_below.label"
+description_key = "settings.visible_below.description"
+default = 6
+min = 0
+max = 20
+
+[[setting]]
 key = "glyph"
 type = "glyph"
 label_key = "settings.glyph.label"
@@ -161,7 +223,7 @@ entry = "widget.luau"
 id = "panel"
 entry = "panel.luau"
 width = 470
-height = 700
+height = 760
 placement = "floating"
 position = "center"
 open_near_click = true

@@ -10,3 +10,7 @@ catalog.toml
 *.swp
 .idea/
 .vscode/
+
+# Python bytecode de los helpers
+__pycache__/
+*.pyc

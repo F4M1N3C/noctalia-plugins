@@ -1,95 +1,102 @@
 {
-  "close": "Cerrar",
-  "direction": "Sentido",
-  "down": "abajo",
-  "equalizer": "Visualizador de sonido",
-  "font_size": "Tamaño",
-  "footer": "Barra de tiempo",
-  "ghost": "Transiciones suaves",
-  "header": "Cabecera (título / artista)",
-  "hint": "Los cambios se aplican en caliente. La tipografía necesita reiniciar la ventana.",
-  "hints": "Atajos de teclado",
-  "karaoke": "Efecto karaoke",
+  "tooltip": "Carrusel de letras",
+  "title": "Carrusel de letras",
+  "subtitle": "No está sonando nada",
   "launch": "Abrir el carrusel",
   "launch_failed": "No se pudo abrir la terminal.",
-  "marker": "Marca de la línea activa",
+  "write_failed": "No se pudo guardar el ajuste.",
   "open_settings": "Abrir ajustes",
+  "close": "Cerrar",
   "section_display": "Presentación",
+  "section_lyrics": "Letra",
+  "section_window": "Ventana",
   "section_font": "Tipografía",
-  "settings": {
-    "anchor": {
-      "description": "Dónde se abre la ventana: center, top-left, bottom-right...",
-      "label": "Posición"
-    },
-    "animation_ms": {
-      "description": "Duración del desplazamiento entre líneas, en milisegundos. 0 = instantáneo.",
-      "label": "Transición"
-    },
-    "direction": {
-      "description": "Abajo: las letras entran por arriba. Arriba: las letras entran por abajo.",
-      "down": "Abajo",
-      "label": "Sentido del carrusel",
-      "up": "Arriba"
-    },
-    "equalizer": {
-      "description": "Muestra las barras animadas en la esquina superior derecha.",
-      "label": "Visualizador de sonido"
-    },
-    "font_family": {
-      "description": "Fuente usada por la ventana de kitty, p. ej. Departure Mono, Nothing Font (5x7) o ttyclock.",
-      "label": "Tipografía"
-    },
-    "font_size": {
-      "description": "Tamaño en píxeles de la fuente de la terminal.",
-      "label": "Tamaño de letra"
-    },
-    "footer": {
-      "description": "Muestra el tiempo transcurrido y la barra de progreso.",
-      "label": "Barra de tiempo"
-    },
-    "ghost": {
-      "description": "Atenúa ligeramente el bloque mientras se mueve para un acabado más suave.",
-      "label": "Transiciones suaves"
-    },
-    "glyph": {
-      "description": "Icono que se muestra en la barra.",
-      "label": "Icono de la barra"
-    },
-    "header": {
-      "description": "Muestra el título, el artista y las etiquetas de estado.",
-      "label": "Cabecera"
-    },
-    "height": {
-      "description": "Alto de la ventana de terminal en píxeles.",
-      "label": "Alto de la ventana"
-    },
-    "hints": {
-      "description": "Muestra los atajos de teclado abajo.",
-      "label": "Atajos de teclado"
-    },
-    "karaoke": {
-      "description": "Ilumina la línea activa carácter a carácter según avanza la canción.",
-      "label": "Efecto karaoke"
-    },
-    "marker": {
-      "description": "Muestra un marcador junto a la línea que se está cantando.",
-      "label": "Marca de la línea activa"
-    },
-    "offset_ms": {
-      "description": "Desplaza la letra en milisegundos para afinar la sincronía.",
-      "label": "Desfase de la letra"
-    },
-    "spacing": {
-      "description": "Filas en blanco entre letras (1 = compacto, 2 = aireado).",
-      "label": "Separación entre líneas"
-    },
-    "width": {
-      "description": "Ancho de la ventana de terminal en píxeles.",
-      "label": "Ancho de la ventana"
-    }
-  },
-  "subtitle": "No está sonando nada",
-  "title": "Carrusel de letras",
-  "tooltip": "Carrusel de letras",
-  "up": "arriba"
+  "render_mode": "Renderizado",
+  "mode_text": "texto",
+  "mode_image": "imagen",
+  "direction": "Sentido",
+  "down": "abajo",
+  "up": "arriba",
+  "karaoke": "Efecto karaoke",
+  "marker": "Marca de la línea activa",
+  "header": "Cabecera (título / artista)",
+  "footer": "Barra de tiempo",
+  "hints": "Atajos de teclado",
+  "equalizer": "Visualizador de sonido",
+  "ghost": "Transiciones suaves",
+  "active_scale": "Tamaño de la línea activa",
+  "visible_above": "Renglones arriba",
+  "visible_below": "Renglones abajo",
+  "accent": "Color de la línea activa",
+  "accent_primary": "primario",
+  "accent_green": "verde",
+  "accent_yellow": "amarillo",
+  "accent_blue": "azul",
+  "accent_magenta": "magenta",
+  "accent_cyan": "cian",
+  "accent_red": "rojo",
+  "accent_custom": "custom",
+  "anchor": "Posición de la ventana",
+  "anchor_top_left": "sup izq",
+  "anchor_top_center": "sup centro",
+  "anchor_top_right": "sup der",
+  "anchor_left_center": "izq centro",
+  "anchor_center": "centro",
+  "anchor_right_center": "der centro",
+  "anchor_bottom_left": "inf izq",
+  "anchor_bottom_center": "inf centro",
+  "anchor_bottom_right": "inf der",
+  "width": "Ancho",
+  "height": "Alto",
+  "font_size": "Tamaño",
+  "image_only_fonts": "Solo en modo imagen (proporcionales):",
+  "hint": "Los cambios se aplican en caliente. En modo texto la tipografía reinicia la ventana.",
+  "settings.font_family.label": "Tipografía",
+  "settings.font_family.description": "Fuente de la letra. En modo imagen admite cualquier fuente; en modo texto kitty solo acepta monoespaciadas.",
+  "settings.font_size.label": "Tamaño de letra",
+  "settings.font_size.description": "Tamaño en píxeles de la letra.",
+  "settings.render_mode.label": "Modo de renderizado",
+  "settings.render_mode.description": "Texto: lo dibuja la terminal. Imagen: se dibuja con Pillow, permite otros tamaños de letra y cualquier tipografía.",
+  "settings.direction.label": "Sentido del carrusel",
+  "settings.direction.description": "Abajo: las letras entran por arriba. Arriba: las letras entran por abajo.",
+  "settings.direction.down": "Abajo",
+  "settings.direction.up": "Arriba",
+  "settings.marker.label": "Marca de la línea activa",
+  "settings.marker.description": "Muestra un marcador junto a la línea que se está cantando.",
+  "settings.karaoke.label": "Efecto karaoke",
+  "settings.karaoke.description": "Ilumina la línea activa carácter a carácter según avanza la canción.",
+  "settings.equalizer.label": "Visualizador de sonido",
+  "settings.equalizer.description": "Muestra las barras animadas.",
+  "settings.footer.label": "Barra de tiempo",
+  "settings.footer.description": "Muestra el tiempo transcurrido y la barra de progreso.",
+  "settings.hints.label": "Atajos de teclado",
+  "settings.hints.description": "Muestra los atajos de teclado abajo.",
+  "settings.header.label": "Cabecera",
+  "settings.header.description": "Muestra el título, el artista y las etiquetas de estado.",
+  "settings.spacing.label": "Separación entre líneas",
+  "settings.spacing.description": "Filas en blanco entre letras (modo texto).",
+  "settings.animation_ms.label": "Transición",
+  "settings.animation_ms.description": "Duración del desplazamiento entre líneas, en milisegundos. 0 = instantáneo.",
+  "settings.ghost.label": "Transiciones suaves",
+  "settings.ghost.description": "Atenúa el bloque mientras se mueve para un acabado más suave.",
+  "settings.offset_ms.label": "Desfase de la letra",
+  "settings.offset_ms.description": "Desplaza la letra en milisegundos para afinar la sincronía.",
+  "settings.width.label": "Ancho de la ventana",
+  "settings.width.description": "Ancho de la ventana de terminal en píxeles.",
+  "settings.height.label": "Alto de la ventana",
+  "settings.height.description": "Alto de la ventana de terminal en píxeles.",
+  "settings.anchor.label": "Posición de la ventana",
+  "settings.anchor.description": "Dónde se abre la ventana: center, top-left, bottom-right...",
+  "settings.accent.label": "Color de la línea activa",
+  "settings.accent.description": "El color primario sigue al fondo de pantalla; el resto son colores ANSI del tema.",
+  "settings.custom_color.label": "Color personalizado",
+  "settings.custom_color.description": "Color hexadecimal (#rrggbb) cuando el acento es «custom».",
+  "settings.active_scale.label": "Tamaño de la línea activa",
+  "settings.active_scale.description": "Multiplicador de tamaño de la línea que se está cantando (solo modo imagen).",
+  "settings.visible_above.label": "Renglones visibles arriba",
+  "settings.visible_below.label": "Renglones visibles abajo",
+  "settings.visible_above.description": "Cuántos renglones se muestran por encima de la línea activa.",
+  "settings.visible_below.description": "Cuántos renglones se muestran por debajo de la línea activa.",
+  "settings.glyph.label": "Icono de la barra",
+  "settings.glyph.description": "Icono que se muestra en la barra."
 }

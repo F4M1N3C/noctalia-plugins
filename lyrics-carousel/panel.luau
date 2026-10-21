@@ -1,15 +1,25 @@
 --!nonstrict
 -- Panel del carrusel de letras: abre la ventana flotante y ofrece
--- interruptores rápidos que se guardan en el fichero de overrides.
+-- interruptores rápidos.
 --
--- Precedencia de los ajustes:
---   overrides.json  >  settings.toml (plugin_settings)  >  valores por defecto
--- El script de Python lee los mismos tres sitios, así que los cambios se
+-- Los ajustes viven en el settings.toml de Noctalia
+-- (`plugin_settings."faminec/lyrics-carousel"`), que es la misma fuente que
+-- usa la página de ajustes del plugin. El panel escribe ahí con un helper
+-- Python y recarga la configuración, así que ambos sitios siempre coinciden.
+-- El script de Python lee ese mismo fichero, por lo que los cambios se
 -- aplican en caliente a la ventana que ya esté abierta.
+--
+-- Todas las llamadas a la API de Noctalia van envueltas en `safe`: si una de
+-- ellas falla (permisos, disco lleno, API que no existe) el panel avisa en
+-- lugar de reventar el script.
+
+local PLUGIN_ID = "faminec/lyrics-carousel"
+local SECTION = '[plugin_settings."faminec/lyrics-carousel"]'
 
 local DEFAULTS = {
   font_family = "Departure Mono",
   font_size = 22,
+  render_mode = "image",
   direction = "down",
   marker = false,
   karaoke = true,
@@ -24,12 +34,18 @@ local DEFAULTS = {
   width = 1200,
   height = 820,
   anchor = "center",
+  accent = "primary",
+  custom_color = "#e46767",
+  active_scale = 1.35,
+  visible_above = 6,
+  visible_below = 6,
 }
 
 local BOOL_KEYS = { marker = true, karaoke = true, equalizer = true, footer = true, hints = true, header = true, ghost = true }
-local INT_KEYS = { font_size = true, spacing = true, animation_ms = true, offset_ms = true, width = true, height = true }
+local INT_KEYS = { font_size = true, spacing = true, animation_ms = true, offset_ms = true, width = true, height = true, visible_above = true, visible_below = true }
+local FLOAT_KEYS = { active_scale = true }
 
--- Solo fuentes monoespaciadas: kitty descarta las proporcionales.
+-- Solo monoespaciadas las acepta kitty; las demas solo valen en modo imagen.
 local FONT_CHOICES = {
   "Departure Mono",
   "Press Start 2P",
@@ -39,76 +55,188 @@ local FONT_CHOICES = {
   "IBM Plex Mono",
 }
 
-local overrides = {}
+local IMAGE_ONLY_FONTS = {
+  "Nothing Font (5x7)",
+  "Ndot 57",
+  "Ndot 55",
+  "Space Grotesk",
+  "NType 82",
+}
+
+local ACCENT_CHOICES = { "primary", "green", "yellow", "blue", "magenta", "cyan", "red", "custom" }
+
+local settings = {}
+local pending = {}
+local generation = 0
 local trackTitle = ""
 local trackArtist = ""
 local launching = false
+local lastError = ""
 
 local function tr(key, args)
-  return noctalia.tr(key, args)
-end
-
-local function dataDir()
-  return noctalia.pluginDataDir() or (noctalia.getenv("HOME") or "") .. "/.local/state/noctalia/plugins/data/faminec/lyrics-carousel"
-end
-
-local function overridePath()
-  return dataDir() .. "/overrides.json"
-end
-
-local function loadOverrides()
-  local raw = noctalia.readFile(overridePath())
-  if raw == nil or raw == "" then
-    overrides = {}
-    return
+  local ok, value = pcall(noctalia.tr, key, args)
+  if ok and type(value) == "string" then
+    return value
   end
-  local ok, data = pcall(noctalia.json.decode, raw)
-  if ok and type(data) == "table" then
-    overrides = data
-  else
-    overrides = {}
+  return key
+end
+
+-- --------------------------------------------------------- API protegida --
+
+-- Envuelve una llamada a la API de Noctalia: si falla, se avisa y se sigue.
+local function safe(label, fn, ...)
+  local args = { ... }
+  local ok, result = pcall(fn, table.unpack(args))
+  if not ok then
+    lastError = tr("write_failed")
+    noctalia.log("lyrics-carousel: " .. label .. ": " .. tostring(result))
+    return nil
+  end
+  return result
+end
+
+-- Cierra el panel sin reventar si la API falla.
+local function closePanel()
+  local ok, error = pcall(function()
+    panel.close()
+  end)
+  if not ok then
+    safe("log", noctalia.log, "lyrics-carousel: close: " .. tostring(error))
   end
 end
 
-local function saveOverrides()
-  local dir = dataDir()
-  noctalia.mkdirAll(dir)
-  noctalia.writeFile(overridePath(), noctalia.json.encode(overrides))
+local function reportError(message)
+  lastError = tostring(message or tr("write_failed"))
+  safe("log", noctalia.log, "lyrics-carousel: " .. lastError)
 end
 
-local function baseValue(key)
-  local value = noctalia.getConfig(key)
+local function runAsync(argv, callback)
+  local ok, started = pcall(noctalia.runAsync, argv, callback)
+  if not ok then
+    reportError(started)
+    return false
+  end
+  if started == false then
+    reportError(tr("write_failed"))
+    return false
+  end
+  return true
+end
+
+-- ------------------------------------------------------------- ajustes
+
+local function settingsPath()
+  return (noctalia.getenv("HOME") or "") .. "/.local/state/noctalia/settings.toml"
+end
+
+local function parseValue(value)
+  if value == "true" then
+    return true
+  elseif value == "false" then
+    return false
+  end
+  local number = tonumber(value)
+  if number ~= nil then
+    return number
+  end
+  return value
+end
+
+local function refreshSettings()
+  settings = {}
+end
+
+local function valueOf(key)
+  local value = settings[key]
+  if value == nil then
+    value = safe("getConfig", noctalia.getConfig, key)
+  end
   if value == nil then
     return DEFAULTS[key]
   end
   return value
 end
 
-local function effective(key)
-  local value = overrides[key]
-  if value == nil then
-    value = baseValue(key)
-  end
-  if BOOL_KEYS[key] then
-    return value == true
-  end
-  if INT_KEYS[key] then
-    return tonumber(value) or DEFAULTS[key]
-  end
-  return value
+local function boolOf(key)
+  return valueOf(key) == true
 end
 
-local function setOverride(key, value)
-  overrides[key] = value
-  saveOverrides()
+local function numberOf(key)
+  return tonumber(valueOf(key)) or DEFAULTS[key]
+end
+
+-- Escribe los cambios pendientes y recarga la configuración de Noctalia.
+local function flush()
+  if next(pending) == nil then
+    return
+  end
+  local pluginDir = safe("pluginDir", noctalia.pluginDir) or ""
+  local argv = { "python3", pluginDir .. "/bin/set-setting.py" }
+  local keys = {}
+  for key in pairs(pending) do
+    keys[#keys + 1] = key
+  end
+  table.sort(keys)
+  for _, key in ipairs(keys) do
+    local item = pending[key]
+    local kind = "string"
+    if BOOL_KEYS[key] then
+      kind = "bool"
+    elseif INT_KEYS[key] then
+      kind = "int"
+    elseif FLOAT_KEYS[key] then
+      kind = "float"
+    end
+    argv[#argv + 1] = key
+    argv[#argv + 1] = tostring(item.value)
+    argv[#argv + 1] = kind
+  end
+  pending = {}
+  runAsync(argv, function(result)
+    if result == nil or result.exitCode ~= 0 then
+      local detail = ""
+      if type(result) == "table" then
+        detail = tostring(result.stderr or "")
+      end
+      reportError(detail ~= "" and detail or tr("write_failed"))
+      render()
+      return
+    end
+    lastError = ""
+    runAsync({ "noctalia", "msg", "config-reload" }, function()
+      -- Noctalia ya tiene el valor en memoria: se limpia la caché local.
+      settings = {}
+      render()
+    end)
+  end)
+end
+
+local function setSetting(key, value, options)
+  options = options or {}
+  pending[key] = { value = value }
+  settings[key] = value
+  generation = generation + 1
+  local current = generation
+  runAsync({ "sleep", "0.35" }, function()
+    if current ~= generation then
+      return
+    end
+    flush()
+    if options.relaunch then
+      launch()
+    end
+    if options.geometry then
+      applyGeometry()
+    end
+  end)
   render()
 end
 
 local function toggleKey(key)
-  setOverride(key, not effective(key))
+  setSetting(key, not boolOf(key))
 end
 
--- ---------------------------------------------------------------- launching
+-- ---------------------------------------------------------------- lanzar
 
 local function shellQuote(value)
   return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
@@ -142,6 +270,7 @@ local ANCHOR_ALIASES = {
   ["left"] = "left-center",
   ["leftcenter"] = "left-center",
   ["middle"] = "center",
+  ["centre"] = "center",
   ["centro"] = "center",
   ["right"] = "right-center",
   ["rightcenter"] = "right-center",
@@ -166,7 +295,7 @@ local function normalizeAnchor(value)
 end
 
 local function outputGeometry()
-  local outputs = noctalia.outputs() or {}
+  local outputs = safe("outputs", noctalia.outputs) or {}
   local chosen = nil
   for _, output in ipairs(outputs) do
     if output.focused then
@@ -207,15 +336,16 @@ local function anchorPosition(anchor, width, height, screenWidth, screenHeight)
 end
 
 local function dispatch(expression, callback)
-  local started = noctalia.runAsync({ "hyprctl", "dispatch", expression }, function(result)
-    if result.exitCode ~= 0 then
-      local detail = result.stderr or result.stdout or ""
-      if detail ~= nil and detail ~= "" then
-        noctalia.log("lyrics-carousel: " .. tostring(detail))
+  local started = runAsync({ "hyprctl", "dispatch", expression }, function(result)
+    if result == nil or result.exitCode ~= 0 then
+      local detail = ""
+      if type(result) == "table" then
+        detail = tostring(result.stderr or result.stdout or "")
       end
+      safe("log", noctalia.log, "lyrics-carousel: " .. detail)
     end
     if callback ~= nil then
-      callback(result.exitCode == 0)
+      callback(result ~= nil and result.exitCode == 0)
     end
   end)
   if not started and callback ~= nil then
@@ -223,24 +353,50 @@ local function dispatch(expression, callback)
   end
 end
 
+-- Mueve y redimensiona la ventana existente sin recrearla.
+local function applyGeometry()
+  local width = math.floor(numberOf("width"))
+  local height = math.floor(numberOf("height"))
+  local screenWidth, screenHeight = outputGeometry()
+  local x, y = anchorPosition(normalizeAnchor(valueOf("anchor")), width, height, screenWidth, screenHeight)
+  local window = "class:^noctalia-lyrics-carousel$"
+  local resize = string.format(
+    'hl.dsp.window.resize({ x = %d, y = %d, window = "%s" })', width, height, window
+  )
+  local move = string.format(
+    'hl.dsp.window.move({ x = %d, y = %d, window = "%s" })', x, y, window
+  )
+  dispatch(resize, function()
+    dispatch(move)
+  end)
+end
+
 local function launch()
   if launching then
     return
   end
   launching = true
-  local family = tostring(effective("font_family") or DEFAULTS.font_family)
-  local size = tonumber(effective("font_size")) or DEFAULTS.font_size
-  local width = tonumber(effective("width")) or DEFAULTS.width
-  local height = tonumber(effective("height")) or DEFAULTS.height
-  local anchor = normalizeAnchor(effective("anchor"))
+  -- Watchdog: si la ventana no llega a crearse, el botón no se queda muerto.
+  runAsync({ "sleep", "6" }, function()
+    if launching then
+      launching = false
+      render()
+    end
+  end)
+  refreshSettings()
+  local family = tostring(valueOf("font_family"))
+  local size = math.floor(numberOf("font_size"))
+  local width = math.floor(numberOf("width"))
+  local height = math.floor(numberOf("height"))
+  local anchor = normalizeAnchor(valueOf("anchor"))
 
   local screenWidth, screenHeight = outputGeometry()
   local x, y = anchorPosition(anchor, width, height, screenWidth, screenHeight)
 
   local command = string.format(
-    "kitty -o confirm_os_window_close=0 -o font_family=%s -o font_size=%d --class noctalia-term-lyrics --title lyrics -e sh -lc %s",
+    "kitty -o confirm_os_window_close=0 -o font_family=%s -o font_size=%d --class noctalia-lyrics-carousel --title lyrics -e sh -lc %s",
     shellQuote(family),
-    math.floor(size),
+    size,
     shellQuote("lyrics-carousel")
   )
   local rules = string.format(
@@ -250,73 +406,145 @@ local function launch()
   local expression = string.format("hl.dsp.exec_cmd(%s, %s)", luaQuote(command), rules)
 
   -- Reinicia la ventana anterior para que recoja la tipografía nueva.
-  noctalia.runAsync({ "pkill", "-f", "noctalia-term-lyrics --title lyrics" }, function()
-    noctalia.runAsync({ "sleep", "0.25" }, function()
-      dispatch(expression, function(ok)
-        launching = false
-        if not ok then
-          noctalia.notifyError(tr("title"), tr("launch_failed"))
-        else
-          panel.close()
-        end
+  local started = runAsync(
+    { "pkill", "-f", "noctalia-lyrics-carousel --title lyrics" },
+    function()
+      local ok = runAsync({ "sleep", "0.25" }, function()
+        dispatch(expression, function(success)
+          launching = false
+          if not success then
+            safe("notifyError", noctalia.notifyError, tr("title"), tr("launch_failed"))
+          else
+            closePanel()
+          end
+        end)
       end)
-    end)
-  end)
+      if not ok then
+        launching = false
+        dispatch(expression, function(success)
+          if not success then
+            safe("notifyError", noctalia.notifyError, tr("title"), tr("launch_failed"))
+          else
+            closePanel()
+          end
+        end)
+        render()
+      end
+    end
+  )
+  if not started then
+    launching = false
+    render()
+  end
 end
 
--- ------------------------------------------------------------------- mp3 info
+-- ------------------------------------------------------------- cancion
 
 local function readTrack()
-  noctalia.runAsync({ "playerctl", "-a", "metadata", "--format", "{{title}}\t{{artist}}" }, function(result)
-    if result.exitCode ~= 0 or result.stdout == nil or result.stdout == "" then
+  local format = "{{playerInstance}}\t{{status}}\t{{title}}\t{{artist}}"
+  runAsync({ "playerctl", "-a", "metadata", "--format", format }, function(result)
+    if result == nil or result.exitCode ~= 0 or result.stdout == nil or result.stdout == "" then
       trackTitle = ""
       trackArtist = ""
       render()
       return
     end
-    local first = result.stdout:split("\n")[1] or ""
-    local parts = {}
-    for part in first:gmatch("[^\t]+") do
-      parts[#parts + 1] = part
+    local playing = nil
+    local fallback = nil
+    for line in result.stdout:gmatch("[^\n]+") do
+      local parts = {}
+      for part in line:gmatch("[^\t]+") do
+        parts[#parts + 1] = part
+      end
+      if #parts >= 4 then
+        local entry = { title = parts[3], artist = parts[4] }
+        if parts[2] == "Playing" and playing == nil then
+          playing = entry
+        elseif fallback == nil and entry.title ~= "" then
+          fallback = entry
+        end
+      end
     end
-    trackTitle = parts[1] or ""
-    trackArtist = parts[2] or ""
+    local chosen = playing or fallback
+    trackTitle = chosen and chosen.title or ""
+    trackArtist = chosen and chosen.artist or ""
     render()
   end)
 end
 
--- --------------------------------------------------------------------- UI
+-- -------------------------------------------------------------------- UI
 
 local function toggleRow(key, label, glyph)
   return ui.row({ align = "center", gap = 10, paddingH = 4, padding = 4 }, {
     ui.glyph({ name = glyph, size = 14, color = "on_surface_variant" }),
     ui.label({ text = label, fontSize = 12, color = "on_surface", flexGrow = 1 }),
     ui.toggle({
-      checked = effective(key),
+      checked = boolOf(key),
       onChange = function(value)
-        setOverride(key, value == true)
+        setSetting(key, value == true)
       end,
     }),
   })
 end
 
+local function chipRow(items)
+  local chips = {}
+  for _, item in ipairs(items) do
+    table.insert(chips, ui.button({
+      key = item.key,
+      text = item.text,
+      variant = item.selected and "tonal" or "ghost",
+      fontSize = 11,
+      onClick = item.onClick,
+    }))
+  end
+  return ui.row({ gap = 6 }, chips)
+end
+
 local function fontChips()
-  local current = tostring(effective("font_family"))
+  local current = tostring(valueOf("font_family"))
   local rows = {}
   local row = {}
-  for index, name in ipairs(FONT_CHOICES) do
-    local selected = name == current
+  local index = 0
+  for _, name in ipairs(FONT_CHOICES) do
+    index = index + 1
     table.insert(row, ui.button({
       key = "font-" .. name,
       text = name,
-      variant = selected and "tonal" or "ghost",
+      variant = name == current and "tonal" or "ghost",
       fontSize = 11,
       onClick = function()
-        setOverride("font_family", name)
-        launch()
+        setSetting("font_family", name, { relaunch = tostring(valueOf("render_mode")) == "text" })
       end,
     }))
-    if index % 3 == 0 and index < #FONT_CHOICES then
+    if index % 3 == 0 then
+      table.insert(rows, ui.row({ gap = 6 }, row))
+      row = {}
+    end
+  end
+  if #row > 0 then
+    table.insert(rows, ui.row({ gap = 6 }, row))
+  end
+  return ui.column({ gap = 6 }, rows)
+end
+
+local function imageOnlyFonts()
+  local current = tostring(valueOf("font_family"))
+  local rows = {}
+  local row = {}
+  local index = 0
+  for _, name in ipairs(IMAGE_ONLY_FONTS) do
+    index = index + 1
+    table.insert(row, ui.button({
+      key = "font-img-" .. name,
+      text = name,
+      variant = name == current and "tonal" or "ghost",
+      fontSize = 11,
+      onClick = function()
+        setSetting("font_family", name, { relaunch = tostring(valueOf("render_mode")) == "text" })
+      end,
+    }))
+    if index % 2 == 0 then
       table.insert(rows, ui.row({ gap = 6 }, row))
       row = {}
     end
@@ -328,26 +556,126 @@ local function fontChips()
 end
 
 local function sizeChips()
-  local chips = {}
-  local current = tonumber(effective("font_size"))
-  for _, size in ipairs({ 14, 18, 22, 26, 30 }) do
-    local selected = size == current
-    table.insert(chips, ui.button({
+  local current = math.floor(numberOf("font_size"))
+  local items = {}
+  for _, size in ipairs({ 11, 14, 18, 22, 26, 33 }) do
+    table.insert(items, {
       key = "size-" .. size,
       text = tostring(size),
-      variant = selected and "tonal" or "ghost",
-      fontSize = 11,
+      selected = size == current,
       onClick = function()
-        setOverride("font_size", size)
-        launch()
+        setSetting("font_size", size, { relaunch = tostring(valueOf("render_mode")) == "text" })
+      end,
+    })
+  end
+  return chipRow(items)
+end
+
+local function scaleChips()
+  local current = numberOf("active_scale")
+  local items = {}
+  for _, value in ipairs({ 1.0, 1.2, 1.35, 1.6, 2.0 }) do
+    table.insert(items, {
+      key = "scale-" .. tostring(value),
+      text = string.format("%.2f", value),
+      selected = math.abs(current - value) < 0.01,
+      onClick = function()
+        setSetting("active_scale", value)
+      end,
+    })
+  end
+  return chipRow(items)
+end
+
+local function countChips(key, label)
+  local current = math.floor(numberOf(key))
+  local items = {}
+  for _, value in ipairs({ 0, 2, 4, 6, 8, 12 }) do
+    table.insert(items, {
+      key = key .. "-" .. value,
+      text = tostring(value),
+      selected = value == current,
+      onClick = function()
+        setSetting(key, value)
+      end,
+    })
+  end
+  return ui.column({ gap = 4 }, {
+    ui.label({ text = label, fontSize = 11, color = "on_surface_variant" }),
+    chipRow(items),
+  })
+end
+
+local function accentChips()
+  local current = tostring(valueOf("accent"))
+  local items = {}
+  for _, name in ipairs(ACCENT_CHOICES) do
+    table.insert(items, {
+      key = "accent-" .. name,
+      text = tr("accent_" .. name),
+      selected = name == current,
+      onClick = function()
+        setSetting("accent", name)
+      end,
+    })
+  end
+  return ui.column({ gap = 4 }, {
+    chipRow(items),
+  })
+end
+
+local ANCHOR_CHOICES = {
+  "top-left", "top-center", "top-right",
+  "left-center", "center", "right-center",
+  "bottom-left", "bottom-center", "bottom-right",
+}
+
+local function anchorChips()
+  local current = normalizeAnchor(valueOf("anchor"))
+  local rows = {}
+  local row = {}
+  local index = 0
+  for _, name in ipairs(ANCHOR_CHOICES) do
+    index = index + 1
+    table.insert(row, ui.button({
+      key = "anchor-" .. name,
+      text = tr("anchor_" .. name:gsub("-", "_")),
+      variant = name == current and "tonal" or "ghost",
+      fontSize = 10,
+      onClick = function()
+        setSetting("anchor", name, { geometry = true })
       end,
     }))
+    if index % 3 == 0 then
+      table.insert(rows, ui.row({ gap = 6 }, row))
+      row = {}
+    end
   end
-  return ui.row({ gap = 6 }, chips)
+  if #row > 0 then
+    table.insert(rows, ui.row({ gap = 6 }, row))
+  end
+  return ui.column({ gap = 6 }, rows)
+end
+
+local function windowSizeChips(key, values)
+  local current = math.floor(numberOf(key))
+  local items = {}
+  for _, value in ipairs(values) do
+    table.insert(items, {
+      key = key .. "-" .. value,
+      text = tostring(value),
+      selected = value == current,
+      onClick = function()
+        setSetting(key, value, { geometry = true })
+      end,
+    })
+  end
+  return chipRow(items)
 end
 
 function render()
-  local direction = tostring(effective("direction"))
+  local direction = tostring(valueOf("direction"))
+  local mode = tostring(valueOf("render_mode"))
   local subtitle = tr("subtitle")
   if trackTitle ~= "" then
     subtitle = trackTitle
@@ -366,7 +694,7 @@ function render()
         variant = "ghost",
         tooltip = tr("open_settings"),
         onClick = function()
-          noctalia.openSettings()
+          safe("openSettings", noctalia.openSettings)
         end,
       }),
       ui.button({
@@ -375,7 +703,7 @@ function render()
         variant = "ghost",
         tooltip = tr("close"),
         onClick = function()
-          panel.close()
+          closePanel()
         end,
       }),
     }),
@@ -389,6 +717,28 @@ function render()
     ui.separator({ thickness = 1, color = "outline/0.25", spacing = 6 }),
     ui.label({ text = tr("section_display"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     ui.row({ align = "center", gap = 10, paddingH = 4, padding = 4 }, {
+      ui.glyph({ name = "layers", size = 14, color = "on_surface_variant" }),
+      ui.label({ text = tr("render_mode"), fontSize = 12, color = "on_surface", flexGrow = 1 }),
+      ui.button({
+        key = "mode-text",
+        text = tr("mode_text"),
+        variant = mode == "text" and "tonal" or "ghost",
+        fontSize = 11,
+        onClick = function()
+          setSetting("render_mode", "text")
+        end,
+      }),
+      ui.button({
+        key = "mode-image",
+        text = tr("mode_image"),
+        variant = mode == "image" and "tonal" or "ghost",
+        fontSize = 11,
+        onClick = function()
+          setSetting("render_mode", "image")
+        end,
+      }),
+    }),
+    ui.row({ align = "center", gap = 10, paddingH = 4, padding = 4 }, {
       ui.glyph({ name = "arrow-down-up", size = 14, color = "on_surface_variant" }),
       ui.label({ text = tr("direction"), fontSize = 12, color = "on_surface", flexGrow = 1 }),
       ui.button({
@@ -397,7 +747,7 @@ function render()
         variant = direction == "down" and "tonal" or "ghost",
         fontSize = 11,
         onClick = function()
-          setOverride("direction", "down")
+          setSetting("direction", "down")
         end,
       }),
       ui.button({
@@ -406,7 +756,7 @@ function render()
         variant = direction == "up" and "tonal" or "ghost",
         fontSize = 11,
         onClick = function()
-          setOverride("direction", "up")
+          setSetting("direction", "up")
         end,
       }),
     }),
@@ -418,40 +768,80 @@ function render()
     toggleRow("equalizer", tr("equalizer"), "audio-lines"),
     toggleRow("ghost", tr("ghost"), "sparkles"),
     ui.separator({ thickness = 1, color = "outline/0.25", spacing = 6 }),
+    ui.label({ text = tr("section_lyrics"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
+    ui.column({ gap = 4 }, {
+      ui.label({ text = tr("active_scale"), fontSize = 11, color = "on_surface_variant" }),
+      scaleChips(),
+    }),
+    ui.row({ gap = 10 }, {
+      ui.column({ flexGrow = 1, gap = 4 }, { countChips("visible_above", tr("visible_above")) }),
+      ui.column({ flexGrow = 1, gap = 4 }, { countChips("visible_below", tr("visible_below")) }),
+    }),
+    ui.column({ gap = 4 }, {
+      ui.label({ text = tr("accent"), fontSize = 11, color = "on_surface_variant" }),
+      accentChips(),
+    }),
+    ui.separator({ thickness = 1, color = "outline/0.25", spacing = 6 }),
+    ui.label({ text = tr("section_window"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
+    ui.label({ text = tr("anchor"), fontSize = 11, color = "on_surface_variant" }),
+    anchorChips(),
+    ui.row({ gap = 10 }, {
+      ui.column({ flexGrow = 1, gap = 4 }, {
+        ui.label({ text = tr("width"), fontSize = 11, color = "on_surface_variant" }),
+        windowSizeChips("width", { 800, 1000, 1200, 1400, 1600 }),
+      }),
+      ui.column({ flexGrow = 1, gap = 4 }, {
+        ui.label({ text = tr("height"), fontSize = 11, color = "on_surface_variant" }),
+        windowSizeChips("height", { 600, 700, 820, 1000 }),
+      }),
+    }),
+    ui.separator({ thickness = 1, color = "outline/0.25", spacing = 6 }),
     ui.label({ text = tr("section_font"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     fontChips(),
-    ui.row({ align = "center", gap = 8 }, {
-      ui.label({ text = tr("font_size"), fontSize = 11, color = "on_surface_variant" }),
-      sizeChips(),
-    }),
+    ui.label({ text = tr("font_size"), fontSize = 11, color = "on_surface_variant" }),
+    sizeChips(),
+    ui.label({ text = tr("image_only_fonts"), fontSize = 10, color = "on_surface_variant" }),
+    imageOnlyFonts(),
     ui.label({ text = tr("hint"), fontSize = 10, color = "on_surface_variant" }),
   }
 
-  panel.render(ui.column({ flexGrow = 1, gap = 8, align = "stretch" }, rows))
+  if lastError ~= "" then
+    table.insert(rows, ui.label({ text = lastError, fontSize = 10, color = "error" }))
+  end
+
+  panel.render(ui.column({ flexGrow = 1, gap = 8, align = "stretch" }, {
+    ui.scroll({ flexGrow = 1, gap = 8 }, rows),
+  }))
 end
 
 function onOpen()
-  loadOverrides()
+  refreshSettings()
   readTrack()
   render()
 end
 
 function onClose()
+  flush()
 end
 
 function onConfigChanged()
-  loadOverrides()
+  settings = {}
   render()
 end
 
 function onIpc(event, payload)
   if event == "launch" then
     launch()
+  elseif event == "toggle" then
+    -- Alterna un ajuste booleano: toggle marker
+    if type(payload) == "string" and BOOL_KEYS[payload] then
+      toggleKey(payload)
+    end
   elseif event == "refresh" then
-    loadOverrides()
+    settings = {}
     readTrack()
     render()
   end
 end
 
-loadOverrides()
+refreshSettings()

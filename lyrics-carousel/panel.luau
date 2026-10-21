@@ -227,7 +227,9 @@ local function setSetting(key, value, options)
   settings[key] = value
   generation = generation + 1
   local current = generation
-  runAsync({ "sleep", "0.35" }, function()
+  -- Margen para agrupar varios cambios seguidos en una sola recarga de la
+  -- configuración (recargar re-crea todos los plugins).
+  runAsync({ "sleep", "1.2" }, function()
     if current ~= generation then
       return
     end

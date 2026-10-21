@@ -8,7 +8,7 @@ local TAB = "actions"
 local PANEL = "faminec/cmf-buds:panel-actions"
 
 function onOpen(context)
-  P.setup(TAB, PANEL)
+  P.setup(TAB, PANEL, 1040)
   P.onOpen(context)
 end
 

@@ -15,6 +15,8 @@ local pluginPath = noctalia.pluginDir() or ""
 local st = nil
 local tab = "sound"
 local panelId = "faminec/cmf-buds:panel"
+local panelHeight = 0
+local wheelAdjust = true
 local ctrlGroup = "left"
 local lastRaw = nil
 local loading = true
@@ -24,6 +26,7 @@ local errorText = ""
 local customDirty = false
 local localRules = {}
 local localLast = {}
+local localAction = {}
 local localMods = {}
 local localModsOk = false
 
@@ -81,8 +84,11 @@ local function syncLocal()
   if la.rules ~= nil then
     localRules = la.rules
   end
-  if la.last ~= nil then
-    localLast = la.last
+  if la.last_event ~= nil then
+    localLast = la.last_event
+  end
+  if la.last_action ~= nil then
+    localAction = la.last_action
   end
   if la.modifiers ~= nil then
     localMods = la.modifiers
@@ -455,6 +461,8 @@ local function volumeCard()
     step = 1,
     value = percent,
     flexGrow = 1,
+    -- Noctalia (con el parche) ajusta el valor con la rueda del raton.
+    wheelAdjustEnabled = wheelAdjust,
     onChange = function(value)
       dragging = true
       if st ~= nil then
@@ -503,6 +511,7 @@ local function customSlider(labelKey, key)
       step = 1,
       value = value,
       flexGrow = 1,
+      wheelAdjustEnabled = wheelAdjust,
       onChange = function(newValue)
         dragging = true
         customDirty = true
@@ -935,28 +944,36 @@ local function shortcutsTab()
     end,
   }))
 
+  local function modsText(list)
+    if list == nil or #list == 0 then
+      return ""
+    end
+    local names = {}
+    for _, m in ipairs(list) do
+      table.insert(names, m:upper())
+    end
+    return " + " .. table.concat(names, "+")
+  end
+
   local lastText = tr("shortcut.none")
   if localLast ~= nil and localLast.trigger ~= nil then
-    local mods = ""
-    if localLast.modifiers ~= nil and #localLast.modifiers > 0 then
-      local names = {}
-      for _, m in ipairs(localLast.modifiers) do
-        table.insert(names, m:upper())
-      end
-      mods = " + " .. table.concat(names, "+")
-    end
     lastText = tr("shortcut.last", {
       trigger = tostring(localLast.trigger),
       presses = tostring(localLast.presses or 1),
-      modifiers = mods,
-      command = localLast.command or tr("shortcut.none"),
+      modifiers = modsText(localLast.modifiers),
     })
+  end
+
+  local actionText = tr("shortcut.none")
+  if localAction ~= nil and localAction.command ~= nil and localAction.command ~= "" then
+    actionText = tostring(localAction.command)
   end
 
   local modsText = localModsOk and (tr("shortcut.mods_held", { mods = (#localMods > 0) and table.concat(localMods, "+") or "—" })) or tr("shortcut.mods_unavailable")
 
   table.insert(rows, card({
     infoRow("shortcut.last_label", lastText),
+    infoRow("shortcut.last_action_label", actionText),
     infoRow("shortcut.mods_label", modsText),
     ui.label({
       text = tr("shortcut.note"),
@@ -1149,9 +1166,11 @@ end
 
 -- ── API del módulo ───────────────────────────────────────────────────────────
 
-function M.setup(defaultTab, ownPanelId)
+function M.setup(defaultTab, ownPanelId, height)
   tab = defaultTab or "sound"
   panelId = ownPanelId or panelId
+  panelHeight = tonumber(height) or 0
+  wheelAdjust = noctalia.getConfig("wheel_adjust") ~= false
   C.set_last_tab(tab)
 end
 
@@ -1191,10 +1210,17 @@ render = function()
     else
       rows = soundTab()
     end
-    body = ui.column({ gap = 12, align = "stretch" }, rows)
+    -- El scroll evita que el contenido se recorte si una seccion crece
+    -- (por ejemplo al anadir reglas de atajo). Con la ventana bien dimensionada
+    -- no aparece barra de desplazamiento.
+    body = ui.scroll({ gap = 12, align = "stretch", flexGrow = 1 }, rows)
   end
 
-  panel.render(ui.column({ gap = 10, padding = 14, align = "stretch" }, {
+  local rootProps = { gap = 10, padding = 14, align = "stretch" }
+  if panelHeight > 0 then
+    rootProps.height = panelHeight - 28
+  end
+  panel.render(ui.column(rootProps, {
     header(),
     tabBar(),
     body,

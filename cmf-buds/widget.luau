@@ -120,9 +120,6 @@ render = function()
   local connected = st ~= nil and st.connected == true
   local ancMode = st and st.anc and st.anc.mode or "unknown"
 
-  -- Solo el icono: hereda el color de la barra (como el resto de widgets).
-  barWidget.render(ui.glyph({ name = glyph, size = 15 }))
-
   local rows = {
     { C.tr("tooltip.connection"), connected and C.tr("tooltip.connected") or C.tr("tooltip.disconnected") },
     { C.tr("tooltip.anc"), C.anc_label(ancMode, st and st.anc and st.anc.level or nil) },
@@ -133,6 +130,26 @@ render = function()
   if st ~= nil and st.error ~= nil and st.error ~= "" then
     table.insert(rows, { C.tr("tooltip.error"), tostring(st.error) })
   end
+
+  -- El tooltip va en el nodo que hay bajo el puntero: con el arbol
+  -- declarativo, el area-hover es el hijo (no el widget), asi que el
+  -- setTooltip del widget no se veria.
+  local parts = {}
+  for _, row in ipairs(rows) do
+    table.insert(parts, tostring(row[1]) .. ": " .. tostring(row[2]))
+  end
+
+  -- Solo el icono: hereda el color de la barra (como el resto de widgets).
+  local container = barWidget.isVertical() and ui.column or ui.row
+  barWidget.render(container({
+    gap = 0,
+    align = "center",
+    justify = "center",
+    tooltip = table.concat(parts, "\n"),
+  }, {
+    ui.glyph({ name = glyph, size = 15 }),
+  }))
+
   barWidget.setTooltip(rows)
 end
 

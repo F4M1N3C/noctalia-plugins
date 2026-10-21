@@ -8,7 +8,7 @@ local TAB = "sound"
 local PANEL = "faminec/cmf-buds:panel-sound"
 
 function onOpen(context)
-  P.setup(TAB, PANEL)
+  P.setup(TAB, PANEL, 960)
   P.onOpen(context)
 end
 

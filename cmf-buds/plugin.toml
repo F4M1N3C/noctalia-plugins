@@ -10,9 +10,9 @@ plugin_api = 34
 author = "faminec"
 license = "MIT"
 dependencies = ["python3", "bluetoothctl", "pactl"]
-tags = ["audio", "hardware", "utility", "bar", "panel", "service"]
+tags = ["audio", "bluetooth", "cmf", "nothing", "utility"]
 icon = "headphones"
-description = "Full control of the CMF Buds Pro 2: ANC, EQ, Ultra Bass, case gestures, spatial audio and more."
+description = "Control completo de los CMF Buds Pro 2: ANC, EQ, Ultra Bass, gestos del estuche, audio espacial y más."
 
 [[setting]]
 key = "device_name"
@@ -45,6 +45,13 @@ min = 1
 max = 25
 
 [[setting]]
+key = "wheel_adjust"
+type = "bool"
+label_key = "settings.wheel_adjust.label"
+description_key = "settings.wheel_adjust.description"
+default = true
+
+[[setting]]
 key = "poll_seconds"
 type = "int"
 label_key = "settings.poll_seconds.label"
@@ -61,33 +68,33 @@ entry = "widget.luau"
 id = "panel-sound"
 entry = "panel_sound.luau"
 width = 600
-height = 910
+height = 960
 placement = "floating"
-position = "center_right"
+position = "top_center"
 
 [[panel]]
 id = "panel-controls"
 entry = "panel_controls.luau"
 width = 600
-height = 560
+height = 610
 placement = "floating"
-position = "center_right"
+position = "top_center"
 
 [[panel]]
 id = "panel-actions"
 entry = "panel_actions.luau"
 width = 600
-height = 1010
+height = 1040
 placement = "floating"
-position = "center_right"
+position = "top_center"
 
 [[panel]]
 id = "panel-system"
 entry = "panel_system.luau"
 width = 600
-height = 930
+height = 950
 placement = "floating"
-position = "center_right"
+position = "top_center"
 
 [[service]]
 id = "service"

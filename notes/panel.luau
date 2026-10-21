@@ -144,6 +144,8 @@ local function publishCurrent()
   if dir == nil or dir == "" then
     return
   end
+  -- El directorio de datos puede no existir todavia.
+  noctalia.mkdirAll(dir)
   local payload = noctalia.json.encode({
     name = current or "",
     content = current ~= nil and buffer or "",
@@ -484,6 +486,12 @@ end
 
 function onClose()
   flush()
+  -- El panel se cierra: no queda ninguna nota abierta. Se publica para que
+  -- otros plugins no intentan mandar una nota que ya no esta.
+  current = nil
+  buffer = ""
+  noctalia.state.set("notes_current", "")
+  publishCurrent()
 end
 
 function update()

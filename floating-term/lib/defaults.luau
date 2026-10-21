@@ -5,6 +5,9 @@
 -- muestre) y aquí se lee en runtime para tener una única fuente de verdad: si
 -- el manifiesto cambia, el plugin lo sigue sin tocar código.
 --
+-- El manifiesto se analiza una sola vez y se guarda en memoria: el parser es
+-- comparatively caro y Noctalia da a cada callback solo 25 ms de CPU.
+--
 -- Si el manifiesto no se puede leer (formato inesperado, plugin copiado sin
 -- el .toml) se usa la tabla de respaldo para no dejar al usuario sin widgets.
 
@@ -29,6 +32,8 @@ local FALLBACK_LAYOUTS = {
   btop = "top-left, 928x800",
   lavat = "bottom-left, 802x582",
 }
+
+local cached = nil
 
 -- Extrae una tabla inline de TOML: { a = "b", c = "d" }
 -- Respeta las comillas (un valor puede llevar comas o llaves dentro).
@@ -137,9 +142,10 @@ local function parseInlineTable(text)
   end
 end
 
--- Cuenta llaves fuera de comillas.
-local function braceDepth(text)
-  local depth = 0
+-- Variación del número de llaves de una línea, ignorando el texto entre
+-- comillas.
+local function braceDelta(text)
+  local delta = 0
   local quote = nil
   local index = 1
   local length = #text
@@ -154,23 +160,37 @@ local function braceDepth(text)
     elseif char == '"' or char == "'" then
       quote = char
     elseif char == "{" then
-      depth = depth + 1
+      delta = delta + 1
     elseif char == "}" then
-      depth = depth - 1
+      delta = delta - 1
     end
     index = index + 1
   end
-  return depth
+  return delta
+end
+
+-- Corta el texto en líneas (más rápido que gmatch con un patrón perezoso).
+local function splitLines(text)
+  local lines = {}
+  local position = 1
+  local length = #text
+  while position <= length do
+    local newline = string.find(text, "\n", position, true)
+    if newline == nil then
+      lines[#lines + 1] = string.sub(text, position)
+      break
+    end
+    lines[#lines + 1] = string.sub(text, position, newline - 1)
+    position = newline + 1
+  end
+  return lines
 end
 
 -- Lee los `default = { ... }` de los ajustes `commands` y `layouts`.
 local function parseManifest(text)
   local result = {}
   local currentKey = nil
-  local lines = {}
-  for line in (text .. "\n"):gmatch("(.-)\n") do
-    lines[#lines + 1] = line
-  end
+  local lines = splitLines(text)
 
   local index = 1
   while index <= #lines do
@@ -180,15 +200,15 @@ local function parseManifest(text)
       currentKey = declared
     end
 
-    if currentKey == "commands" or currentKey == "layouts" then
+    if (currentKey == "commands" or currentKey == "layouts") and line:find("{", 1, true) ~= nil then
       local start = line:match("^%s*default%s*=%s*{")
       if start ~= nil then
         local buffer = line
-        local depth = braceDepth(buffer)
+        local depth = braceDelta(line)
         while depth > 0 and index < #lines do
           index = index + 1
           buffer = buffer .. " " .. lines[index]
-          depth = braceDepth(buffer)
+          depth = depth + braceDelta(lines[index])
         end
         local parsed = parseInlineTable(buffer)
         if parsed ~= nil and next(parsed) ~= nil then
@@ -204,6 +224,13 @@ local function parseManifest(text)
 end
 
 function M.load()
+  if cached ~= nil then
+    return {
+      commands = util.copyMap(cached.commands),
+      layouts = util.copyMap(cached.layouts),
+    }
+  end
+
   local commands = nil
   local layouts = nil
 
@@ -224,7 +251,12 @@ function M.load()
     layouts = util.copyMap(FALLBACK_LAYOUTS)
   end
 
-  return { commands = commands, layouts = layouts }
+  cached = { commands = commands, layouts = layouts }
+
+  return {
+    commands = util.copyMap(commands),
+    layouts = util.copyMap(layouts),
+  }
 end
 
 return M

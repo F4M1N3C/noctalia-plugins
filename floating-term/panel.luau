@@ -589,6 +589,10 @@ local function applyWidget(name, command, layout)
     return false, tr("need_name")
   end
 
+  if state.store == nil then
+    loadWidgets()
+  end
+
   storeLib.upsert(state.store, name, command ~= "" and command or nil, layout ~= "" and layout or nil)
   local saved, err = storeLib.save(state.store)
   if not saved then
@@ -601,6 +605,10 @@ end
 
 -- Borra un widget (los usa el panel y el IPC).
 local function removeWidget(name)
+  if state.store == nil then
+    loadWidgets()
+  end
+
   storeLib.remove(state.store, name)
   local saved, err = storeLib.save(state.store)
   if not saved then
@@ -1001,12 +1009,19 @@ end
 -- ------------------------------------------------------------- ciclo de vida --
 
 function onOpen(_context)
+  local t0 = os.clock()
   state.open = true
   loadConfig()
+  local t1 = os.clock()
   loadWidgets()
+  local t2 = os.clock()
+  noctalia.log(string.format("floating-term: T loadConfig=%.2fms loadWidgets=%.2fms", (t1-t0)*1000, (t2-t1)*1000))
   state.editing = false
   state.editTarget = nil
+  local t3 = os.clock()
   render()
+  local t4 = os.clock()
+  noctalia.log(string.format("floating-term: T render=%.2fms total=%.2fms", (t4-t3)*1000, (t4-t0)*1000))
   refreshWindows(function()
     if state.open then
       render()

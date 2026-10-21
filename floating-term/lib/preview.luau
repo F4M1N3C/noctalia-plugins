@@ -42,7 +42,14 @@ function M.cacheDir()
     return nil
   end
   local path = dir .. "/thumbs"
-  noctalia.mkdirAll(path)
+  -- mkdirAll puede fallar (permisos, disco lleno): se comprueba antes de
+  -- seguir, y si falla se avisa en vez de reventar el script.
+  local created, createError = pcall(noctalia.mkdirAll, path)
+  if not created or createError == false then
+    noctalia.log("floating-term: no se pudo crear " .. path)
+    cachedDir = false
+    return nil
+  end
   cachedDir = path
   return path
 end
@@ -99,7 +106,7 @@ local function prune(name, keepPath)
     if file:sub(1, #prefix) == prefix and file:sub(-4) == ".png" then
       local path = dir .. "/" .. file
       if path ~= keepPath then
-        noctalia.removeFile(path)
+        pcall(noctalia.removeFile, path)
       end
     end
   end

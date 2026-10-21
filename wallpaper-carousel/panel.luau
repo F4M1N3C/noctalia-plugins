@@ -549,7 +549,7 @@ local function renderEmpty()
         end,
       }),
       ui.button({
-        text = tr("settings"),
+        text = tr("open_settings"),
         glyph = "settings",
         variant = "ghost",
         onClick = function()

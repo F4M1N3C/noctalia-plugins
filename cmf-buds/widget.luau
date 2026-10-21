@@ -61,11 +61,18 @@ local function rpc(req, cb, silent)
   if statePath == nil then
     return false
   end
+  local encoded = noctalia.json.encode(req)
+  if encoded == nil then
+    noctalia.log("cmf-buds: no se pudo serializar la petición")
+    busy = false
+    loading = false
+    return
+  end
   local argv = {
     "python3",
     pluginPath .. "/bin/budsctl.py",
     "rpc",
-    noctalia.json.encode(req),
+    encoded,
     "--socket",
     socketPath,
     "--state",

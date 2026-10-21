@@ -503,7 +503,7 @@ local function chipRow(items)
     table.insert(chips, ui.button({
       key = item.key,
       text = item.text,
-      variant = item.selected and "tonal" or "ghost",
+      variant = item.selected and "secondary" or "ghost",
       fontSize = 11,
       onClick = item.onClick,
     }))
@@ -521,7 +521,7 @@ local function fontChips()
     table.insert(row, ui.button({
       key = "font-" .. name,
       text = name,
-      variant = name == current and "tonal" or "ghost",
+      variant = name == current and "secondary" or "ghost",
       fontSize = 11,
       onClick = function()
         setSetting("font_family", name, { relaunch = tostring(valueOf("render_mode")) == "text" })
@@ -548,7 +548,7 @@ local function imageOnlyFonts()
     table.insert(row, ui.button({
       key = "font-img-" .. name,
       text = name,
-      variant = name == current and "tonal" or "ghost",
+      variant = name == current and "secondary" or "ghost",
       fontSize = 11,
       onClick = function()
         setSetting("font_family", name, { relaunch = tostring(valueOf("render_mode")) == "text" })
@@ -650,7 +650,7 @@ local function anchorChips()
     table.insert(row, ui.button({
       key = "anchor-" .. name,
       text = tr("anchor_" .. name:gsub("-", "_")),
-      variant = name == current and "tonal" or "ghost",
+      variant = name == current and "secondary" or "ghost",
       fontSize = 10,
       onClick = function()
         setSetting("anchor", name, { geometry = true })
@@ -721,18 +721,18 @@ render = function()
     ui.button({
       key = "launch",
       text = tr("launch"),
-      variant = "tonal",
+      variant = "primary",
       onClick = launch,
     }),
     ui.separator({ thickness = 1, color = "outline/0.25", spacing = 6 }),
     ui.label({ text = tr("section_display"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     ui.row({ align = "center", gap = 10, paddingH = 4, padding = 4 }, {
-      ui.glyph({ name = "layers", size = 14, color = "on_surface_variant" }),
+      ui.glyph({ name = "layout", size = 14, color = "on_surface_variant" }),
       ui.label({ text = tr("render_mode"), fontSize = 12, color = "on_surface", flexGrow = 1 }),
       ui.button({
         key = "mode-text",
         text = tr("mode_text"),
-        variant = mode == "text" and "tonal" or "ghost",
+        variant = mode == "text" and "secondary" or "ghost",
         fontSize = 11,
         onClick = function()
           setSetting("render_mode", "text")
@@ -741,7 +741,7 @@ render = function()
       ui.button({
         key = "mode-image",
         text = tr("mode_image"),
-        variant = mode == "image" and "tonal" or "ghost",
+        variant = mode == "image" and "secondary" or "ghost",
         fontSize = 11,
         onClick = function()
           setSetting("render_mode", "image")
@@ -749,12 +749,12 @@ render = function()
       }),
     }),
     ui.row({ align = "center", gap = 10, paddingH = 4, padding = 4 }, {
-      ui.glyph({ name = "arrow-down-up", size = 14, color = "on_surface_variant" }),
+      ui.glyph({ name = "arrows-vertical", size = 14, color = "on_surface_variant" }),
       ui.label({ text = tr("direction"), fontSize = 12, color = "on_surface", flexGrow = 1 }),
       ui.button({
         key = "dir-down",
         text = tr("down"),
-        variant = direction == "down" and "tonal" or "ghost",
+        variant = direction == "down" and "secondary" or "ghost",
         fontSize = 11,
         onClick = function()
           setSetting("direction", "down")
@@ -763,7 +763,7 @@ render = function()
       ui.button({
         key = "dir-up",
         text = tr("up"),
-        variant = direction == "up" and "tonal" or "ghost",
+        variant = direction == "up" and "secondary" or "ghost",
         fontSize = 11,
         onClick = function()
           setSetting("direction", "up")
@@ -773,9 +773,9 @@ render = function()
     toggleRow("karaoke", tr("karaoke"), "sun"),
     toggleRow("marker", tr("marker"), "chevron-right"),
     toggleRow("header", tr("header"), "heading"),
-    toggleRow("footer", tr("footer"), "timer"),
+    toggleRow("footer", tr("footer"), "clock"),
     toggleRow("hints", tr("hints"), "keyboard"),
-    toggleRow("equalizer", tr("equalizer"), "audio-lines"),
+    toggleRow("equalizer", tr("equalizer"), "wave-sine"),
     toggleRow("ghost", tr("ghost"), "sparkles"),
     ui.separator({ thickness = 1, color = "outline/0.25", spacing = 6 }),
     ui.label({ text = tr("section_lyrics"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),

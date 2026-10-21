@@ -76,8 +76,15 @@ local function saveState()
     return
   end
   local encoded = noctalia.json.encode({ bands = bands, preamp = preamp, bypass = bypass })
+  if encoded == nil then
+    noctalia.log("equalizer: no se pudo serializar la configuración")
+    return
+  end
   if encoded ~= nil then
-    noctalia.writeFile(statePath, encoded)
+    local wrote = noctalia.writeFile(statePath, encoded)
+    if wrote ~= true then
+      noctalia.log("equalizer: no se pudo guardar la configuración")
+    end
   end
 end
 

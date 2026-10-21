@@ -81,7 +81,12 @@ local function loadPins()
   pins = {}
   local raw = noctalia.readFile(pinsPath())
   if raw ~= nil then
-    local decoded = noctalia.json.decode(raw)
+    -- Un fichero corrupto no debe tumbar el panel.
+    local ok, decoded = pcall(noctalia.json.decode, raw)
+    if not ok then
+      noctalia.log("notes: no se pudo leer el fichero de fijados")
+      return
+    end
     if type(decoded) == "table" then
       for name, value in pairs(decoded) do
         if type(name) == "string" and value == true then
@@ -144,8 +149,12 @@ local function publishCurrent()
   if dir == nil or dir == "" then
     return
   end
-  -- El directorio de datos puede no existir todavia.
-  noctalia.mkdirAll(dir)
+  -- El directorio de datos puede no existir todavia (o no tener permiso).
+  local created, createError = pcall(noctalia.mkdirAll, dir)
+  if not created or createError == false then
+    noctalia.log("notes: no se pudo preparar el directorio " .. tostring(dir))
+    return
+  end
   local payload = noctalia.json.encode({
     name = current or "",
     content = current ~= nil and buffer or "",

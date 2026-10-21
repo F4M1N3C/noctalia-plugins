@@ -43,7 +43,10 @@ local function loadPins(dir)
   local out = {}
   local raw = noctalia.readFile(dir .. "/.pinned.json")
   if raw ~= nil then
-    local decoded = noctalia.json.decode(raw)
+    local ok, decoded = pcall(noctalia.json.decode, raw)
+    if not ok then
+      return out
+    end
     if type(decoded) == "table" then
       for name, value in pairs(decoded) do
         if type(name) == "string" and value == true then

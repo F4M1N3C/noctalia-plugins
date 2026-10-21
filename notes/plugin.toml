@@ -45,6 +45,10 @@ height = "fill"
 placement = "floating"
 position = "center_right"
 
+[[service]]
+id = "service"
+entry = "service.luau"
+
 [[launcher_provider]]
 id = "launcher"
 entry = "launcher.luau"

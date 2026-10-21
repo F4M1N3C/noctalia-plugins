@@ -65,6 +65,16 @@ local IMAGE_ONLY_FONTS = {
 
 local ACCENT_CHOICES = { "primary", "green", "yellow", "blue", "magenta", "cyan", "red", "custom" }
 
+-- Las funciones se llaman entre sí (un ajuste lanza la ventana, la ventana
+-- avisa al panel, el panel vuelve a dibujar). En Luau un `local function`
+-- solo existe desde su declaración: sin estas declaraciones, las llamadas
+-- de arriba se resolverían contra un global sin valor (nil).
+local render
+local launch
+local applyGeometry
+local closePanel
+local flush
+
 local settings = {}
 local pending = {}
 local generation = 0
@@ -96,7 +106,7 @@ local function safe(label, fn, ...)
 end
 
 -- Cierra el panel sin reventar si la API falla.
-local function closePanel()
+closePanel = function()
   local ok, error = pcall(function()
     panel.close()
   end)
@@ -354,7 +364,7 @@ local function dispatch(expression, callback)
 end
 
 -- Mueve y redimensiona la ventana existente sin recrearla.
-local function applyGeometry()
+applyGeometry = function()
   local width = math.floor(numberOf("width"))
   local height = math.floor(numberOf("height"))
   local screenWidth, screenHeight = outputGeometry()
@@ -371,7 +381,7 @@ local function applyGeometry()
   end)
 end
 
-local function launch()
+launch = function()
   if launching then
     return
   end
@@ -673,7 +683,7 @@ local function windowSizeChips(key, values)
   return chipRow(items)
 end
 
-function render()
+render = function()
   local direction = tostring(valueOf("direction"))
   local mode = tostring(valueOf("render_mode"))
   local subtitle = tr("subtitle")
@@ -836,6 +846,36 @@ function onIpc(event, payload)
     -- Alterna un ajuste booleano: toggle marker
     if type(payload) == "string" and BOOL_KEYS[payload] then
       toggleKey(payload)
+    end
+  elseif event == "set" then
+    -- Fija un ajuste: set font_size=26 int
+    if type(payload) == "string" then
+      -- "clave=valor [tipo]"
+      local head, tail = payload:match("^%s*([^=%s]+)%s*=%s*(.-)%s*$")
+      local kind = "string"
+      if tail ~= nil then
+        local pieces = {}
+        for piece in tail:gmatch("%S+") do
+          pieces[#pieces + 1] = piece
+        end
+        tail = pieces[1]
+        kind = pieces[2] or "string"
+      end
+      local key = head
+      local value = tail
+      if key ~= nil and value ~= nil and DEFAULTS[key] ~= nil then
+        local parsed = value
+        if kind == "bool" then
+          parsed = value == "true" or value == "1"
+        elseif kind == "int" then
+          parsed = tonumber(value) or value
+        elseif kind == "float" then
+          parsed = tonumber(value) or value
+        end
+        local mode = tostring(valueOf("render_mode"))
+        local relaunch = (key == "font_family" or key == "font_size") and mode == "text"
+        setSetting(key, parsed, { relaunch = relaunch })
+      end
     end
   elseif event == "refresh" then
     settings = {}

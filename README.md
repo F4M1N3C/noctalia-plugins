@@ -13,9 +13,21 @@ one can be contributed with a single pull request.
 | [notes](notes/) | `faminec/notes` | Quick text notes in a side panel, with live sync from outside the panel. |
 | [cmf-buds](cmf-buds/) | `faminec/cmf-buds` | Native control of the Nothing CMF Buds Pro 2 over RFCOMM: ANC, EQ, gestures, spatial audio. |
 | [lyrics-carousel](lyrics-carousel/) | `faminec/lyrics-carousel` | Synced lyrics rendered in a floating terminal window. |
+| [notes-sync](notes-sync/) | `faminec/notes-sync` | Bridge between the notes panel and the phone: status, push messages and a stable IPC contract. |
 
 Every plugin passes the official validator
-(`python3 .github/workflows/scripts/validate-plugins.py` in the community repository).
+(`python3 .github/workflows/scripts/validate-plugins.py` in the community repository) and the
+Luau checker in `tools/`, which finds globals that are read but never written:
+
+```sh
+python3 tools/check-luau-globals.py .
+```
+
+That check matters because in Luau a `local function` only exists from its own
+declaration onwards: if a function defined earlier calls it, the reference
+resolves to a global that is never assigned, and the call fails at runtime with
+*attempt to call a nil value*. Declare such functions as locals at the top of
+the file (`local render` + `render = function() ... end`).
 
 The state of each plugin and the **testing checklist** live in
 [PLUGINS.md](PLUGINS.md).
@@ -32,6 +44,7 @@ noctalia msg plugins enable faminec/wallpaper-carousel
 noctalia msg plugins enable faminec/notes
 noctalia msg plugins enable faminec/cmf-buds
 noctalia msg plugins enable faminec/lyrics-carousel
+noctalia msg plugins enable faminec/notes-sync
 ```
 
 ## Contributing a plugin upstream

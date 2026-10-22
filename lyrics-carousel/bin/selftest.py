@@ -113,8 +113,34 @@ def direccion_actual() -> str:
     return "down"
 
 
-def check_atajo_d():
-    """El atajo 'd' alterna la direccion y se guarda en los overrides."""
+def karaoke_actual() -> bool:
+    """Karaoke vigente (overrides si los hay, si no el settings.toml)."""
+    overrides = os.path.join(DATA_DIR, "overrides.json")
+    if os.path.isfile(overrides):
+        try:
+            with open(overrides, encoding="utf-8") as handle:
+                data = json.load(handle)
+            if isinstance(data, dict) and "karaoke" in data:
+                return bool(data["karaoke"])
+        except (OSError, ValueError):
+            pass
+    try:
+        import tomllib
+
+        with open(
+            os.path.expanduser("~/.local/state/noctalia/settings.toml"), "rb"
+        ) as handle:
+            data = tomllib.load(handle)
+        section = (data.get("plugin_settings") or {}).get("faminec/lyrics-carousel")
+        if isinstance(section, dict) and "karaoke" in section:
+            return bool(section["karaoke"])
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
+def check_atajos():
+    """Los atajos 'd' y 'k' alternan sus ajustes y los guardan."""
     overrides = os.path.join(DATA_DIR, "overrides.json")
     previo = None
     if os.path.isfile(overrides):
@@ -125,6 +151,8 @@ def check_atajo_d():
             previo = None
     antes = direccion_actual()
     esperado = "up" if antes == "down" else "down"
+    karaoke_antes = karaoke_actual()
+    karaoke_esperado = not karaoke_antes
     try:
         import fcntl
         import pty
@@ -146,6 +174,8 @@ def check_atajo_d():
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 90, 0, 0))
         time.sleep(2.5)
         os.write(fd, b"d")
+        time.sleep(1.5)
+        os.write(fd, b"k")
         time.sleep(2.5)
         try:
             os.kill(pid, signal.SIGTERM)
@@ -154,6 +184,7 @@ def check_atajo_d():
         os.close(fd)
     except Exception as error:  # noqa: BLE001
         check("el atajo 'd' alterna la dirección", False, repr(error)[:120])
+        check("el atajo 'k' alterna el karaoke", False, repr(error)[:120])
         restaurar_overrides(overrides, previo)
         return
     try:
@@ -165,8 +196,15 @@ def check_atajo_d():
             ok,
             "esperado %s, hay %s" % (esperado, data.get("direction")),
         )
+        ok_k = isinstance(data, dict) and data.get("karaoke") is karaoke_esperado
+        check(
+            "el atajo 'k' alterna el karaoke",
+            ok_k,
+            "esperado %s, hay %s" % (karaoke_esperado, data.get("karaoke")),
+        )
     except (OSError, ValueError) as error:
         check("el atajo 'd' alterna la dirección", False, str(error)[:120])
+        check("el atajo 'k' alterna el karaoke", False, str(error)[:120])
     finally:
         restaurar_overrides(overrides, previo)
 
@@ -268,7 +306,7 @@ def main(argv):
     # 4b) el atajo 'd' del script alterna la direccion y la guarda.
     #     Es la prueba de que el script, el helper y el overrides
     #     funcionan juntos de verdad.
-    check_atajo_d()
+    check_atajos()
 
     # 5) herramientas externas.
     for tool in ("kitty", "fc-match", "playerctl", "hyprctl"):

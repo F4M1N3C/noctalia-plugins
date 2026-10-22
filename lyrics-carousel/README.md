@@ -115,8 +115,9 @@ external tools are available and — importantly — that the script finds its
 sibling modules and the helper when it is launched through the symbolic link
 in `~/.local/bin` (which is how the panel starts it). It also checks that
 every `.luau` of the plugin compiles as it is (so a syntax error is never
-mistaken for Luau-only syntax) and that the `d` shortcut really toggles the
-direction and saves it.
+mistaken for Luau-only syntax) and that the `d` and `k` shortcuts really
+toggle the direction and the karaoke and save them (the overrides are left
+as they were).
 
 `--diagnostics` prints the same information for the running script as JSON.
 Both are used by `tools/verify-plugins.py`.

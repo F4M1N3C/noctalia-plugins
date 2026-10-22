@@ -598,6 +598,20 @@ class BudsDaemon:
                     self.state["local_actions"] = self.local.snapshot()
                 except Exception:
                     pass
+            # El plugin guarda su estado (la pestana recordada, por ejemplo)
+            # en el MISMO fichero, con noctalia.state. Si el demonio lo
+            # sobrescribe entero, esas claves se pierden en cada guardado y
+            # el plugin las vuelve a escribir en bucle. Se conservan las
+            # claves que el demonio no gestiona.
+            try:
+                with open(self.state_path, "r", encoding="utf-8") as fh:
+                    previo = json.load(fh)
+                if isinstance(previo, dict):
+                    for clave, valor in previo.items():
+                        if clave not in self.state:
+                            self.state[clave] = valor
+            except Exception:
+                pass
             data = json.dumps(self.state, ensure_ascii=False, separators=(",", ":"))
         tmp = self.state_path + f".{os.getpid()}.tmp"
         # Varios hilos (monitor, RPC, lector RFCOMM) pueden guardar a la vez.

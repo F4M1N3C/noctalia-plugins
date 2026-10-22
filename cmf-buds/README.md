@@ -249,6 +249,11 @@ anteriores que resultaron inexactas) está en [`CHANGELOG.md`](CHANGELOG.md).
   pierde sin dejar rastro: los atajos dejan de funcionar o el volumen se
   queda donde no toca. Ahora cada uno tiene su propia red: el error se
   registra en el log y el trabajo continúa.
+- **El estado del plugin no lo borra el demonio.** El plugin recuerda la
+  última pestaña abierta con `noctalia.state`, que guarda en el **mismo**
+  `state.json` que el demonio. Como el demonio lo reescribe entero en cada
+  guardado, esa clave se perdía (y el widget volvía siempre al panel de
+  sonido). Ahora el demonio conserva las claves que no gestiona.
 - **El fichero de reglas es la fuente de verdad.** Las reglas se releen del
   fichero antes de guardar (y antes de mostrarlas en el panel), así que si
   alguien las edita a mano o desde otra sesión, el panel no pisa esos

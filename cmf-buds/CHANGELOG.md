@@ -110,6 +110,15 @@ que el compositor lo abra.
 
 Suite: 37 → 44 comprobaciones.
 
+### Comprobaciones finales — el estado del plugin no lo borra el demonio
+
+El plugin recuerda la ultima pestana abierta con `noctalia.state`, que
+guarda en el mismo `state.json` que el demonio. Como el demonio reescribe
+ese fichero entero en cada guardado, la clave se perdia: el widget abria
+siempre el panel de sonido, y el plugin y el demonio se pisaban el fichero
+a raya. El demonio ahora conserva las claves que no gestiona (verificado:
+la clave sobrevive a un guardado ✓).
+
 ### Comprobaciones finales
 
 - **El lector de modificadores se ha probado de verdad**: con un teclado

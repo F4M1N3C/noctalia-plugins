@@ -93,6 +93,16 @@ log_mtime() {
   [ -f "$log" ] && stat -c %Y "$log" 2>/dev/null || echo 0
 }
 
+# El log lleva mas de 60 s sin escribirse: esta congelado. Entonces no se
+# puede exigir nada del shell (una recarga que no se va a registrar).
+log_congelado() {
+  [ -f "$log" ] || return 0
+  local ahora mtime
+  ahora="$(date +%s)"
+  mtime="$(log_mtime)"
+  [ $((ahora - mtime)) -gt 60 ]
+}
+
 # Comprueba la carga: debe haber recarga del script y no debe haber error.
 # Devuelve 0 si la carga esta comprobada, 1 si ha fallado y 2 si no se puede
 # comprobar (el log del shell esta congelado y no se escribe nada).
@@ -120,10 +130,7 @@ comprobar_carga() {
   fi
   # El log lleva mucho sin escribirse: esta congelado. No se puede exigir una
   # recarga que no se va a registrar, asi que esto no se cuenta como fallo.
-  local ahora mtime
-  ahora="$(date +%s)"
-  mtime="$(log_mtime)"
-  if [ $((ahora - mtime)) -gt 60 ]; then
+  if log_congelado; then
     echo "aviso: el log del shell lleva mas de 60 s sin escribirse (congelado);" >&2
     echo "       no se puede comprobar la carga" >&2
     return 2
@@ -133,7 +140,14 @@ comprobar_carga() {
 }
 
 # Comprobacion de la carga en el shell, con reintento (ver cabecera).
-if [ -f "$log" ]; then
+if [ -f "$log" ] && log_congelado; then
+  # El log ya estaba congelado antes de desplegar: no es culpa del despliegue
+  # y no se puede comprobar nada.
+  mkdir -p "$destino/bin" "$destino/translations"
+  desplegar
+  echo "desplegado en $destino"
+  echo "aviso: el log del shell esta congelado; no se puede comprobar la carga" >&2
+elif [ -f "$log" ]; then
   # La marca se toma ANTES de desplegar: si se tomara despues, la linea de
   # recarga podria quedar fuera de la ventana y la comprobacion no serviria.
   desde="$(lineas_previas)"

@@ -122,7 +122,7 @@ Ademas se anade una prueba para el temporizador que cierra el gesto: si
 falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
 motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
 
-Suite: 44 -> 45 comprobaciones.
+Suite: 44 -> 47 comprobaciones.
 
 ### Comprobaciones finales — ciclo de vida del demonio
 

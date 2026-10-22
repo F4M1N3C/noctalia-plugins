@@ -32,10 +32,20 @@ import time
 GROUP_WINDOW = 0.7
 # Dos senales mas juntas que esto cuentan como la misma pulsacion.
 REPEAT_GAP = 0.12
-# Ignorar cambios de volumen provocados por nosotros mismos.
-SELF_CHANGE_GRACE = 1.0
-# Separacion minima entre dos eventos del mismo tipo (evita dobles).
-EVENT_GAP = 0.2
+# Red de seguridad para eventos duplicados de un mismo cambio de volumen.
+# Lo que de verdad distingue nuestro cambio de un gesto del usuario es el
+# valor (el que ponemos nosotros), no el tiempo: con una ventana de tiempo
+# grande, un gesto del usuario que llegaba justo despues de restaurar el
+# volumen se perdia, y con ello las reglas de N pulsaciones no llegaban a
+# dispararse.
+SELF_CHANGE_GRACE = 0.05
+# Separacion minima entre dos eventos del mismo tipo.
+# Debe ser menor que el intervalo entre dos pinchazos reales (100-250 ms) para
+# no tragarselos: con 200 ms un triple rapido se contaba como un solo gesto y
+# la regla de N pulsaciones no llegaba a dispararse nunca. Solo tiene que
+# agrupar los eventos de una misma muesca (una rampa de PipeWire emite varios
+# seguidos, a ~16 ms).
+EVENT_GAP = 0.06
 # Dos eventos del mismo tipo dentro de esta ventana son el mismo gesto.
 GESTURE_WINDOW = 0.5
 # Tras disparar un atajo se ignoran los eventos hasta que el volumen se
@@ -169,6 +179,7 @@ class ModifierTracker:
                     pass
                 self._fds.pop(fd, None)
                 self._by_path.pop(path, None)
+                self.log("Dispositivo recreado, reabierto: %s" % path)
             try:
                 nfd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
             except OSError:
@@ -339,6 +350,7 @@ class LocalActionEngine:
         self._timer = None
         self._lock = threading.RLock()
         self._self_change_at = 0.0
+        self._self_set_volume = None
         self._last_event = {}
         self._last_fire = {}
         self._quiet_until = 0.0
@@ -356,9 +368,31 @@ class LocalActionEngine:
             with open(self.rules_path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
             self.rules = data.get("rules", []) if isinstance(data, dict) else []
-        except Exception:
+            try:
+                self._rules_mtime = os.path.getmtime(self.rules_path)
+            except OSError:
+                self._rules_mtime = 0.0
+        except Exception as exc:
+            self.log("No se pudieron leer las reglas: %s" % exc)
             self.rules = []
         return self.rules
+
+    def reload_rules_if_changed(self):
+        """Recarga las reglas si el fichero ha cambiado.
+
+        El motor no debe decidir sobre una vista obsoleta: si las reglas se
+        editan a mano (o desde otra sesion) fuera del panel, el siguiente
+        gesto tiene que usar ya las reglas nuevas.
+        """
+        try:
+            mtime = os.path.getmtime(self.rules_path)
+        except OSError:
+            return
+        if mtime == getattr(self, "_rules_mtime", 0.0):
+            return
+        before = len(self.rules)
+        self.load()
+        self.log("Reglas recargadas (%d -> %d)" % (before, len(self.rules)))
 
     def save(self):
         os.makedirs(self.data_dir, exist_ok=True)
@@ -423,8 +457,24 @@ class LocalActionEngine:
         self.modifiers.stop()
 
     # -- volumen -------------------------------------------------------------
-    def note_self_change(self):
+    def note_self_change(self, value=None):
+        """Marca un cambio de volumen hecho por nosotros.
+
+        Con 'value' se guarda el volumen que hemos puesto: luego se puede
+        distinguir nuestro cambio (mismo valor) de un gesto del usuario, sin
+        depender de una ventana de tiempo que se comería los gestos.
+
+        Ademas se actualiza la referencia del volumen: si no, el siguiente
+        gesto real se calcularia contra una base obsoleta y se dispararia el
+        atajo equivocado (o ninguno) sin decir nada.
+        """
         self._self_change_at = time.time()
+        if value is not None:
+            try:
+                self._self_set_volume = int(value)
+                self._last_volume = self._self_set_volume
+            except (TypeError, ValueError):
+                pass
 
     def _read_volume(self, sink):
         res = _run(["pactl", "get-sink-volume", sink], 6)
@@ -440,9 +490,6 @@ class LocalActionEngine:
 
     def _on_volume_change(self, sink):
         now = time.time()
-        if now - self._self_change_at < SELF_CHANGE_GRACE:
-            self._last_volume = self._read_volume(sink)
-            return
         value = self._read_volume(sink)
         if value is None:
             # El sink ya no existe (auriculares desconectados): sin referencia
@@ -455,6 +502,16 @@ class LocalActionEngine:
             return
         delta = value - previous
         if delta == 0:
+            return
+        if now - self._self_change_at < SELF_CHANGE_GRACE:
+            # Rampa de nuestro propio cambio: se ignora.
+            return
+        if (
+            self._self_set_volume is not None
+            and abs(value - self._self_set_volume) <= 1
+        ):
+            # Es el valor exacto que pusimos nosotros: se ignora, aunque ya
+            # haya pasado la ventana de la rampa.
             return
         with self._lock:
             # Eco del restore: el auricular devuelve su volumen y genera otro
@@ -511,47 +568,81 @@ class LocalActionEngine:
             if now - self._last_event.get(trigger, 0.0) < EVENT_GAP:
                 return
             self._last_event[trigger] = now
+            self.reload_rules_if_changed()
             modifiers = self.modifiers.modifiers()
-            # Reglas "cualquier numero de pulsaciones": se ejecutan al instante.
-            any_rule = self._matching_rule(trigger, 0, modifiers, True)
-            if any_rule is not None and not self._has_counted_rules(trigger):
-                # Un gesto = una accion (varias muescas seguidas = una).
+
+            # Conteo de pulsaciones del gesto en curso.
+            pending = self._pending
+            if (
+                pending
+                and pending["trigger"] == trigger
+                and now - pending["last"] <= GROUP_WINDOW
+            ):
+                count = pending["count"] + 1
+            else:
+                count = 1
+            pending = {
+                "trigger": trigger,
+                "count": count,
+                "first": now if pending is None else pending["first"],
+                "last": now,
+                "modifiers": modifiers,
+                "volume": self._read_volume(sink) if sink else None,
+            }
+            self._pending = pending
+
+            # Que regla toca con este gesto.
+            rules = self._applicable_rules(trigger, modifiers)
+            exact = [item for item in rules if item[0] == count]
+            fallback = [item for item in rules if item[0] == 0]
+            # Una regla de N pulsaciones que aun puede cumplirse hace esperar a
+            # la regla "cualquiera": si no, esta se comeria los eventos y la
+            # de N pulsaciones no llegaria a dispararse nunca.
+            blocking = [item for item in rules if item[0] > count]
+
+            chosen = None
+            if exact:
+                chosen = exact[0][2]
+            elif fallback and not blocking:
+                chosen = fallback[0][2]
+
+            if chosen is not None:
                 if now - self._last_fire.get(trigger, 0.0) >= GESTURE_WINDOW:
                     self.last_event = {
                         "trigger": trigger,
-                        "presses": 1,
+                        "presses": count,
                         "modifiers": modifiers,
                         "at": int(time.time() * 1000),
                     }
                     self._last_fire[trigger] = now
                     self._quiet_started = now
                     self._quiet_last_event = now
-                    self._run_rule(any_rule, trigger, 1, modifiers, previous_volume)
+                    self._pending = None
+                    self._run_rule(chosen, trigger, count, modifiers, previous_volume)
                 return
-            pending = self._pending
-            if (
-                pending
-                and pending["trigger"] == trigger
-                and now - pending["last"] <= REPEAT_GAP
-            ):
-                # repeticion de la misma tecla: no cuenta como pulsacion nueva
-                return
-            if (
-                pending
-                and pending["trigger"] == trigger
-                and now - pending["last"] <= GROUP_WINDOW
-            ):
-                pending["count"] += 1
-                pending["last"] = now
-            else:
-                pending = {
-                    "trigger": trigger,
-                    "count": 1,
-                    "first": now,
-                    "last": now,
-                    "volume": self._read_volume(sink) if sink else None,
-                }
-                self._pending = pending
+
+            if not rules and not getattr(self, "_no_rule_logged", None) == trigger:
+                # Habia reglas para este gesto pero ninguna encaja (p.ej. el
+                # modificador no esta pulsado): se avisa una vez para que no
+                # parezca que los atajos estan rotos.
+                self._no_rule_logged = trigger
+                self.log(
+                    "El gesto %s no encaja con ninguna regla (modificadores: %s)"
+                    % (trigger, ",".join(sorted(modifiers)) or "ninguno")
+                )
+            elif rules:
+                self._no_rule_logged = None
+
+            if blocking and not getattr(self, "_shadow_logged", None) == trigger:
+                self._shadow_logged = trigger
+                self.log(
+                    "El gesto %s tiene una regla de %d pulsaciones: la regla "
+                    "'cualquiera' espera a que termine el gesto"
+                    % (trigger, blocking[0][0])
+                )
+            elif not blocking:
+                self._shadow_logged = None
+
             if self._timer:
                 try:
                     self._timer.cancel()
@@ -561,34 +652,25 @@ class LocalActionEngine:
             self._timer.daemon = True
             self._timer.start()
 
-    # -- ejecucion -----------------------------------------------------------
-    def _has_counted_rules(self, trigger):
-        """True si el gesto tiene alguna regla con un numero de pulsaciones.
+    # -- evaluacion de reglas ------------------------------------------------
+    def _applicable_rules(self, trigger, modifiers):
+        """Reglas que pueden aplicarse a este gesto con estos modificadores.
 
-        Si las hay, mandan sobre la regla "cualquiera": si no, esta se
-        comeria los eventos y la de N pulsaciones nunca llegaria a dispararse.
+        Cada elemento es (presses, especificidad, regla):
+          - presses == 0: regla "cualquiera", que hace de respaldo.
+          - presses  > 0: regla de N pulsaciones.
+
+        Se ordenan poniendo delante las de N pulsaciones (y entre ellas, la
+        mas especifica) y la de "cualquiera" al final. Todo se evalua contra
+        el juego de reglas vigente en cada evento, no contra una vista
+        guardada: asi una regla anadida o quitada desde el panel se respeta
+        desde el siguiente gesto.
         """
+        out = []
         for rule in self.rules:
             if not rule.get("enabled", True):
                 continue
             if rule.get("trigger") != trigger:
-                continue
-            if int(rule.get("presses", 1)) > 0:
-                return True
-        return False
-
-    def _matching_rule(self, trigger, count, modifiers, any_ok=False):
-        candidates = []
-        for rule in self.rules:
-            if not rule.get("enabled", True):
-                continue
-            if rule.get("trigger") != trigger:
-                continue
-            presses = int(rule.get("presses", 1))
-            if presses == 0:
-                if not any_ok:
-                    continue
-            elif presses != count:
                 continue
             require = [m for m in rule.get("require", []) if m]
             forbid = [m for m in rule.get("forbid", []) if m]
@@ -596,20 +678,36 @@ class LocalActionEngine:
                 continue
             if any(m in modifiers for m in forbid):
                 continue
-            candidates.append((len(require), rule))
-        if not candidates:
-            return None
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        return candidates[0][1]
+            out.append((int(rule.get("presses", 1)), len(require), rule))
+        out.sort(key=lambda item: (0 if item[0] > 0 else 1, -item[1], item[0]))
+        return out
+
+    def _pick_rule(self, rules, count):
+        """Regla que toca para un gesto con 'count' pulsaciones.
+
+        Mandan las de N pulsaciones exactas; si no hay ninguna, se usa la de
+        "cualquiera" como respaldo.
+        """
+        exact = [item for item in rules if item[0] == count]
+        if exact:
+            return exact[0][2]
+        fallback = [item for item in rules if item[0] == 0]
+        if fallback:
+            return fallback[0][2]
+        return None
 
     def _fire(self):
+        """Cierre del gesto: el contador ya no va a crecer."""
         with self._lock:
             pending = self._pending
             self._pending = None
         if not pending:
             return
-        modifiers = self.modifiers.modifiers()
-        rule = self._matching_rule(pending["trigger"], pending["count"], modifiers)
+        # Los modificadores del principio del gesto: si el usuario los suelta
+        # antes de que se cierre la ventana, la regla sigue acknowledging.
+        modifiers = pending.get("modifiers") or self.modifiers.modifiers()
+        rules = self._applicable_rules(pending["trigger"], modifiers)
+        rule = self._pick_rule(rules, pending["count"])
         if rule is None:
             self.last_event = {
                 "trigger": pending["trigger"],
@@ -618,7 +716,9 @@ class LocalActionEngine:
                 "at": int(time.time() * 1000),
             }
             return
-        self._run_rule(rule, pending["trigger"], pending["count"], modifiers, pending.get("volume"))
+        self._run_rule(
+            rule, pending["trigger"], pending["count"], modifiers, pending.get("volume")
+        )
 
     def _run_rule(self, rule, trigger, count, modifiers, previous_volume):
         command = (rule.get("command") or "").strip()
@@ -662,7 +762,11 @@ class LocalActionEngine:
             sink = self._sink_provider()
             if not sink:
                 return
-            self.note_self_change()
+            self.note_self_change(int(percent))
+            # El eco del auricular llega despues del restore: la ventana de
+            # calma se reinicia aqui para tragarselo.
+            self._quiet_started = time.time()
+            self._quiet_last_event = self._quiet_started
             _run(["pactl", "set-sink-volume", sink, "%d%%" % int(percent)], 6)
             time.sleep(0.3)
             current = self._read_volume(sink)
@@ -689,7 +793,7 @@ class LocalActionEngine:
         sink = self._sink_provider()
         if not sink:
             return
-        self.note_self_change()
+        self.note_self_change(int(percent))
         res = _run(["pactl", "set-sink-volume", sink, "%d%%" % int(percent)], 6)
         self.log(
             "Restaurando volumen a %d%% en %s (rc=%s)"

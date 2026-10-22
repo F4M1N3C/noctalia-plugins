@@ -122,6 +122,20 @@ Requisitos: el usuario debe estar en el grupo `input` (para leer
 `/dev/input`) y los auriculares deben estar conectados al PC por Bluetooth de
 audio.
 
+## Pruebas
+
+`bin/test_local_actions.py` comprueba el motor de atajos sin necesitar
+auriculares (simula la señal del dial):
+
+```bash
+python3 bin/test_local_actions.py
+```
+
+Cubre: la regla "cualquiera" sola, la precedencia de la de N pulsaciones y su
+respaldo, reglas con modificadores distintos, la especificidad, el comando
+vacío, las ráfagas, que un gesto tras restaurar el volumen no se pierda y que
+las reglas editadas fuera del panel se recargan.
+
 ## Cómo funciona
 
 - `service.luau` arranca `bin/budsctl.py daemon` (demonio persistente con
@@ -162,8 +176,16 @@ Datos persistentes:
 
 - **Un giro = una acción.** Varias muescas seguidas se agrupan en un solo
   gesto (ventana de 0,5 s).
-- **Precedencia:** si un gesto tiene una regla con N pulsaciones (2, 3...),
-  la regla "Cualquiera" de ese gesto se ignora; la de N pulsaciones manda.
+- **Precedencia:** si un gesto tiene una regla con N pulsaciones (2, 3...), esa
+  manda y la de "Cualquiera" queda de respaldo: se ejecuta al final del gesto
+  si las pulsaciones no llegan al número. Las reglas se evalúan en cada evento
+  contra el juego vigente, y las más específicas (SUPER antes que ninguna)
+  ganan.
+- **Nuestro propio cambio de volumen no se confunde con un gesto:** se
+  reconoce por el valor que ponemos, no por una ventana de tiempo, para que un
+  gesto que llega justo después no se pierda.
+- Los gestos que no encajan con ninguna regla se avisan en el log, para que
+  no parezca que los atajos están rotos.
 - **El eco del auricular se ignora.** Al restaurar el volumen, los auriculares
   devuelven el suyo y generan otro evento; el motor ignora los eventos hasta
   que el volumen se estabiliza (1,2 s) y luego vuelve a armarse solo.

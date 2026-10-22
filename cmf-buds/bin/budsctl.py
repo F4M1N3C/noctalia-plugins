@@ -1086,7 +1086,9 @@ class BudsDaemon:
         if not sink:
             raise RuntimeError("No hay sink de audio")
         if self.local is not None:
-            self.local.note_self_change()
+            # Se marca el valor que ponemos: el motor lo usa para distinguir
+            # nuestros cambios de los gestos del auricular.
+            self.local.note_self_change(percent)
         if percent is not None:
             pct = max(0, min(150, int(percent)))
             run(["pactl", "set-sink-volume", sink, f"{pct}%"], 6)

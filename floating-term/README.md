@@ -172,6 +172,11 @@ fails on **any** `[WRN]` or `[ERR]`, whether it names the plugin or not.
 
 ## Notes
 
+- The plugin parses `plugin.toml` once and keeps it in memory (the parser is
+  comparatively expensive and each callback only gets 25 ms of CPU). Noctalia
+  watches the `.luau` files, not the manifest: after editing only
+  `plugin.toml`, reload the plugin (touch `panel.luau` or restart Noctalia) to
+  pick up the new defaults. `test-smoke.sh` touches the installed panel itself.
 - The geometry uses the Hyprland 0.56 Lua API (`hl.dsp.exec_cmd`), so no
   `windowrules.lua` change is needed.
 - The size is re-applied shortly after the window is created, because the

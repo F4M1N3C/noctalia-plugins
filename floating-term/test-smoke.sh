@@ -137,6 +137,27 @@ wait_count() {
   done
 }
 
+# Espera a que la geometría deje de cambiar durante ~1 s. El contador llega a
+# su número en cuanto la ventana existe, pero el plugin coloca y redimensiona
+# un instante después: sin esto, el "antes" de la rotación sería una foto a
+# medio colocar y la permutación no cuadraría.
+wait_stable() {
+  local deadline=$((SECONDS + 10)) previous current stable=0
+  previous=$(plugin_geometry)
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    sleep 0.4
+    current=$(plugin_geometry)
+    if [ "$current" = "$previous" ]; then
+      stable=$((stable + 1))
+      [ "$stable" -ge 2 ] && return 0
+    else
+      stable=0
+      previous="$current"
+    fi
+  done
+  return 1
+}
+
 # El panel solo atiende el IPC cuando está abierto. `panel-open` es
 # idempotente (no alterna): si ya estaba abierto lo deja como está. Cuando lo
 # abre de verdad, el plugin deja "widgets ->" en el log; si esa línea no
@@ -156,6 +177,16 @@ ensure_panel() {
   done
 }
 
+# El plugin analiza `plugin.toml` una vez y lo guarda en memoria; el host solo
+# recarga el script cuando cambia un `.luau`, no cuando cambia el manifiesto.
+# Se toca el mtime del panel instalado (sin cambiar su contenido) para que la
+# prueba arranque con los comandos que hay ahora mismo en disco.
+INSTALLED_PANEL="$HOME/.local/share/noctalia/plugins/floating-term/panel.luau"
+if [ -f "$INSTALLED_PANEL" ]; then
+  touch "$INSTALLED_PANEL"
+  sleep 1.5
+fi
+
 echo "0) partir de cero"
 ensure_panel
 noctalia msg plugin "$PANEL" all close-all >/dev/null 2>&1 || fail "el IPC close-all no respondió"
@@ -167,6 +198,7 @@ if ! wait_count "$expected" "$OPEN_TIMEOUT"; then
   echo "   abiertas: $(plugin_geometry | tr '\n' ' ')" >&2
   fail "se esperaban $expected ventanas y hay $(plugin_count)"
 fi
+wait_stable || fail "las ventanas no terminaron de colocarse"
 echo "   ventanas abiertas: $(plugin_count) ✔"
 
 echo "2) rotar"
@@ -220,6 +252,10 @@ while [ "$SECONDS" -lt "$deadline" ]; do
 done
 if [ "$rotated" -ne 1 ]; then
   cat "$tmp/check" >&2
+  echo "   antes:" >&2
+  sed 's/^/     /' "$tmp/before" >&2
+  echo "   después:" >&2
+  sed 's/^/     /' "$tmp/after" >&2
   fail "la rotación no permutó las posiciones de las ventanas"
 fi
 cat "$tmp/check"
@@ -244,5 +280,7 @@ if [ -f "$LOG" ]; then
 else
   echo "   (no hay log en $LOG; se salta la comprobación)"
 fi
+
+noctalia msg panel-close "$PANEL" >/dev/null 2>&1 || true
 
 echo "OK: la prueba de humo pasó"

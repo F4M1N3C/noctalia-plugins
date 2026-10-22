@@ -58,6 +58,15 @@ def log_size() -> int:
         return 0
 
 
+def log_rotated(offset: int) -> bool:
+    """True si el log se ha rotado o trunco desde que se empezo.
+
+    En ese caso lo que hay ahora no es lo que paso durante la
+    verificacion: no se ha revisado nada y hay que decirlo.
+    """
+    return os.path.isfile(LOG) and log_size() < offset
+
+
 def read_since(offset: int) -> str:
     try:
         with open(LOG, "rb") as handle:
@@ -662,6 +671,16 @@ def _main(argv):
         infra_problems = [infra("log de Noctalia", "no existe: " + LOG)]
     else:
         infra_problems = []
+        if log_rotated(offset):
+            # El log se ha rotado o trunado: lo que hay ahora no es lo que
+            # paso durante la verificacion y no se ha revisado nada.
+            infra_problems.append(
+                infra(
+                    "log de Noctalia",
+                    "el log se ha rotado durante la verificacion: "
+                    "no se ha revisado nada",
+                )
+            )
     if not args.no_ui and not exercised:
         infra_problems.append(
             infra(
@@ -718,6 +737,18 @@ def _main(argv):
                     infra(
                         "selftest (repo)",
                         "no existe: " + selftest,
+                    )
+                )
+            elif os.path.isdir(os.path.join(args.deploy, OWNER)):
+                # El plugin esta desplegado pero su copia no tiene el
+                # autotest: esta desactualizada y hay que saberlo.
+                failures.append(
+                    (
+                        KIND_NOTE,
+                        OWNER,
+                        "selftest (despliegue)",
+                        "no existe en la copia desplegada (%s): esta desactualizada"
+                        % selftest,
                     )
                 )
             continue

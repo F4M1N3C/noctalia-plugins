@@ -76,10 +76,16 @@ def estado_temporal():
     return tempfile.mkdtemp(prefix="verifier-state-")
 
 
-def escenario(nombre, rc, fallos, esperado_rc, esperado=None, no_esperado=None):
+def escenario(
+    nombre, rc, fallos, esperado_rc, esperado=None, no_esperado=None, salida=None
+):
     ok = rc == esperado_rc
     if esperado is not None:
-        ok = ok and any(esperado in f for f in fallos)
+        # Un aviso no es un "fallo": si se pasa la salida, se busca ahi.
+        if salida is not None:
+            ok = ok and esperado in salida
+        else:
+            ok = ok and any(esperado in f for f in fallos)
     if no_esperado is not None:
         ok = ok and not any(no_esperado in f for f in fallos)
     print("  %s %-52s rc=%d %s" % ("ok " if ok else "FALLO", nombre, rc, fallos[:2]))
@@ -281,7 +287,44 @@ def main(argv):
     finally:
         shutil.rmtree(state, ignore_errors=True)
 
-    print("12) sin validadores compartidos -> rc 1 (infraestructura)")
+    print("12) despliegue sin autotest -> se avisa (copia desactualizada)")
+    deploy, destino = copia_despliegue()
+    os.remove(os.path.join(destino, "bin", "selftest.py"))
+    try:
+        rc, fallos, salida = run(root, deploy=deploy)
+        resultados.append(
+            escenario(
+                "despliegue sin autotest: se avisa",
+                rc,
+                fallos,
+                0,
+                salida=salida,
+                esperado="desactualizada",
+            )
+        )
+    finally:
+        shutil.rmtree(deploy, ignore_errors=True)
+
+    print("13) el log rotado -> rc 1 (no se ha revisado nada)")
+    spec = importlib.util.spec_from_file_location("verificador_rotado", VERIFIER)
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    log = os.path.join(tempfile.gettempdir(), "verificador-rotado.log")
+    with open(log, "w", encoding="utf-8") as handle:
+        handle.write("x" * 100)
+    modulo.LOG = log
+    offset = modulo.log_size()
+    with open(log, "w", encoding="utf-8") as handle:
+        handle.write("")
+    try:
+        resultados.append(
+            escenario("el log rotado se detecta", 0 if modulo.log_rotated(offset) else 1, [], 0)
+        )
+    finally:
+        if os.path.isfile(log):
+            os.remove(log)
+
+    print("14) sin validadores compartidos -> rc 1 (infraestructura)")
     raiz = copia_repo(root, con_tools=False)
     try:
         rc, fallos, salida = run(raiz)

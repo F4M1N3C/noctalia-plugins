@@ -156,6 +156,10 @@ the event too early loses it without a trace).
 If the panel has pending changes (the overrides file exists), the verifier
 does not write anything: it would overwrite them. It says so instead.
 
+Two more cases are reported instead of being passed over: if the log was
+rotated while the verification was running (nothing could be reviewed) and
+if the deployed copy is out of date (its self-test is missing).
+
 ```sh
 python3 ~/.local/share/noctalia/plugins/lyrics-carousel/tools/check-verifier.py
 ```

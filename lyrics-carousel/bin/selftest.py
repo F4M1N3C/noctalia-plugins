@@ -98,10 +98,18 @@ def main(argv):
     #    de ~/.local/bin no puede romper la localizacion del helper).
     try:
         import importlib.machinery
+        import importlib.util
 
-        module = importlib.machinery.SourceFileLoader(
-            "lyrics_carousel_selftest", os.path.join(HERE, "lyrics-carousel")
-        ).load_module()
+        script = os.path.join(HERE, "lyrics-carousel")
+        # el script no tiene extension .py: hay que indicar el cargador
+        loader = importlib.machinery.SourceFileLoader(
+            "lyrics_carousel_selftest", script
+        )
+        spec = importlib.util.spec_from_file_location(
+            "lyrics_carousel_selftest", script, loader=loader
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
         resolved = os.path.dirname(os.path.realpath(module.__file__))
         check("helper junto al script", resolved == HERE, resolved)
     except Exception as error:  # noqa: BLE001

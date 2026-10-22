@@ -77,12 +77,6 @@ local anchorOffset = nil -- distancia real del ancla (medida, px de superficie)
 -- Correccion fina del hueco hasta el ancla: se calcula con el salto real.
 local anchorGapAdjust = 0
 local lastRecenterComp = nil -- relleno usado en el ultimo recentrado
--- Offset que el scroll deberia tener tras aplicar el ultimo relleno. El shell
--- ajusta el scroll para que el contenido no se mueva cuando cambia el
--- relleno; ese ajuste propio llega como un onScroll mas y no debe contar como
--- un dentado de rueda.
-local expectedOffset = nil
-local lastComp = nil
 
 -- Puntero y teclado
 local hovered = nil
@@ -720,30 +714,6 @@ render = function()
   if not cfg.wheel then
     compensation = m.pad
   end
-  -- El shell mantiene la posicion visual cuando cambia el relleno: si el
-  -- relleno crece, el scroll retrocede lo mismo. Ese ajuste llega como un
-  -- onScroll mas y no debe contar como rueda, asi que se anota el offset que
-  -- dejara para distinguirlo del desplazamiento del usuario.
-  --
-  -- Durante un recentro el relleno que se aplica es temporal (scrollComp): el
-  -- salto al ancla lo gestiona la rama de reinicio de onScroll, asi que ahi no
-  -- hay nada que predecir. El relleno temporal coincide con el real (es la
-  -- misma cuenta) y por eso se guarda como referencia.
-  local scale = uiScale()
-  if scrollComp ~= nil then
-    lastComp = scrollComp
-    expectedOffset = nil
-  else
-    if lastComp == nil then
-      expectedOffset = nil
-    elseif compensation ~= lastComp then
-      expectedOffset = scrollOffset - (compensation - lastComp) * scale
-    end
-    -- Si el relleno no ha cambiado se conserva la prediccion anterior: el
-    -- evento del shell puede llegar despues de un repintado por la animacion
-    -- y, si se borrara aqui, ese ajuste se contaria como rueda.
-    lastComp = compensation
-  end
 
   local scroll = ui.scroll({
     key = "carousel-scroll",
@@ -994,11 +964,8 @@ function onClose()
   opened = false
   animating = false
   heldKey = nil
-  -- El scroll se queda en el estado en que estaba: si se abriera con una
-  -- prediccion o un reinicio a medias, el primer evento de la sesion nueva se
-  -- tragaria sin motivo.
-  expectedOffset = nil
-  lastComp = nil
+  -- Si el panel se cerrara con un reinicio a medias, el primer evento de la
+  -- sesion nueva se tragaria sin motivo.
   scrollResetting = false
   scrollAccum = 0
   -- Al cerrar se apaga el tick: al reabrir tiene que volver a encenderse (y
@@ -1021,14 +988,17 @@ function onScroll(offset, _maxOffset)
   wakeUp()
 
   -- El recentro: el shell acaba de saltar al ancla. Ese salto es nuestro, no
-  -- del usuario, y va primero: si se comprobara antes la prediccion del shell,
-  -- este evento se tragaria y el reinicio se quedaria pendiente, con lo que el
-  -- siguiente dentado de la rueda se perderia.
+  -- del usuario, y es el unico desplazamiento que el shell hace por su cuenta
+  -- (el resto lo mueve la rueda), asi que va antes de nada: si se mezclara
+  -- con la cuenta, el dentado siguiente se perderia.
+  --
+  -- El relleno del scroll no genera ningun evento: la cinta se mantiene quieta
+  -- porque el contenido se coloca en (relleno - desplazamiento) y ambos crecen
+  -- a la vez, asi que el shell no mueve el scroll al cambiar el relleno.
   if scrollResetting then
     scrollResetting = false
     scrollOffset = newOffset
     scrollAccum = 0
-    expectedOffset = nil
     -- El salto real mide donde está el ancla. Con ese dato el relleno del
     -- scroll se calcula al milimetro y el recentrado no mueve la cinta.
     if lastRecenterComp then
@@ -1052,23 +1022,6 @@ function onScroll(offset, _maxOffset)
     render()
     return
   end
-
-  -- Ajuste propio del shell al cambiar el relleno: al crecer el relleno el
-  -- shell devuelve el scroll al offset anterior para que la cinta no se mueva,
-  -- y ese ajuste llega como un onScroll mas. Se sincroniza pero no cuenta como
-  -- dentado: si contara, la cuenta se inflaria y el dentado siguiente se
-  -- perderia.
-  --
-  -- La prediccion es exacta (el offset previo), asi que solo se descarta este
-  -- evento si coincide con ella. El caso residual es que la rueda del usuario
-  -- caiga justo en ese valor: ese dentado se pierde, pero el siguiente ya
-  -- vuelve a contar bien.
-  if expectedOffset ~= nil and math.abs(newOffset - expectedOffset) < 1.5 then
-    scrollOffset = newOffset
-    expectedOffset = nil
-    return
-  end
-  expectedOffset = nil
 
   -- Cuando el scroll llega al principio no puede seguir subiendo: se recentra
   -- saltando hacia abajo para reabrir el recorrido.

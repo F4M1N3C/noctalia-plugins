@@ -2221,6 +2221,13 @@ class LyricsCarousel:
             self.dirty = True
             return True
         if key in ("r", "R"):
+            if self.demo:
+                # En modo demo no se busca en internet: se recarga la letra
+                # de muestra (buscarla haria cuatro peticiones a los
+                # proveedores sin ningun sentido).
+                self._load_demo()
+                self.dirty = True
+                return True
             if self.track.title or self.track.artist:
                 self.reload_lyrics(force=True)
             return True

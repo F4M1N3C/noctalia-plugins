@@ -151,6 +151,8 @@ def check_atajos():
             previo = None
     antes = direccion_actual()
     esperado = "up" if antes == "down" else "down"
+    log = os.path.join(os.path.expanduser("~/.cache/lyrics-carousel"), "debug.log")
+    log_pos = os.path.getsize(log) if os.path.isfile(log) else 0
     karaoke_antes = karaoke_actual()
     karaoke_esperado = not karaoke_antes
     try:
@@ -169,13 +171,20 @@ def check_atajos():
             os.environ.pop("LINES", None)
             os.execvp(
                 "python3",
-                ["python3", os.path.join(HERE, "lyrics-carousel"), "--demo"],
+                [
+                    "python3",
+                    os.path.join(HERE, "lyrics-carousel"),
+                    "--demo",
+                    "--debug",
+                ],
             )
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 90, 0, 0))
         time.sleep(2.5)
         os.write(fd, b"d")
         time.sleep(1.5)
         os.write(fd, b"k")
+        time.sleep(1.5)
+        os.write(fd, b"r")
         time.sleep(2.5)
         try:
             os.kill(pid, signal.SIGTERM)
@@ -201,6 +210,29 @@ def check_atajos():
             "el atajo 'k' alterna el karaoke",
             ok_k,
             "esperado %s, hay %s" % (karaoke_esperado, data.get("karaoke")),
+        )
+        # El modo demo es autonomo: ni al arrancar ni al recargar ('r')
+        # debe pedir letra a internet.
+        peticiones = []
+        if os.path.isfile(log):
+            try:
+                with open(log, encoding="utf-8", errors="replace") as handle:
+                    handle.seek(log_pos)
+                    texto = handle.read()
+                peticiones = [
+                    linea
+                    for linea in texto.split("\n")
+                    if any(
+                        marca in linea.lower()
+                        for marca in ("http", "kugou", "splayer", "netease", "lrclib")
+                    )
+                ]
+            except OSError:
+                peticiones = []
+        check(
+            "el modo demo no pide letra a internet",
+            not peticiones,
+            "; ".join(peticiones[:2]),
         )
     except (OSError, ValueError) as error:
         check("el atajo 'd' alterna la dirección", False, str(error)[:120])

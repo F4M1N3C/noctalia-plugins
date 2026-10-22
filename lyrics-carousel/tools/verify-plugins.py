@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -201,6 +202,13 @@ def classify(text: str):
 
 OWNER = "lyrics-carousel"
 
+# Cada fallo lleva su origen: de que plugin es, o que la propia verificacion
+# no ha podido comprobar algo (eso tambien bloquea: si no se puede verificar,
+# no se puede decir que todo esta bien).
+KIND_PLUGIN = "plugin"
+KIND_INFRA = "infra"
+KIND_UNKNOWN = "unknown"
+
 
 def log_owner(line: str) -> str:
     """Plugin al que pertenece una linea del log de Noctalia.
@@ -266,23 +274,49 @@ def owners_of(detail: str):
     return result
 
 
+def infra(label: str, detail: str = ""):
+    """Fallo de la propia verificacion: no se ha podido comprobar."""
+    return (KIND_INFRA, "", label, detail)
+
+
 def static_checks(root: str):
+    """Fallos de los validadores y de la sintaxis.
+
+    Cada fallo lleva su origen. Un validador que no se puede ejecutar, o
+    que revienta sin decir nada, es un fallo de la propia verificacion: no
+    se puede afirmar que todo esta bien si no se ha comprobado.
+    """
     failures = []
     for script in ("check-luau-globals.py", "check-ui-resources.py", "check-locals.py"):
         path = os.path.join(root, "tools", script)
         if not os.path.isfile(path):
+            # El validador no esta instalado: no hay nada que comprobar.
             continue
         result = run(["python3", path, root], timeout=120)
         if result is None:
-            failures.append((script, "no se pudo ejecutar"))
+            failures.append(infra(script, "no se pudo ejecutar"))
         elif result.returncode != 0:
+            detail = result.stdout.strip()
+            if not detail:
+                # Revento sin salida: no se sabe que fallo ni de quien.
+                detail = (result.stderr.strip() or "sin salida")[-600:]
+                failures.append(infra(script, detail))
+                continue
             # Sin truncar: el reparto por plugin necesita la salida entera
             # (si no, se pierden los bloques del principio).
-            failures.append((script, result.stdout.strip()))
+            for owner, block in owners_of(detail):
+                failures.append(
+                    (KIND_PLUGIN if owner else KIND_UNKNOWN, owner, script, block)
+                )
     # Los ficheros .luau tienen que compilar (los que usan sintaxis Luau
     # se saltan: luac no las entiende).
     skipped = 0
     compiled = 0
+    if shutil.which("luac") is None:
+        # Sin luac no se comprueba la sintaxis: es un fallo de la
+        # verificacion, no un "todo bien" silencioso.
+        failures.append(infra("luac", "no está instalado: no se comprueba la sintaxis"))
+        return failures, compiled, skipped
     for current, dirs, names in os.walk(root):
         dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", "node_modules")]
         for name in names:
@@ -291,6 +325,7 @@ def static_checks(root: str):
             path = os.path.join(current, name)
             result = run(["luac", "-p", path], timeout=20)
             if result is None:
+                failures.append(infra("luac", "no se pudo comprobar " + path))
                 continue
             if result.returncode != 0:
                 skipped += 1
@@ -321,6 +356,12 @@ def main(argv):
             exercise(plugin)
         time.sleep(2)
     text = read_since(offset)
+    if not os.path.isfile(LOG):
+        # Sin log no se puede revisar lo que ha pasado: no se puede decir
+        # que todo esta bien.
+        infra_problems = [infra("log de Noctalia", "no existe: " + LOG)]
+    else:
+        infra_problems = []
     problems, expected = classify(text)
     # Cada problema del log se atribuye a su plugin: los de otro plugin no
     # pueden bloquear la verificacion de este.
@@ -340,16 +381,9 @@ def main(argv):
         for label, line, owner in other_problems[:10]:
             print("  [%s] (%s) %s" % (label, owner or "?", line[-200:]))
     else:
-        print("--- sin errores ni avisos inesperados ---")
+        print("--- log de Noctalia: sin errores ni avisos inesperados ---")
 
     failures, compiled, skipped = static_checks(args.root)
-    # (dueño, etiqueta, detalle): el dueño se decide al guardar el fallo,
-    # no despues mirando el texto.
-    shared = []
-    for label, detail in failures:
-        for owner, block in owners_of(detail):
-            shared.append((owner, label, block))
-    failures = shared
 
     # Autotest del plugin: comprueba las suposiciones del entorno (helper,
     # directorio de datos, herramientas externas, modulos hermanos). Se usa
@@ -367,10 +401,17 @@ def main(argv):
         result = run([sys.executable, selftest], timeout=90)
         where = "repo" if selftest.startswith(args.root) else "despliegue"
         if result is None:
-            failures.append((OWNER, "selftest (%s)" % where, "no se pudo ejecutar"))
+            failures.append(
+                (KIND_PLUGIN, OWNER, "selftest (%s)" % where, "no se pudo ejecutar")
+            )
         elif result.returncode != 0:
             failures.append(
-                (OWNER, "selftest (%s)" % where, result.stdout.strip()[-600:])
+                (
+                    KIND_PLUGIN,
+                    OWNER,
+                    "selftest (%s)" % where,
+                    result.stdout.strip()[-600:],
+                )
             )
         else:
             print(
@@ -380,13 +421,18 @@ def main(argv):
     print("ficheros .luau compilados: %d (con sintaxis Luau, omitidos: %d)" % (compiled, skipped))
     mine = []
     others = []
-    for owner, script, detail in failures:
+    for kind, owner, script, detail in failures:
         # Lo que falle en el plugin propio bloquea la pasada; lo de los demas
-        # se informa, pero lo lleva su sesion.
-        if owner == OWNER:
+        # se informa, pero lo lleva su sesion. Y si la propia verificacion
+        # no ha podido comprobar algo, tambien bloquea.
+        if kind == KIND_INFRA:
+            mine.append((script, detail))
+        elif kind == KIND_PLUGIN and owner == OWNER:
             mine.append((script, detail))
         else:
             others.append((script, detail))
+    for _kind, _owner, label, detail in infra_problems:
+        mine.append((label, detail))
     for script, detail in others:
         print(
             "--- pendiente de otra sesion (%s) ---\n%s"

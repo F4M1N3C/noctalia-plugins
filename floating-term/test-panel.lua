@@ -383,7 +383,7 @@ key = "commands"
 type = "string_map"
 label_key = "settings.commands.label"
 description_key = "settings.commands.description"
-default = { cava = "cava", cbonsai = "cbonsai -l -p", unimatrix = "unimatrix -s 96 -l o" }
+default = { cava = "cava", cbonsai = "cbonsai -l -i", unimatrix = "unimatrix -s 96 -l o" }
 
 [[setting]]
 key = "layouts"
@@ -395,7 +395,7 @@ default = { cava = "bottom-center, 1610x584", cbonsai = "top-center, 801x582" }
 defaults.reset()
 local base2 = defaults.load()
 check("comandos del manifiesto", base2.commands.cava, "cava")
-check("comando con espacios", base2.commands.cbonsai, "cbonsai -l -p")
+check("comando con espacios", base2.commands.cbonsai, "cbonsai -l -i")
 check("comando con guiones", base2.commands.unimatrix, "unimatrix -s 96 -l o")
 check("posición del manifiesto", base2.layouts.cava, "bottom-center, 1610x584")
 check("posición con comas", base2.layouts.cbonsai, "top-center, 801x582")
@@ -727,6 +727,24 @@ end
 env.onOpen("")
 check("el panel abre y renderiza", true, rendered > 0)
 check("hay una tarjeta por widget", widgetCount, countKeys(lastTree, "card-"))
+
+-- El manifiesto se analiza una vez, pero al abrir el panel se relee: si el
+-- .toml cambia en caliente, las tarjetas no pueden seguir con el comando viejo.
+local manifestFixture = files[DIR .. "plugin.toml"]
+files[DIR .. "plugin.toml"] = [==[
+[[setting]]
+key = "commands"
+default = { nuevo = "un-comando --nuevo" }
+]==]
+env.onOpen("")
+local freshCard = findNode(lastTree, "card-nuevo")
+check(
+  "al abrir se relee el manifiesto",
+  true,
+  freshCard ~= nil and tostring(freshCard.props.tooltip):find("un-comando --nuevo", 1, true) ~= nil
+)
+files[DIR .. "plugin.toml"] = manifestFixture
+env.onOpen("")
 check("la cabecera tiene el botón de abrir todo", true, findNode(lastTree, "open-all") ~= nil)
 check("la cabecera tiene el botón de rotar", true, findNode(lastTree, "rotate") ~= nil)
 check("la cabecera tiene el botón de cerrar todo", true, findNode(lastTree, "close-all") ~= nil)

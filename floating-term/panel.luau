@@ -1103,6 +1103,9 @@ end
 
 function onOpen(_context)
   state.open = true
+  -- El manifiesto se cachea para no analizarlo en cada callback; al abrir el
+  -- panel se relee, por si el plugin se actualizó sin reiniciar Noctalia.
+  defaults.reset()
   loadConfig()
   loadWidgets()
   state.editing = false
@@ -1120,6 +1123,7 @@ function onClose()
 end
 
 function onConfigChanged()
+  defaults.reset()
   loadConfig()
   loadWidgets()
   if state.open then

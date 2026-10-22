@@ -27,6 +27,9 @@ STORE="$STATE_DIR/plugins/data/$PLUGIN_ID/store.json"
 OPEN_TIMEOUT="${OPEN_TIMEOUT:-45}"
 ROTATE_TIMEOUT="${ROTATE_TIMEOUT:-15}"
 CLOSE_TIMEOUT="${CLOSE_TIMEOUT:-20}"
+# Margen tras abrir para que se note un comando que termina solo y se lleva su
+# ventana por delante (`cbonsai -l -p` tardaba ~7 s en imprimir y salir).
+SETTLE="${SETTLE:-8}"
 
 fail() {
   echo "FALLA: $*" >&2
@@ -193,12 +196,18 @@ noctalia msg plugin "$PANEL" all close-all >/dev/null 2>&1 || fail "el IPC close
 wait_count 0 "$CLOSE_TIMEOUT" || fail "quedaron ventanas abiertas al empezar: $(plugin_geometry)"
 
 echo "1) abrir todos los widgets"
+ensure_panel
 noctalia msg plugin "$PANEL" all open-all >/dev/null 2>&1 || fail "el IPC open-all no respondió"
 if ! wait_count "$expected" "$OPEN_TIMEOUT"; then
   echo "   abiertas: $(plugin_geometry | tr '\n' ' ')" >&2
   fail "se esperaban $expected ventanas y hay $(plugin_count)"
 fi
 wait_stable || fail "las ventanas no terminaron de colocarse"
+sleep "$SETTLE"
+if [ "$(plugin_count)" -ne "$expected" ]; then
+  echo "   abiertas tras ${SETTLE}s: $(plugin_geometry | tr '\n' ' ')" >&2
+  fail "algún widget se cerró solo (quedan $(plugin_count) de $expected)"
+fi
 echo "   ventanas abiertas: $(plugin_count) ✔"
 
 echo "2) rotar"
@@ -238,6 +247,7 @@ print(
     )
 )
 PY
+ensure_panel
 plugin_geometry >"$tmp/before"
 noctalia msg plugin "$PANEL" all rotate >/dev/null 2>&1 || fail "el IPC rotate no respondió"
 deadline=$((SECONDS + ROTATE_TIMEOUT))

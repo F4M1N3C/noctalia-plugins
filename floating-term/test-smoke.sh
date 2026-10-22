@@ -143,7 +143,65 @@ tmp=$(mktemp -d /tmp/opencode/floating-term-smoke.XXXXXX) || {
   echo "no se pudo crear el directorio temporal" >&2
   exit 2
 }
-tail -n 0 -F "$LOG" >"$tmp/run.log" 2>/dev/null &
+# Seguidor robusto: drena el fichero viejo hasta el final antes de cambiar al
+# nuevo cuando el host rota/trunca el log (tail -F puede perder líneas).
+python3 - "$LOG" "$tmp/run.log" <<'PY' &
+import os
+import sys
+import time
+
+log, out = sys.argv[1], sys.argv[2]
+f = open(out, "ab", buffering=0)
+fh = None
+inode = None
+try:
+    fh = open(log, "rb")
+    fh.seek(0, os.SEEK_END)
+    inode = os.fstat(fh.fileno()).st_ino
+except FileNotFoundError:
+    fh = None
+    inode = None
+
+while True:
+    time.sleep(0.1)
+    try:
+        st = os.stat(log)
+    except FileNotFoundError:
+        continue
+    if fh is None or st.st_ino != inode:
+        if fh is not None:
+            try:
+                data = fh.read()
+                if data:
+                    f.write(data)
+            except Exception:
+                pass
+            try:
+                fh.close()
+            except Exception:
+                pass
+        try:
+            fh = open(log, "rb")
+            inode = os.fstat(fh.fileno()).st_ino
+            fh.seek(0, os.SEEK_END)
+        except FileNotFoundError:
+            fh = None
+            inode = None
+            continue
+    try:
+        pos = fh.tell()
+        size = os.fstat(fh.fileno()).st_size
+    except Exception:
+        continue
+    if pos > size:
+        fh.seek(0)
+    try:
+        data = fh.read()
+    except Exception:
+        continue
+    if data:
+        f.write(data)
+PY
 FOLLOWER_PID=$!
 sleep 0.2
 
@@ -452,12 +510,11 @@ fi
 # de congelar la copia.
 wait_log_quiet 3 15
 stop_follower
-# Con la copia volcada se comprueba que el cierre quedó registrado. La copia
-# puede haber rotado a mitad del cierre, así que un fallo aquí solo se avisa;
-# el criterio decisivo es el estado del host de arriba (y la revisión del log).
+# Con la copia volcada se comprueba que el cierre quedó registrado. El seguidor
+# drena el fichero viejo antes de cambiar, así que la línea debe estar.
 last_event=$(grep -E "panel manager: (opened|closing) \"$PANEL\"" "$tmp/run.log" | tail -1)
 if ! printf '%s\n' "$last_event" | grep -Fq "closing \"$PANEL\""; then
-  echo "   aviso: el cierre no aparece en la copia del log (rotación?); estado del host confirma el cierre" >&2
+  fail "el panel no se cerró (último evento: ${last_event:-ninguno})"
 fi
 
 echo "5) avisos y errores nuevos en el log durante toda la prueba"

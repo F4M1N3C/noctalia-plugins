@@ -132,9 +132,31 @@ local mock = {
   json = {
     encode = jsonEncode,
     decode = function(text)
+      -- Solo hace falta el formato que produce el simulador: una lista de
+      -- objetos con cadenas y números, y el mapa plano del store.
+      local trimmed = text:match("^%s*(.-)%s*$")
+      if trimmed:sub(1, 1) == "[" then
+        local out = {}
+        for object in trimmed:gmatch("{(.-)}") do
+          local item = {}
+          -- En los patrones de Lua la alternancia "|" solo existe al nivel
+          -- superior: dentro de un grupo no funciona. Por eso se hace una
+          -- pasada para los textos y otra para los números.
+          for key, value in object:gmatch('"([^"]+)":"([^"]*)"') do
+            item[key] = value
+          end
+          for key, value in object:gmatch('"([^"]+)":(-?%d+)') do
+            if item[key] == nil then
+              item[key] = tonumber(value)
+            end
+          end
+          out[#out + 1] = item
+        end
+        return out
+      end
       local out = {}
-      for key, item in text:gmatch('"([^"]+)":"([^"]*)"') do
-        out[key] = item
+      for key, value in trimmed:gmatch('"([^"]+)":"([^"]*)"') do
+        out[key] = value
       end
       return out
     end,
@@ -155,8 +177,8 @@ local mock = {
   notifyError = function(title, body)
     notifications[#notifications + 1] = { title = title, body = body, error = true }
   end,
+  -- Reloj controlado por el test: el debounce de 700 ms depende de él.
   nowMs = function()
-    clock = clock + 16
     return clock
   end,
   outputs = function()
@@ -240,6 +262,10 @@ local panelMock = {
   setNeedsFrameTick = function() end,
   setWantsSecondTicks = function() end,
 }
+
+-- Las expresiones despachadas se recogen aquí (la comparten la sección de
+-- rotación y la del panel).
+local dispatched = {}
 
 -- ----------------------------------------------------------------- entorno --
 
@@ -494,11 +520,42 @@ local group = {
   fakeWindow("abajo-der", 2524, 624, 900, 800),
 }
 
-local dispatched = {}
+-- El simulador de procesos: devuelve la lista de ventanas cuando la piden,
+-- registra las expresiones despachadas y completa las llamadas de inmediato.
 mock.runAsync = function(argv, callback)
   local command = table.concat(argv, " ")
   if command:find("hyprctl dispatch", 1, true) then
     dispatched[#dispatched + 1] = argv[3]
+  end
+  if command:find("hyprctl clients", 1, true) then
+    local parts = {}
+    for _, client in ipairs(clients) do
+      parts[#parts + 1] = string.format(
+        '{"address":"%s","class":"%s","title":"%s","at":[%d,%d],"size":[%d,%d],"monitor":"%s"}',
+        client.address or "0x0",
+        client.class or "",
+        client.title or "",
+        client.x or 0,
+        client.y or 0,
+        client.w or 0,
+        client.h or 0,
+        client.monitor or "1"
+      )
+    end
+    if callback ~= nil then
+      callback({ exitCode = 0, stdout = "[" .. table.concat(parts, ",") .. "]", stderr = "" })
+    end
+    return true
+  end
+  if command:find("hyprctl monitors", 1, true) then
+    if callback ~= nil then
+      callback({
+        exitCode = 0,
+        stdout = '[{"id":1,"name":"DP-1","x":0,"y":0,"width":3440,"height":1440,"scale":1}]',
+        stderr = "",
+      })
+    end
+    return true
   end
   if callback ~= nil then
     callback({ exitCode = 0, stdout = "", stderr = "" })
@@ -715,6 +772,105 @@ env.onIpc("remove", "prueba")
 check("el IPC remove no falla", true, true)
 env.onIpc("launch", "cava")
 check("el IPC launch no falla", true, true)
+
+-- ------------------------------------------------------------- la rejilla --
+
+-- Cuenta las filas de tarjetas del árbol renderizado.
+local function cardRows(tree)
+  local rows = 0
+  local function walk(node)
+    if type(node) ~= "table" then
+      return
+    end
+    local isRow = false
+    for _, child in ipairs(node.children or {}) do
+      if type(child) == "table" and type(child.props) == "table"
+        and type(child.props.key) == "string" and child.props.key:sub(1, 5) == "card-" then
+        isRow = true
+      end
+    end
+    if isRow then
+      rows = rows + 1
+    end
+    for _, child in ipairs(node.children or {}) do
+      walk(child)
+    end
+  end
+  walk(tree)
+  return rows
+end
+
+env.onOpen("")
+config.columns = 2
+env.onIpc("refresh", "")
+check("rejilla de 2 columnas: 6 widgets = 3 filas", 3, cardRows(lastTree))
+config.columns = 3
+env.onIpc("refresh", "")
+check("rejilla de 3 columnas: 6 widgets = 2 filas", 2, cardRows(lastTree))
+config.columns = 1
+env.onIpc("refresh", "")
+check("rejilla de 1 columna: 6 widgets = 6 filas", 6, cardRows(lastTree))
+config.columns = 2
+env.onIpc("refresh", "")
+
+-- ------------------------------------------------- lanzar y recolocar --
+
+local function dispatchText()
+  return table.concat(dispatched, "\n")
+end
+
+local function clickCard(name)
+  local node = findNode(lastTree, "card-" .. name)
+  if node ~= nil and node.props.onClick ~= nil then
+    node.props.onClick()
+  end
+end
+
+-- El debounce ignora un segundo clic seguido.
+clock = clock + 5000
+dispatched = {}
+clickCard("btop")
+local firstLaunch = dispatchText():find("noctalia%-term%-btop") ~= nil
+dispatched = {}
+clickCard("btop")
+check("pulsar una tarjeta lanza su widget", true, firstLaunch)
+check("un segundo clic seguido no lanza otra ventana", false, dispatchText():find("exec_cmd") ~= nil)
+
+clock = clock + 5000
+dispatched = {}
+clickCard("btop")
+check("pasado el debounce se vuelve a lanzar", true, dispatchText():find("exec_cmd") ~= nil)
+check("la ventana se coloca en su posición configurada", true, dispatchText():find("move%({ x = 16, y = 16") ~= nil)
+
+-- Si el widget ya está abierto, al volver a pulsarlo tiene que volver a su
+-- sitio (no a un hueco cualquiera): la evitación de colisiones no puede
+-- contarse a sí misma.
+clients = {
+  { address = "0x1", class = "noctalia-term-btop", x = 2000, y = 900, w = 928, h = 800, monitor = "1" },
+}
+env.onOpen("")
+clock = clock + 5000
+dispatched = {}
+clickCard("btop")
+check("un widget ya abierto vuelve a su posición", true, dispatchText():find("move%({ x = 16, y = 16") ~= nil)
+check("y no se lanza una segunda ventana", true, dispatchText():find("exec_cmd") == nil)
+clients = {}
+
+-- ------------------------------------------------- borrar desde el panel --
+
+env.onOpen("")
+local editButton2 = findNode(lastTree, "edit")
+if editButton2 ~= nil and editButton2.props.onClick ~= nil then
+  editButton2.props.onClick()
+end
+local deleteButton = findNode(lastTree, "delete-btop")
+check("hay un botón de borrar por tarjeta", true, deleteButton ~= nil)
+if deleteButton ~= nil and deleteButton.props.onClick ~= nil then
+  deleteButton.props.onClick()
+end
+check("al borrar, la tarjeta desaparece", false, findNode(lastTree, "card-btop") ~= nil)
+check("y el widget ya no está en la lista", false, (lastTree ~= nil) and findNode(lastTree, "card-btop") ~= nil)
+
 
 print(string.format("\n%d comprobaciones, %d fallos", PASSED + FAILED, FAILED))
 os.exit(FAILED == 0 and 0 or 1)

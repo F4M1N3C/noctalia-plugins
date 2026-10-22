@@ -172,7 +172,10 @@ end
 
 -- -------------------------------------------------------------- simulador
 
-local TMP = "/tmp/notes-sync-service-test"
+-- Carpeta propia de esta ejecucion (mismo motivo que en el test del panel:
+-- dos pruebas a la vez no se pisan).
+local TMP = os.getenv("NOTES_SYNC_TEST_DIR")
+  or ("/tmp/notes-sync-service-test-" .. tostring(math.random(1000000, 9999999)))
 local DATA_DIR = TMP .. "/state/noctalia/plugins/data/faminec/notes-sync"
 local NOTES_DIR = TMP .. "/state/noctalia/plugins/data/faminec/notes"
 
@@ -644,6 +647,9 @@ end)
 print("")
 if FAILED == 0 then
   print("Resultado: " .. PASSED .. " correctos, 0 fallos")
+  -- Si todo ha ido bien, se borra la carpeta de esta ejecucion (si falla, se
+  -- deja para poder depurar).
+  os.execute("rm -rf " .. TMP)
   os.exit(0)
 end
 print("Resultado: " .. PASSED .. " correctos, " .. FAILED .. " fallos")

@@ -22,7 +22,10 @@ end
 
 -- ------------------------------------------------------------- simulador
 
-local DIR = os.getenv("NOTES_TEST_DIR") or "/tmp/notes-panel-test"
+-- Carpeta propia de esta ejecucion: con un nombre fijo, dos pruebas a la vez
+-- (por ejemplo, dos sesiones) se pisan y fallan sin que nada este roto.
+local DIR = os.getenv("NOTES_TEST_DIR")
+  or ("/tmp/notes-panel-test-" .. tostring(math.random(1000000, 9999999)))
 local DATA_DIR = DIR .. "/data"
 
 local pins = {}
@@ -435,4 +438,10 @@ check("el test detecta el fallo si se rompe el panel", true, detecta and true or
 
 print()
 print(string.format("Resultado: %d correctos, %d fallos", PASADOS, FALLOS))
+
+-- Si todo ha ido bien, se borra la carpeta de esta ejecucion (si falla, se
+-- deja para poder depurar).
+if FALLOS == 0 then
+  os.execute("rm -rf " .. DIR)
+end
 os.exit(FALLOS == 0 and 0 or 1)

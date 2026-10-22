@@ -146,6 +146,15 @@ siempre el panel de sonido, y el plugin y el demonio se pisaban el fichero
 a raya. El demonio ahora conserva las claves que no gestiona (verificado:
 la clave sobrevive a un guardado ✓).
 
+Y un matiz que hacia la primera version de esa correccion incompleta: el
+demonio se guardaba en memoria la clave del plugin, asi que a partir de ahi
+escribia su valor viejo y **pisaba los cambios nuevos** del plugin (la
+pestana recordada se perdia al cambiarla ✓). Ahora, antes de cada
+guardado, **el fichero manda** para las claves que no gestiona el demonio
+(y las que el plugin borre se borran tambien ✓). Verificado: 20 guardados
+seguidos conservan el valor ✓, 15 escrituras del plugin en carrera con un
+guardado se pierden 0 ✓ y una clave borrada no se resucita ✓.
+
 ### Comprobaciones finales
 
 - **El lector de modificadores se ha probado de verdad**: con un teclado

@@ -253,7 +253,10 @@ anteriores que resultaron inexactas) está en [`CHANGELOG.md`](CHANGELOG.md).
   última pestaña abierta con `noctalia.state`, que guarda en el **mismo**
   `state.json` que el demonio. Como el demonio lo reescribe entero en cada
   guardado, esa clave se perdía (y el widget volvía siempre al panel de
-  sonido). Ahora el demonio conserva las claves que no gestiona.
+  sonido). Ahora el demonio conserva las claves que no gestiona **y les
+  hace caso**: antes de cada guardado, el fichero manda para esas claves
+  (y las que el plugin borre, se borran), así que ni se pisan los cambios
+  del plugin ni se resucitan las claves borradas.
 - **El fichero de reglas es la fuente de verdad.** Las reglas se releen del
   fichero antes de guardar (y antes de mostrarlas en el panel), así que si
   alguien las edita a mano o desde otra sesión, el panel no pisa esos

@@ -554,6 +554,11 @@ class BudsDaemon:
         self.preferred_name = (args.device_name or "").strip()
         self.state = empty_state()
         self.state["daemon_pid"] = os.getpid()
+        # Las claves que gestiona el demonio. El resto del state.json es del
+        # plugin (noctalia.state) y manda siempre lo que haya en el fichero:
+        # si el demonio guardase su propia copia, pisaria los cambios del
+        # plugin (la pestana recordada se perdia al cambiarla).
+        self._daemon_keys = set(self.state.keys()) | {"local_actions"}
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
         self.link: BudsLink | None = None
@@ -607,9 +612,14 @@ class BudsDaemon:
                 with open(self.state_path, "r", encoding="utf-8") as fh:
                     previo = json.load(fh)
                 if isinstance(previo, dict):
+                    # Lo que haya en el fichero manda para las claves del
+                    # plugin, y las que el plugin borre se borran tambien.
                     for clave, valor in previo.items():
-                        if clave not in self.state:
+                        if clave not in self._daemon_keys:
                             self.state[clave] = valor
+                    for clave in list(self.state):
+                        if clave not in self._daemon_keys and clave not in previo:
+                            self.state.pop(clave, None)
             except Exception:
                 pass
             data = json.dumps(self.state, ensure_ascii=False, separators=(",", ":"))

@@ -172,9 +172,19 @@ local function publishCurrent()
   if payload == nil then
     return
   end
-  local ok = noctalia.writeFile(dir .. "/current.json", payload)
+  -- Escritura atomica: se escribe a un temporal y se renombra. Si otro
+  -- plugin lee el fichero a mitad de la escritura se encontraria con un
+  -- JSON a medias (y creeria que no hay ninguna nota).
+  local tmp = dir .. "/current.json.tmp"
+  local ok = noctalia.writeFile(tmp, payload)
   if not ok then
     noctalia.log("notes: no se pudo publicar la nota actual")
+    return
+  end
+  local renamed = noctalia.renameFile(tmp, dir .. "/current.json")
+  if not renamed then
+    noctalia.removeFile(tmp)
+    noctalia.log("notes: no se pudo renombrar el fichero de la nota actual")
   end
 end
 

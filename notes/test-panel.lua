@@ -25,14 +25,63 @@ end
 local DIR = os.getenv("NOTES_TEST_DIR") or "/tmp/notes-panel-test"
 local DATA_DIR = DIR .. "/data"
 
-local ficheros = {} -- nombre -> contenido
 local pins = {}
+
+-- Bitacora de las operaciones con ficheros: sirve para comprobar que la nota
+-- actual se publica de forma atomica (se escribe a un temporal y se renombra)
+-- y no escribiendo el fichero final a medias.
+local bitacora = {}
 
 local function limpia()
   os.execute("rm -rf " .. DIR)
   os.execute("mkdir -p " .. DIR .. " " .. DATA_DIR)
-  ficheros = {}
   pins = {}
+  bitacora = {}
+end
+
+-- El mock usa el disco de verdad: las notas y el current.json son ficheros
+-- reales, asi que se prueban de verdad las escrituras atomicas (temporal +
+-- renombrado) y las lecturas a medias.
+local function escribir(path, content)
+  local f = io.open(path, "w")
+  if f == nil then
+    return false
+  end
+  f:write(content)
+  f:close()
+  return true
+end
+
+local function leer(path)
+  local f = io.open(path, "r")
+  if f == nil then
+    return nil
+  end
+  local c = f:read("*a")
+  f:close()
+  return c
+end
+
+local function existe(path)
+  local f = io.open(path, "r")
+  if f == nil then
+    return false
+  end
+  f:close()
+  return true
+end
+
+local function listar(path)
+  local out = {}
+  local p = io.popen("ls -A " .. path .. " 2>/dev/null")
+  if p == nil then
+    return out
+  end
+  for line in p:lines() do
+    out[#out + 1] = line
+  end
+  p:close()
+  return out
 end
 
 local function json_encode(v)
@@ -120,77 +169,39 @@ local mock = {
     return true
   end,
   readFile = function(path)
-    if path:match("/current%.json$") then
-      local f = io.open(path, "r")
-      if f == nil then
-        return nil
-      end
-      local c = f:read("*a")
-      f:close()
-      return c
-    end
-    local name = path:match("([^/]+)$")
-    return ficheros[name]
+    return leer(path)
   end,
   writeFile = function(path, content)
-    local name = path:match("([^/]+)$")
-    if path:match("/current%.json$") then
-      local f = io.open(path, "w")
-      if f == nil then
-        return false
-      end
-      f:write(content)
-      f:close()
-      return true
-    end
     if path:match("%.pinned%.json$") then
       pins = json_decode(content)
     end
-    ficheros[name] = content
-    return true
+    bitacora[#bitacora + 1] = { op = "write", path = path }
+    return escribir(path, content)
   end,
   renameFile = function(from, to)
-    local a = from:match("([^/]+)$")
-    local b = to:match("([^/]+)$")
-    if ficheros[a] == nil then
-      return false, "no existe"
+    bitacora[#bitacora + 1] = { op = "rename", from = from, to = to }
+    local ok = os.rename(from, to)
+    if not ok then
+      return false, "no se pudo renombrar"
     end
-    ficheros[b] = ficheros[a]
-    ficheros[a] = nil
     return true
   end,
   removeFile = function(path)
-    local name = path:match("([^/]+)$")
-    if ficheros[name] == nil then
-      return false, "no existe"
-    end
-    ficheros[name] = nil
-    return true
+    local ok = os.remove(path)
+    return ok, ok and nil or "no se pudo borrar"
   end,
   fileExists = function(path)
-    local name = path:match("([^/]+)$")
-    if name == ".pinned.json" then
-      return next(pins) ~= nil
-    end
-    return ficheros[name] ~= nil
+    return existe(path)
   end,
   fileInfo = function(path)
-    local name = path:match("([^/]+)$")
-    local content = ficheros[name]
+    local content = leer(path)
     if content == nil then
       return nil
     end
     return { size = #content, mtime = 1700000000000 }
   end,
   listDir = function(path)
-    local out = {}
-    for name in pairs(ficheros) do
-      out[#out + 1] = name
-    end
-    if next(pins) then
-      out[#out + 1] = ".pinned.json"
-    end
-    return out
+    return listar(path)
   end,
   json = { encode = json_encode, decode = json_decode },
   string = {
@@ -259,6 +270,23 @@ end
 
 -- ------------------------------------------------------------- pruebas
 
+-- ¿Se publico de forma atomica? Es decir: se escribio a un temporal y ese
+-- temporal se renombro al fichero final. Un lector que llegue en medio nunca
+-- ve un JSON a medias.
+local function publicacionAtomica()
+  local tmp, renombrado = nil, false
+  for _, op in ipairs(bitacora) do
+    if op.op == "write" and op.path:match("%.tmp$") then
+      tmp = op.path
+    elseif op.op == "rename" and op.to:match("/current%.json$") then
+      if tmp ~= nil and op.from == tmp then
+        renombrado = true
+      end
+    end
+  end
+  return renombrado
+end
+
 local function current()
   local raw = mock.readFile(DATA_DIR .. "/current.json")
   if raw == nil then
@@ -270,7 +298,7 @@ end
 print("== el canal con el otro plugin ==")
 
 limpia()
-ficheros["nota.md"] = "contenido de la nota"
+escribir(DIR .. "/nota.md", "contenido de la nota")
 
 -- onOpen: el panel se abre con la nota indicada
 state.open_note = "nota.md"
@@ -281,17 +309,19 @@ check("current.json existe tras abrir", true, c ~= nil)
 check("apunta a la nota abierta", "nota.md", c and c.name or nil)
 check("lleva el contenido", "contenido de la nota", c and c.content or nil)
 check("marca que esta abierta", true, c and c.open == true or false)
+check("se publica de forma atomica (temporal + renombrado)", true, publicacionAtomica())
+check("no queda ningun temporal suelto", true, not existe(DATA_DIR .. "/current.json.tmp"))
 
 -- Renombrar: el nombre cambia y se vuelve a publicar
 local okR, errR = pcall(onRename, "renombrada")
 if not okR then print("  [debug] onRename fallo:", tostring(errR)) end
 c = current()
 check("tras renombrar apunta al nombre nuevo", "renombrada.md", c and c.name or nil)
-check("el fichero tambien se renombro", true, ficheros["renombrada.md"] ~= nil)
-check("el nombre viejo ya no esta", true, ficheros["nota.md"] == nil)
+check("el fichero tambien se renombro", true, existe(DIR .. "/renombrada.md"))
+check("el nombre viejo ya no esta", true, not existe(DIR .. "/nota.md"))
 
 -- Cambios externos: se vuelve a publicar
-ficheros["renombrada.md"] = "contenido nuevo"
+escribir(DIR .. "/renombrada.md", "contenido nuevo")
 pcall(update)
 -- (sin trazas)
 c = current()
@@ -306,7 +336,7 @@ check("pero se recuerda la ultima nota", "renombrada.md", c and c.name or nil)
 -- Borrar la nota abierta: se publica para no mandar una nota inexistente.
 -- `deleteNote` es local, asi que se pulsa el boton de confirmar que crea el
 -- panel (es lo que haria el usuario).
-ficheros["renombrada.md"] = "contenido"
+escribir(DIR .. "/renombrada.md", "contenido")
 state.open_note = "renombrada.md"
 pcall(onOpen, {})
 botones = {}
@@ -324,11 +354,11 @@ end
 c = current()
 check("tras borrar no queda ninguna nota", "", c and c.name or nil)
 check("y el contenido tampoco", "", c and c.content or nil)
-check("el fichero ya no esta", true, ficheros["renombrada.md"] == nil)
+check("el fichero ya no esta", true, not existe(DIR .. "/renombrada.md"))
 
 -- Renombrar a un nombre que ya existe: se avisa y no se toca nada.
-ficheros["nota.md"] = "contenido"
-ficheros["ocupada.md"] = "otra nota"
+escribir(DIR .. "/nota.md", "contenido")
+escribir(DIR .. "/ocupada.md", "otra nota")
 state.open_note = "nota.md"
 pcall(onOpen, {})
 erroresNotificados = {}
@@ -336,21 +366,21 @@ pcall(onRename, "ocupada")
 check("renombrar a un nombre existente avisa", 1, #erroresNotificados)
 local trasError = current()
 check("y no cambia el nombre", "nota.md", trasError and trasError.name or "SIN current.json")
-check("la nota original sigue ahi", true, ficheros["nota.md"] ~= nil)
-check("la otra nota no se toco", "otra nota", ficheros["ocupada.md"])
+check("la nota original sigue ahi", true, existe(DIR .. "/nota.md"))
+check("la otra nota no se toco", "otra nota", leer(DIR .. "/ocupada.md"))
 
 -- Un nombre con "/" se limpia (no se puede meter una carpeta).
 erroresNotificados = {}
 pcall(onRename, "carpeta/sub")
-check("un nombre con barra se limpia", true, ficheros["carpetasub.md"] ~= nil)
-check("y no se crea ninguna carpeta", true, ficheros["carpeta"] == nil)
+check("un nombre con barra se limpia", true, existe(DIR .. "/carpetasub.md"))
+check("y no se crea ninguna carpeta", true, not existe(DIR .. "/carpeta"))
 
 -- Si la nota se renombra o se borra desde fuera (el movil), el panel no puede
 -- quedarse con un fantasma: un nombre que ya no existe y un editor vacio.
-ficheros["renombrada.md"] = "contenido"
+escribir(DIR .. "/renombrada.md", "contenido")
 state.open_note = "renombrada.md"
 pcall(onOpen, {})
-ficheros["renombrada.md"] = nil -- como si se borrase desde fuera
+os.remove(DIR .. "/renombrada.md") -- como si se borrase desde fuera
 pcall(update)
 c = current()
 check("si la nota desaparece, no queda ninguna nota publicada", "", c and c.name or nil)
@@ -390,7 +420,7 @@ local function prueba_mutacion()
   end
   -- Con el panel roto, renombrar NO debe actualizar current.json.
   limpia()
-  ficheros["nota.md"] = "contenido"
+  escribir(DIR .. "/nota.md", "contenido")
   state.open_note = "nota.md"
   pcall(onOpen, {})
   local antes = current()

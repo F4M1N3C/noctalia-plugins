@@ -1203,6 +1203,48 @@ def test_modificador_prohibido():
     return r.failures
 
 
+def test_restaurar_volumen():
+    print("35) la opcion 'restaurar volumen' devuelve el volumen anterior")
+    import local_actions
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    r.engine.rules[0]["restore_volume"] = True
+    r.engine._sink_provider = lambda: "sink-falso"
+    llamadas = []
+    original = local_actions._run
+
+    def fake_run(cmd, timeout=6):
+        llamadas.append(list(cmd))
+
+        class Res:
+            stdout = "Volume: 40%\n" if "get-sink-volume" in cmd else ""
+            returncode = 0
+
+        return Res()
+
+    # Se sustituye la llamada a pactl: el volumen real del sistema no se toca.
+    local_actions._run = fake_run
+    try:
+        r.engine._run_rule(
+            r.engine.rules[0], "volume_up", 1, ["super"], 40
+        )
+        esperar(
+            lambda: any("set-sink-volume" in " ".join(c) for c in llamadas),
+            timeout=6.0,
+        )
+    finally:
+        local_actions._run = original
+    r.check(
+        "se pide restituir el volumen anterior",
+        any(
+            "set-sink-volume" in " ".join(c) and "40%" in " ".join(c)
+            for c in llamadas
+        ),
+        llamadas,
+    )
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -1262,6 +1304,7 @@ def main():
         test_la_marca_caduca,
         test_restore_respeta_al_usuario,
         test_modificador_prohibido,
+        test_restaurar_volumen,
     ):
         total += test()
     print("")

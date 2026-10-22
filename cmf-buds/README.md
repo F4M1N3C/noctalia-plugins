@@ -131,7 +131,7 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (111 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (112 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
 especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
 separados disparen acciones distintas, que un gesto tras restaurar el volumen
@@ -234,9 +234,11 @@ anteriores que resultaron inexactas) está en [`CHANGELOG.md`](CHANGELOG.md).
   del gesto, no un antirrebote por reloj.
 - **Precedencia:** si un gesto tiene una regla con N pulsaciones (2, 3...), esa
   manda y la de "Cualquiera" queda de respaldo: se ejecuta al final del gesto
-  si las pulsaciones no llegan al número. Las reglas se evalúan en cada evento
-  contra el juego vigente, y las más específicas (SUPER antes que ninguna)
-  ganan.
+  si las pulsaciones no llegan al número (si se disparara antes, se comería
+  las pulsaciones y la de N nunca se dispararía). Si no hay ninguna regla de
+  N pendiente, "Cualquiera" se dispara al empezar el gesto. Las reglas se
+  evalúan en cada evento contra el juego vigente, y las más específicas
+  (SUPER antes que ninguna) ganan.
 - **Nuestro propio cambio de volumen no se confunde con un gesto:** se
   reconoce por el **valor** que ponemos, no por una ventana de tiempo. La
   identidad de un evento la da **siempre el valor** (el volumen), nunca el

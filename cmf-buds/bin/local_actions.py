@@ -686,10 +686,14 @@ class LocalActionEngine:
                 chosen_presses = 0
 
             if chosen is not None:
-                # Un gesto = una accion. La regla "cualquiera" dispara al
-                # empezar el gesto y el resto de muescas del mismo gesto ya no
-                # repiten la accion, sin necesidad de ninguna ventana de
-                # tiempo: lo que lo decide es el estado del gesto.
+                # Un gesto = una accion. Si hay una regla de N pulsaciones
+                # que aun puede cumplirse, la regla "cualquiera" espera a que
+                # termine el gesto (si no, se comeria las pulsaciones y la
+                # de N nunca se dispararia). Cuando no hay ninguna regla de N
+                # pendiente, "cualquiera" dispara al empezar el gesto. En
+                # ambos casos, el resto de muescas del mismo gesto ya no
+                # repiten la accion: lo que lo decide es el estado del
+                # gesto, no ninguna ventana de tiempo.
                 if pending.get("fired"):
                     return
                 pending["fired"] = True

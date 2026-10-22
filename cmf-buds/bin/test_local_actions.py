@@ -121,6 +121,7 @@ def test_regla_cualquiera_sola():
     print("1) solo hay regla 'cualquiera' (dispara al instante)")
     r = Runner([rule("a", "volume_up", 0, "super", "SUPER")])
     r.evento(60, ["super"])
+    # Sin reglas de N pulsaciones, "cualquiera" dispara al empezar el gesto.
     time.sleep(0.2)
     r.check("se ejecuta con SUPER", r.engine.fired == ["SUPER"], r.engine.fired)
     r.calmarse()
@@ -140,7 +141,15 @@ def test_contador_manda():
     )
     # un solo pinchazo: la de 3 no llega, la de "cualquiera" hace de respaldo
     r.evento(60, ["super"])
-    time.sleep(1.2)
+    # Con una regla de N pulsaciones pendiente, el respaldo espera a que
+    # termine el gesto (si no, se comeria las pulsaciones).
+    time.sleep(0.2)
+    r.check(
+        "el respaldo espera a que termine el gesto",
+        r.engine.fired == [],
+        r.engine.fired,
+    )
+    time.sleep(1.0)
     r.check("un pinchazo dispara el respaldo 'cualquiera'", r.engine.fired == ["CUALQUIERA"], r.engine.fired)
     r.calmarse()
     # tres pinchazos: la de 3 gana

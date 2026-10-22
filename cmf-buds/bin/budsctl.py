@@ -458,6 +458,10 @@ class BudsLink:
         with self.pending_lock:
             for wait in self.pending.values():
                 wait["event"].set()
+        # El socket se cierra aqui: si se deja abierto, su descriptor se fuga
+        # en cada reconexion y el canal RFCOMM puede quedar ocupado, que es
+        # justo lo que impide volver a conectarse.
+        self.close()
 
     def _handle(self, cmd, payload):
         with self.pending_lock:
@@ -716,7 +720,15 @@ class BudsDaemon:
             link = BudsLink(mac, self.log)
             link.on_frame = self.on_frame
             link.open()
+            anterior = self.link
             self.link = link
+            if anterior is not None:
+                # El enlace anterior se cierra: su socket se quedaria abierto
+                # y podria dejar el canal ocupado.
+                try:
+                    anterior.close()
+                except Exception:
+                    pass
             with self.lock:
                 self.state["connected"] = True
                 self.state["error"] = ""

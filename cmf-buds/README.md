@@ -131,7 +131,7 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (47 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (50 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
 especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
 separados disparen acciones distintas, que un gesto tras restaurar el volumen
@@ -145,7 +145,8 @@ suscripción sana y otro fallo: el segundo vuelve a ser el nº1), **que una
 suscripción que se cierra antes de tiempo cuente como fallo**, **que el watcher
 sobreviva a un resolutor que falla**, **que un restore fallido quede en el
 log**, **que al guardar no se pisen las reglas del fichero** y **que el cierre
-del gesto no se pierda en silencio**.
+del gesto no se pierda en silencio** y **que el lector cierre su socket al
+morir**.
 
 Las pruebas **esperan a la condición que comprueban**, no a un tiempo fijo: si
 la máquina va cargada, no falla "por el motivo equivocado", y una comprobación
@@ -243,6 +244,10 @@ anteriores que resultaron inexactas) está en [`CHANGELOG.md`](CHANGELOG.md).
   (`presses`, `require`, `forbid`) se leen de forma tolerante y una regla
   inválida —editada a mano— se **ignora entera**, con aviso en el log, de modo
   que ni tapa a las reglas bien escritas ni aborta la evaluación de las demás.
+- **El socket del enlace se cierra siempre.** Cuando el lector RFCOMM muere
+  (o el monitor reconecta), su socket se cierra: si se deja abierto, el
+  descriptor se fuga en cada reconexión y el canal puede quedar ocupado, que
+  es lo que impide volver a conectarse.
 - **Ningún hilo puede morir en silencio.** Hay cuatro hilos que trabajan en
   segundo plano (el watcher del volumen, el temporizador que cierra el gesto,
   el que restaura el volumen y el lector RFCOMM del demonio). Si en cualquiera

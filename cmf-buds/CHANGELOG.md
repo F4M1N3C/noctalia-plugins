@@ -116,13 +116,21 @@ Un error inesperado en el lector RFCOMM se registraba y **se seguia leyendo**:
 si el fallo era persistente (un bug al interpretar los datos), se repetia con
 cada trozo recibido y llenaba el log. Ahora el error deja el enlace en un
 estado desconocido, asi que **se cierra el enlace** y es el monitor quien lo
-vuelve a abrir (con una sola linea en el log).
+vuelve a abrir (un solo traza por enlace, no uno por trozo).
+
+Y el fallo de raiz que habia debajo: **el socket del enlace muerto no se
+cerraba nunca** (close() solo se llamaba al apagar el demonio), asi que su
+descriptor se fugaba en cada reconexion y el canal RFCOMM podia quedar
+ocupado (que es justo el error de "canal ocupado" que el demonio contempla).
+Ahora el lector cierra su socket al morir y al reconectar se cierra el
+enlace anterior.
 
 Ademas se anade una prueba para el temporizador que cierra el gesto: si
 falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
 motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
 
-Suite: 44 -> 47 comprobaciones.
+Suite: 44 -> 50 comprobaciones (nuevas: el cierre del gesto protegido y que
+el lector cierre su socket).
 
 ### Comprobaciones finales — ciclo de vida del demonio
 

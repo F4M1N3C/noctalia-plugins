@@ -649,6 +649,41 @@ def test_gesto_no_se_pierde():
     return r.failures
 
 
+def test_lector_cierra_el_socket():
+    print("22) el lector cierra el socket al morir (el descriptor no se fuga)")
+    import socket as _socket
+
+    import budsctl
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    a, b = _socket.socketpair()
+    link = budsctl.BudsLink("00:00:00:00:00:00")
+    link.sock = a
+    link.running = True
+    logs = []
+    link.log = logs.append
+    original = budsctl.parse_frames
+
+    def falla(buf):
+        raise RuntimeError("fallo simulado")
+
+    budsctl.parse_frames = falla
+    b.sendall(b"\x99\x99\x99\x99")
+    try:
+        link._read_loop()
+    finally:
+        budsctl.parse_frames = original
+    r.check("el socket queda cerrado", a.fileno() == -1, a.fileno())
+    r.check("el enlace queda desconectado", not link.connected)
+    r.check(
+        "queda anotado en el log",
+        any("Error inesperado en el lector" in m for m in logs),
+        logs,
+    )
+    b.close()
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -695,6 +730,7 @@ def main():
         test_restore_falla_visible,
         test_no_se_pisan_las_reglas_del_fichero,
         test_gesto_no_se_pierde,
+        test_lector_cierra_el_socket,
     ):
         total += test()
     print("")

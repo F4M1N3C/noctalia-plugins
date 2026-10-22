@@ -92,14 +92,34 @@ function M.toolsAvailable()
   return noctalia.fileExists(script)
 end
 
--- Limpia las capturas antiguas de un widget (mismo nombre, otra geometría) y
--- los archivos de lote que se hayan quedado por el camino.
-local function prune(name, keepPath)
+-- Rutas de las miniaturas que las tarjetas están usando ahora mismo.
+-- `windows` acepta una lista o un mapa de ventanas abiertas (con `name`, `x`,
+-- `y`, `w` y `h`).
+function M.currentPaths(windows)
+  local paths = {}
+  for _, window in pairs(windows or {}) do
+    if type(window) == "table" and window.name ~= nil then
+      local path = M.thumbPath(window.name, M.signature(window))
+      if path ~= nil then
+        paths[path] = true
+      end
+    end
+  end
+  return paths
+end
+
+-- Borra las miniaturas que ya no usa ninguna tarjeta y los archivos de lote
+-- que se hayan quedado por el camino.
+--
+-- Se borra por *uso* y no por widget: si dos capturas se cruzan (la ventana se
+-- movió mientras se capturaba), la limpieza anterior podía borrar justo el
+-- fichero que el árbol de la UI tenía referenciado y el host se quejaba con
+-- "image failed to load". Con esta lista, lo que se usa nunca se borra.
+function M.pruneUnused(currentPaths)
   local dir = M.cacheDir()
   if dir == nil then
     return
   end
-  local prefix = util.slug(name) .. "-"
   local files = noctalia.listDir(dir)
   if files == nil then
     return
@@ -107,11 +127,8 @@ local function prune(name, keepPath)
   for _, file in ipairs(files) do
     if file:sub(1, 6) == "batch-" or file == "batch.json" then
       pcall(noctalia.removeFile, dir .. "/" .. file)
-    elseif file:sub(1, #prefix) == prefix and file:sub(-4) == ".png" then
-      local path = dir .. "/" .. file
-      if path ~= keepPath then
-        pcall(noctalia.removeFile, path)
-      end
+    elseif file:sub(-4) == ".png" and not currentPaths[dir .. "/" .. file] then
+      pcall(noctalia.removeFile, dir .. "/" .. file)
     end
   end
 end
@@ -192,9 +209,8 @@ function M.capture(entries, callback)
         noctalia.log("floating-term: captura: " .. detail)
       end
     end
-    for _, entry in ipairs(entries) do
-      prune(entry.name, M.thumbPath(entry.name, M.signature(entry)))
-    end
+    -- La limpieza de miniaturas antiguas la hace quien llama, que sabe qué
+    -- tarjetas hay ahora mismo.
     if callback ~= nil then
       callback()
     end

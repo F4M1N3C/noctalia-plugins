@@ -48,6 +48,7 @@ local state = {
   layouts = {},
   store = nil,
   windows = {},
+  thumbUsed = {},
   clients = {},
   classNames = {},
   editing = false,
@@ -407,6 +408,14 @@ captureThumbs = function()
   end
 
   preview.capture(entries, function()
+    -- Se limpian las miniaturas que ya no usa ninguna tarjeta. Se conservan
+    -- también las de la vista anterior: al reabrir el panel, el host vuelve
+    -- a aplicar el árbol que tenía guardado e intenta cargar esas imágenes.
+    local used = preview.currentPaths(state.windows)
+    for path in pairs(state.thumbUsed or {}) do
+      used[path] = true
+    end
+    preview.pruneUnused(used)
     if state.open then
       render()
     end
@@ -1075,6 +1084,11 @@ render = function()
     header(),
     ui.scroll({ flexGrow = 1, gap = CARD_GAP, justify = "center" }, rows),
   }))
+
+  -- Rutas de las miniaturas que acaba de referenciar este árbol. Se guardan
+  -- para no borrar un fichero que el host pueda volver a aplicar al
+  -- reabrir el panel.
+  state.thumbUsed = preview.currentPaths(state.windows)
 end
 
 -- ------------------------------------------------------------- ciclo de vida --

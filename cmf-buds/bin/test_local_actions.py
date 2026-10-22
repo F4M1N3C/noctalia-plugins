@@ -532,6 +532,85 @@ def test_suscripcion_corta():
     return r.failures
 
 
+def test_watcher_resolutor_falla():
+    print("18) el watcher sobrevive a un resolutor que falla")
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    logs = []
+
+    def resolver_falla():
+        raise RuntimeError("fallo al resolver el sink")
+
+    watcher = VolumeWatcher(resolver_falla, lambda sink: None, logs.append)
+    watcher._stop = FakeStop(stop_after=3)
+    watcher.start()
+    esperar(lambda: len(watcher._stop.waits) >= 3)
+    alive = watcher._thread.is_alive()
+    waits = list(watcher._stop.waits)
+    watcher.stop()
+    r.check(
+        "se registra el error",
+        any("error inesperado" in m for m in logs),
+        logs,
+    )
+    # Lo que prueba que el hilo no murio con la excepcion: sigue reintentando
+    # (y por eso las esperas crecen). Si se hubiera muerto, habria una sola.
+    r.check("las esperas crecen (sigue reintentando)", waits == [1.0, 2.0, 3.0], waits)
+    r.check("y el hilo termina al pararlo", not alive)
+    return r.failures
+
+
+def test_restore_falla_visible():
+    print("19) si el restore falla, queda en el log (no muere en silencio)")
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    logs = []
+    r.engine.log = logs.append
+
+    def proveedor_falla():
+        raise RuntimeError("sin sink")
+
+    r.engine._sink_provider = proveedor_falla
+    r.engine._restore_volume_delayed(40)
+    esperar(lambda: any("No se pudo restaurar" in m for m in logs), timeout=5.0)
+    r.check(
+        "queda anotado en el log",
+        any("No se pudo restaurar el volumen a 40%" in m for m in logs),
+        logs,
+    )
+    return r.failures
+
+
+def test_no_se_pisan_las_reglas_del_fichero():
+    print("20) al guardar no se pisan las reglas del fichero")
+    import json
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    path = "/tmp/cmf-buds-test-fichero.json"
+    r.engine.rules_path = path
+    r.engine._rules_mtime = 0.0
+    # Alguien anade una regla al fichero a mano, fuera del panel.
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(
+            '{"rules": [%s, %s]}'
+            % (
+                _json_rule("a", "volume_up", 0, "super", "UNO"),
+                _json_rule("manual", "volume_down", 0, "super", "MANUAL"),
+            )
+        )
+    # El panel anade otra regla: no se puede perder la del fichero.
+    r.engine.upsert(rule("nueva", "volume_up", 0, "super", "NUEVA"))
+    with open(path, "r", encoding="utf-8") as fh:
+        ids = [x["id"] for x in json.load(fh)["rules"]]
+    r.check("la regla del fichero sigue ahi", "manual" in ids, ids)
+    r.check("y se ha anadido la nueva", "nueva" in ids, ids)
+    r.check(
+        "el panel ve las reglas del fichero",
+        "manual" in [x["id"] for x in r.engine.snapshot()["rules"]],
+    )
+    if os.path.exists(path):
+        os.unlink(path)
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -574,6 +653,9 @@ def main():
         test_espera_creciente,
         test_contador_se_reinicia,
         test_suscripcion_corta,
+        test_watcher_resolutor_falla,
+        test_restore_falla_visible,
+        test_no_se_pisan_las_reglas_del_fichero,
     ):
         total += test()
     print("")

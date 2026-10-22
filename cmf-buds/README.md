@@ -131,7 +131,7 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (37 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (44 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
 especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
 separados disparen acciones distintas, que un gesto tras restaurar el volumen
@@ -142,12 +142,29 @@ morir, que avise cuando no puede suscribirse a los cambios de volumen, **que
 la espera entre reintentos crezca (1, 2, 3, 4 s)**, **que el contador de
 fallos se reinicie cuando la suscripción vuelve a funcionar** (un fallo, una
 suscripción sana y otro fallo: el segundo vuelve a ser el nº1), **que una
-suscripción que se cierra antes de tiempo cuente como fallo** y que las reglas
-editadas fuera del panel se recargan.
+suscripción que se cierra antes de tiempo cuente como fallo**, **que el watcher
+sobreviva a un resolutor que falla**, **que un restore fallido quede en el
+log** y **que al guardar no se pisen las reglas del fichero**.
 
 Las pruebas **esperan a la condición que comprueban**, no a un tiempo fijo: si
 la máquina va cargada, no falla "por el motivo equivocado", y una comprobación
 no puede cumplirse antes de que se haya dado el caso que dice comprobar.
+
+## Probar la rueda del ratón
+
+`tools/wheel_injector.c` inyecta una rueda virtual por `uinput` (para probar
+los sliders del panel sin tocar el ratón de verdad):
+
+```bash
+gcc -O2 -o /tmp/wheel tools/wheel_injector.c
+/tmp/wheel arriba 3      # o "abajo"
+```
+
+Dos avisos que ya costaron tiempo, escritos en el propio código: en los
+kernels modernos `UI_DEV_CREATE` **no** recibe el `struct uinput_user_dev`
+(si no, hay que configurarlo antes con `UI_DEV_SETUP`, y si no, `EINVAL`), y
+el dispositivo tiene que vivir lo suficiente para que el compositor lo abra
+(por eso los eventos se repiten durante unos segundos).
 
 ## Cómo funciona
 
@@ -216,6 +233,18 @@ anteriores que resultaron inexactas) está en [`CHANGELOG.md`](CHANGELOG.md).
   (`presses`, `require`, `forbid`) se leen de forma tolerante y una regla
   inválida —editada a mano— se **ignora entera**, con aviso en el log, de modo
   que ni tapa a las reglas bien escritas ni aborta la evaluación de las demás.
+- **Ningún hilo puede morir en silencio.** Hay cuatro hilos que trabajan en
+  segundo plano (el watcher del volumen, el temporizador que cierra el gesto,
+  el que restaura el volumen y el lector RFCOMM del demonio). Si en cualquiera
+  de ellos salta una excepción sin capturar, el hilo muere y su tarea se
+  pierde sin dejar rastro: los atajos dejan de funcionar o el volumen se
+  queda donde no toca. Ahora cada uno tiene su propia red: el error se
+  registra en el log y el trabajo continúa.
+- **El fichero de reglas es la fuente de verdad.** Las reglas se releen del
+  fichero antes de guardar (y antes de mostrarlas en el panel), así que si
+  alguien las edita a mano o desde otra sesión, el panel no pisa esos
+  cambios: antes, añadir una regla desde el panel podía **perder** las que
+  se hubiesen editado a mano.
 - **El watcher no puede morir en silencio.** Un error al procesar un cambio se
   registra y el hilo sigue; un error en la suscripción, o una suscripción que
   se cierra antes de tiempo, se registran y se reintentan con una **espera

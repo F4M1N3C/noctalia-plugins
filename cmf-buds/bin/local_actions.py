@@ -335,75 +335,90 @@ class VolumeWatcher:
 
     def _loop(self):
         while not self._stop.is_set():
-            sink = self.sink_resolver()
-            if not sink:
-                # Sin auriculares conectados no hay nada que vigilar: se avisa
-                # una sola vez para no llenar el log.
-                if self._reported_no_sink != sink:
-                    self._reported_no_sink = sink
-                    self.log("Watcher: todavia no hay sink de los auriculares")
-                self._stop.wait(2.0)
-                continue
-            sink_id = self._sink_id(sink)
-            if self._reported_no_sink is not None:
-                self._reported_no_sink = None
             try:
-                self._proc = subprocess.Popen(
-                    ["pactl", "subscribe"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    text=True,
-                    bufsize=1,
-                )
+                self._watch()
             except Exception as exc:
-                # Sin suscripcion no hay atajos: se avisa y se reintenta con
-                # la espera creciente (1 s, 2 s, 3 s... hasta 10 s).
-                delay = self._fail(
-                    "Watcher: no se pudo abrir la suscripcion: %s" % exc
-                )
+                # Ninguna excepcion puede matar este hilo: si lo hiciera, los
+                # atajos dejarian de funcionar sin decir nada (pasaba con el
+                # resolutor del sink, que estaba fuera de cualquier try).
+                delay = self._fail("Watcher: error inesperado: %s" % exc)
                 self._stop.wait(delay)
-                continue
-            self.log("Watcher: vigilando %s (id %s)" % (sink, sink_id))
-            started = time.monotonic()
-            try:
-                for line in self._proc.stdout:
-                    if self._stop.is_set():
-                        break
-                    sink_id = self._handle_line(line, sink, sink_id)
-            except Exception as exc:
-                # Un error aqui aborta la suscripcion. Antes se tragaba en
-                # silencio y el bucle se reiniciaba una y otra vez: con un
-                # fallo persistente los atajos no funcionaban nunca y no
-                # habia ni una linea en el log.
+
+    def _watch(self):
+        """Una vuelta del watcher.
+
+        Va aparte del bucle para que cualquier excepcion se pueda registrar y
+        reintentar, en vez de matar el hilo en silencio.
+        """
+        sink = self.sink_resolver()
+        if not sink:
+            # Sin auriculares conectados no hay nada que vigilar: se avisa
+            # una sola vez para no llenar el log.
+            if self._reported_no_sink != sink:
+                self._reported_no_sink = sink
+                self.log("Watcher: todavia no hay sink de los auriculares")
+            self._stop.wait(2.0)
+            return
+        sink_id = self._sink_id(sink)
+        if self._reported_no_sink is not None:
+            self._reported_no_sink = None
+        try:
+            self._proc = subprocess.Popen(
+                ["pactl", "subscribe"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as exc:
+            # Sin suscripcion no hay atajos: se avisa y se reintenta con
+            # la espera creciente (1 s, 2 s, 3 s... hasta 10 s).
+            delay = self._fail(
+                "Watcher: no se pudo abrir la suscripcion: %s" % exc
+            )
+            self._stop.wait(delay)
+            return
+        self.log("Watcher: vigilando %s (id %s)" % (sink, sink_id))
+        started = time.monotonic()
+        try:
+            for line in self._proc.stdout:
+                if self._stop.is_set():
+                    break
+                sink_id = self._handle_line(line, sink, sink_id)
+        except Exception as exc:
+            # Un error aqui aborta la suscripcion. Antes se tragaba en
+            # silencio y el bucle se reiniciaba una y otra vez: con un
+            # fallo persistente los atajos no funcionaban nunca y no
+            # habia ni una linea en el log.
+            delay = self._fail(
+                "Watcher: error en la suscripcion: %s" % exc
+            )
+        else:
+            if self._stop.is_set():
+                delay = 0.0
+            elif (time.monotonic() - started) < HEALTHY_SECONDS:
+                # 'pactl subscribe' se cerraria solo: es un fallo mas, no
+                # un reinicio normal (si no, se repetiria en bucle).
                 delay = self._fail(
-                    "Watcher: error en la suscripcion: %s" % exc
+                    "Watcher: la suscripcion se cerro antes de tiempo"
                 )
             else:
-                if self._stop.is_set():
-                    delay = 0.0
-                elif (time.monotonic() - started) < HEALTHY_SECONDS:
-                    # 'pactl subscribe' se cerraria solo: es un fallo mas, no
-                    # un reinicio normal (si no, se repetiria en bucle).
-                    delay = self._fail(
-                        "Watcher: la suscripcion se cerro antes de tiempo"
-                    )
-                else:
-                    # Solo se da por buena si ha aguantado sin errores: aqui
-                    # se reinicia el contador de fallos y el siguiente reintento
-                    # vuelve a ser como el primero.
-                    if self._failures:
-                        self.log("Watcher: la suscripcion vuelve a funcionar")
-                    self._failures = 0
-                    delay = self._retry_delay()
-            finally:
-                try:
-                    if self._proc:
-                        self._proc.kill()
-                except Exception:
-                    pass
-                self._proc = None
-            if not self._stop.is_set():
-                self._stop.wait(delay)
+                # Solo se da por buena si ha aguantado sin errores: aqui
+                # se reinicia el contador de fallos y el siguiente reintento
+                # vuelve a ser como el primero.
+                if self._failures:
+                    self.log("Watcher: la suscripcion vuelve a funcionar")
+                self._failures = 0
+                delay = self._retry_delay()
+        finally:
+            try:
+                if self._proc:
+                    self._proc.kill()
+            except Exception:
+                pass
+            self._proc = None
+        if not self._stop.is_set():
+            self._stop.wait(delay)
 
 
 class LocalActionEngine:
@@ -475,6 +490,10 @@ class LocalActionEngine:
 
     def upsert(self, rule):
         with self._lock:
+            # El fichero es la fuente de verdad: si alguien anadio o cambio
+            # reglas a mano despues de la ultima recarga, hay que volver a
+            # leerlas antes de guardar, o se perderian.
+            self.reload_rules_if_changed()
             rid = str(rule.get("id") or "")
             if not rid:
                 rid = "r%d" % (int(time.time() * 1000) % 10000000)
@@ -492,6 +511,7 @@ class LocalActionEngine:
 
     def delete(self, rid):
         with self._lock:
+            self.reload_rules_if_changed()
             self.rules = [r for r in self.rules if str(r.get("id")) != str(rid)]
             self.save()
         return self.rules
@@ -761,7 +781,17 @@ class LocalActionEngine:
         return None
 
     def _fire(self):
-        """Cierre del gesto: el contador ya no va a crecer."""
+        """Cierre del gesto: el contador ya no va a crecer.
+
+        Va en un temporizador: si algo falla aqui, el gesto se pierde, y sin
+        esta cubierta nadie se enteraria.
+        """
+        try:
+            self._fire_gesture()
+        except Exception as exc:
+            self.log("No se pudo cerrar el gesto: %s" % exc)
+
+    def _fire_gesture(self):
         with self._lock:
             pending = self._pending
             self._pending = None
@@ -824,34 +854,42 @@ class LocalActionEngine:
         comprueba que el valor se quedase; si no, reintenta."""
 
         def _apply(attempts):
-            if not self._sink_provider:
-                return
-            sink = self._sink_provider()
-            if not sink:
-                return
-            self.note_self_change(int(percent))
-            res = _run(
-                ["pactl", "set-sink-volume", sink, "%d%%" % int(percent)], 6
-            )
-            if res is None or res.returncode != 0:
-                self.log(
-                    "No se pudo restaurar el volumen a %d%% en %s (rc=%s)"
-                    % (int(percent), sink, res.returncode if res else "error")
+            try:
+                if not self._sink_provider:
+                    return
+                sink = self._sink_provider()
+                if not sink:
+                    return
+                self.note_self_change(int(percent))
+                res = _run(
+                    ["pactl", "set-sink-volume", sink, "%d%%" % int(percent)], 6
                 )
-            time.sleep(0.3)
-            current = self._read_volume(sink)
-            self.log(
-                "Restore: %d%% -> %s%%" % (int(percent), current)
-            )
-            if current is None or current == int(percent):
-                return
-            if attempts > 0:
+                if res is None or res.returncode != 0:
+                    self.log(
+                        "No se pudo restaurar el volumen a %d%% en %s (rc=%s)"
+                        % (int(percent), sink, res.returncode if res else "error")
+                    )
+                time.sleep(0.3)
+                current = self._read_volume(sink)
                 self.log(
-                    "El volumen no se quedo en %d%% (esta en %s%%): reintento"
-                    % (int(percent), current)
+                    "Restore: %d%% -> %s%%" % (int(percent), current)
                 )
-                time.sleep(RESTORE_DELAY)
-                _apply(attempts - 1)
+                if current is None or current == int(percent):
+                    return
+                if attempts > 0:
+                    self.log(
+                        "El volumen no se quedo en %d%% (esta en %s%%): reintento"
+                        % (int(percent), current)
+                    )
+                    time.sleep(RESTORE_DELAY)
+                    _apply(attempts - 1)
+            except Exception as exc:
+                # Este hilo es un temporizador: si muere en silencio, el
+                # volumen se queda donde no toca y el usuario no sabe por que.
+                self.log(
+                    "No se pudo restaurar el volumen a %d%%: %s"
+                    % (int(percent), exc)
+                )
 
         timer = threading.Timer(RESTORE_DELAY, _apply, args=(RESTORE_ATTEMPTS,))
         timer.daemon = True
@@ -950,8 +988,14 @@ class LocalActionEngine:
 
     # -- estado --------------------------------------------------------------
     def snapshot(self):
+        # El panel tiene que ver el fichero tal y como esta: si las reglas se
+        # han editado a mano (o desde otra sesion), la vista en memoria puede
+        # estar vieja.
+        with self._lock:
+            self.reload_rules_if_changed()
+            rules = list(self.rules)
         return {
-            "rules": list(self.rules),
+            "rules": rules,
             "last_event": self.last_event,
             "last_action": self.last_action,
             "modifiers": self.modifiers.modifiers(),

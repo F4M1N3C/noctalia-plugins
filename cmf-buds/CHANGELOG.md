@@ -85,6 +85,31 @@ El watcher registraba los errores y reintentaba; además se añadió
   código a propósito (espera fija, sin reinicio, sin detección de cierre
   temprano): las tres fallan.
 
+### Este cambio — Ningún hilo puede morir en silencio; el fichero manda
+
+Cuatro hilos podían morir en silencio (una excepción sin capturar los
+mataba y la tarea se perdía sin rastro):
+
+- el **watcher**: el resolutor del sink estaba fuera de cualquier `try`
+- el **temporizador del gesto**: si fallaba al cerrarlo, se perdía el gesto
+- el **temporizador del restore**: si fallaba, el volumen se quedaba donde
+  no toca y el usuario no sabía por qué
+- el **lector RFCOMM** del demonio: una excepción inesperada lo mataba
+
+Además, el panel operaba sobre la lista **en memoria** del motor, que solo se
+recargaba con un evento de volumen: si las reglas se editaban a mano, el
+siguiente "Añadir regla" **sobrescribía el fichero y las perdía**. Ahora el
+fichero es la fuente de verdad: se relee antes de guardar y antes de
+mostrar las reglas.
+
+También se recoge `tools/wheel_injector.c` (inyector de rueda por `uinput`)
+dentro del plugin, con los dos detalles que costaron tiempo: `UI_DEV_CREATE`
+no recibe el `struct uinput_user_dev` en los kernels modernos (hay que usar
+`UI_DEV_SETUP` primero) y el dispositivo tiene que vivir lo suficiente para
+que el compositor lo abra.
+
+Suite: 37 → 44 comprobaciones.
+
 ## Correcciones de descripciones anteriores
 
 Las dos descripciones siguientes eran **inexactas**; se corrigen aquí porque no

@@ -446,6 +446,11 @@ class BudsLink:
                 continue
             except OSError:
                 break
+            except Exception:
+                # El demonio se quedaria sin leer del dispositivo sin avisar:
+                # se registra y se sigue leyendo.
+                self.log("Error inesperado en el lector: " + traceback.format_exc())
+                time.sleep(0.2)
         self.connected = False
         self.log("RFCOMM desconectado")
         with self.pending_lock:

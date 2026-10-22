@@ -83,6 +83,7 @@ local function ui_button(props)
 end
 
 local state = {}
+local erroresNotificados = {}
 
 local mock = {
   getConfig = function(key)
@@ -106,7 +107,8 @@ local mock = {
   end,
   log = function() end,
   notifyError = function(a, b)
-    error("notifyError: " .. tostring(a) .. " " .. tostring(b))
+    -- En Noctalia esto solo muestra un aviso: no interrumpe el panel.
+    erroresNotificados[#erroresNotificados + 1] = tostring(a) .. " " .. tostring(b)
   end,
   formatTime = function(fmt)
     return "2026-01-01 00.00.00"
@@ -323,6 +325,25 @@ c = current()
 check("tras borrar no queda ninguna nota", "", c and c.name or nil)
 check("y el contenido tampoco", "", c and c.content or nil)
 check("el fichero ya no esta", true, ficheros["renombrada.md"] == nil)
+
+-- Renombrar a un nombre que ya existe: se avisa y no se toca nada.
+ficheros["nota.md"] = "contenido"
+ficheros["ocupada.md"] = "otra nota"
+state.open_note = "nota.md"
+pcall(onOpen, {})
+erroresNotificados = {}
+pcall(onRename, "ocupada")
+check("renombrar a un nombre existente avisa", 1, #erroresNotificados)
+local trasError = current()
+check("y no cambia el nombre", "nota.md", trasError and trasError.name or "SIN current.json")
+check("la nota original sigue ahi", true, ficheros["nota.md"] ~= nil)
+check("la otra nota no se toco", "otra nota", ficheros["ocupada.md"])
+
+-- Un nombre con "/" se limpia (no se puede meter una carpeta).
+erroresNotificados = {}
+pcall(onRename, "carpeta/sub")
+check("un nombre con barra se limpia", true, ficheros["carpetasub.md"] ~= nil)
+check("y no se crea ninguna carpeta", true, ficheros["carpeta"] == nil)
 
 -- Si la nota se renombra o se borra desde fuera (el movil), el panel no puede
 -- quedarse con un fantasma: un nombre que ya no existe y un editor vacio.

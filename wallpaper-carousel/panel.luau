@@ -69,7 +69,6 @@ local thumbRequested = {}
 
 -- Rueda del ratón (capturada por el ui.scroll)
 local scrollOffset = 0.0
-local scrollSeen = 0.0
 local scrollAccum = 0.0
 local scrollResetting = false
 local scrollReveal = 0
@@ -78,8 +77,6 @@ local anchorOffset = nil -- distancia real del ancla (medida, px de superficie)
 -- Correccion fina del hueco hasta el ancla: se calcula con el salto real.
 local anchorGapAdjust = 0
 local lastRecenterComp = nil -- relleno usado en el ultimo recentrado
-local pendingRecenter = false
-local pendingThumbs = false
 
 -- Puntero y teclado
 local hovered = nil
@@ -88,7 +85,7 @@ local heldElapsed = 0.0
 local heldRepeat = 0.0
 
 -- Forward declarations: render y los ayudantes de navegación se llaman entre sí.
-local render, selectIndex, move, randomWallpaper, apply, reload
+local render, selectIndex, move, randomWallpaper, apply, reload, recenterScroll
 
 local function tr(key, args)
   return noctalia.tr(key, args)
@@ -806,6 +803,11 @@ selectIndex = function(index)
   end
   wakeUp()
   render()
+  -- Las miniaturas del entorno se piden en cada cambio de seleccion: si solo
+  -- se pidieran al final de la animacion, un salto al principio o al final de
+  -- la lista (Home, End, aleatorio o la vuelta de la cinta) dejaria las
+  -- tarjetas sin imagen.
+  ensureThumbs()
 end
 
 move = function(delta)
@@ -880,23 +882,25 @@ reload = function(keepSelection)
   animating = false
   hovered = nil
   scrollOffset = 0
-  scrollSeen = 0
   scrollAccum = 0
   -- El frame tick no se apaga: lo NeedsFrameTick alimenta la animacion de la
-  -- cinta y el consumo de la rueda, asi que tiene que seguir vivo aunque el
-  -- panel se recargue por un cambio de ajustes.
-  panel.setNeedsFrameTick(true)
+  -- cinta y la repeticion de las teclas, asi que tiene que seguir vivo aunque
+  -- el panel se recargue por un cambio de ajustes.
+  wakeUp()
   -- El scroll puede quedar desplazado de antes: se recentra para que la
   -- compensacion siga siendo exacta.
-  pendingRecenter = true
-  render()
+  if #wallpapers > 0 and cfg.wheel then
+    recenterScroll()
+  else
+    render()
+  end
   ensureThumbs()
 end
 
 -- Recentra el scroll: el ancla está tan abajo que al revelarla el scroll
 -- salta SCROLL_JUMP px hacia arriba, dejando sitio para seguir subiendo. El
 -- relleno se adelanta al salto para que la cinta no dé un tirón.
-local function recenterScroll()
+recenterScroll = function()
   local m = metrics()
   local scale = uiScale()
   -- El scroll salta hacia arriba para reabrir el recorrido. El salto se
@@ -912,7 +916,6 @@ local function recenterScroll()
   scrollReveal = scrollReveal + 1
   -- El scroll mide en px de la superficie: el objetivo va escalado.
   scrollOffset = target * scale
-  scrollSeen = scrollOffset
   scrollAccum = 0
   lastRecenterComp = scrollComp
   render()
@@ -931,19 +934,25 @@ function onOpen(_context)
   hovered = nil
   heldKey = nil
   scrollOffset = 0
-  scrollSeen = 0
   scrollAccum = 0
   scrollResetting = false
   thumbErrorShown = false
-  -- El frame tick se queda activo siempre: sirve para la animación de la
-  -- cinta, para el autorepeat de las teclas y para consumir la rueda.
+  -- El frame tick sirve para la animación de la cinta y para la repeticion de
+  -- las teclas.
   wakeUp()
-  render()
-  -- El scroll arranca en cero, sin recorrido hacia arriba: se recentra en el
-  -- primer frame para que la rueda pueda ir en ambos sentidos. Las miniaturas
-  -- tambien se piden ahi, para que onOpen no se coma el presupuesto de CPU.
-  pendingRecenter = true
-  pendingThumbs = true
+  if #wallpapers == 0 then
+    render()
+  elseif cfg.wheel then
+    -- El scroll arranca en cero, sin recorrido hacia arriba: se recentra para
+    -- que la rueda pueda ir en ambos sentidos.
+    recenterScroll()
+  else
+    render()
+  end
+  -- Las miniaturas se piden aqui y no en el frame tick: el shell solo pide
+  -- frames cuando el flag pasa de false a true, asi que el tick puede no
+  -- llegar a correr y las tarjetas se quedarian sin imagen.
+  ensureThumbs()
 end
 
 function onClose()
@@ -972,7 +981,6 @@ function onScroll(offset, _maxOffset)
   if scrollResetting then
     scrollResetting = false
     scrollOffset = newOffset
-    scrollSeen = newOffset
     scrollAccum = 0
     -- El salto real mide donde está el ancla. Con ese dato el relleno del
     -- scroll se calcula al milimetro y el recentrado no mueve la cinta.
@@ -1001,44 +1009,36 @@ function onScroll(offset, _maxOffset)
   -- Cuando el scroll llega al principio no puede seguir subiendo: se recentra
   -- saltando hacia abajo para reabrir el recorrido.
   if newOffset <= 0.5 then
+    scrollOffset = newOffset
     recenterScroll()
     return
   end
 
+  -- El desplazamiento se acumula aqui y no en el frame tick: la rueda no puede
+  -- depender de un mecanismo que el shell puede no ejecutar. Se avanza la
+  -- cinta en cuanto hay un dentado completo y el resto se guarda para el
+  -- siguiente.
+  local delta = newOffset - scrollOffset
   scrollOffset = newOffset
-end
-
-function onFrameTick(deltaMs)
-  local dt = tonumber(deltaMs) or 16
-
-  -- 0. El primer frame recentra el scroll, para que la rueda tenga recorrido
-  --    hacia arriba desde el principio, y pide las miniaturas.
-  if pendingRecenter then
-    pendingRecenter = false
-    if cfg.wheel then
-      recenterScroll()
-    end
-  end
-  if pendingThumbs then
-    pendingThumbs = false
-    ensureThumbs()
-  end
-
-  -- 1. Rueda del ratón: el scroll se mueve en saltos de 56 px (un dentado),
-  --    así que se acumula el desplazamiento y se avanza la cinta en cuanto hay
-  --    un paso completo. El resto se guarda para el siguiente.
-  if math.abs(scrollOffset - scrollSeen) > 0.5 then
-    scrollAccum = scrollAccum + (scrollOffset - scrollSeen)
-    scrollSeen = scrollOffset
+  if math.abs(delta) > 0.5 then
+    scrollAccum = scrollAccum + delta
     local steps = math.floor(math.abs(scrollAccum) / SCROLL_STEP)
     if steps > 0 then
       local direction = scrollAccum > 0 and 1 or -1
       scrollAccum = scrollAccum - direction * steps * SCROLL_STEP
       move(direction * steps)
+    else
+      -- Aunque no haya salto completo, el relleno del scroll cambia: hay que
+      -- repintar para que la cinta no se mueva de sitio.
+      render()
     end
   end
+end
 
-  -- 2. Autorepeat de las flechas: la pulsación repetida del teclado no llega
+function onFrameTick(deltaMs)
+  local dt = tonumber(deltaMs) or 16
+
+  -- 1. Autorepeat de las flechas: la pulsación repetida del teclado no llega
   --    al script, así que se reproduce aquí con el frame tick.
   if heldKey then
     heldElapsed = heldElapsed + dt
@@ -1051,7 +1051,7 @@ function onFrameTick(deltaMs)
     end
   end
 
-  -- 3. Animación de la cinta: la posición visible persigue a la seleccionada.
+  -- 2. Animación de la cinta: la posición visible persigue a la seleccionada.
   local difference = selected - viewPos
   if math.abs(difference) < 0.002 then
     if animating then
@@ -1067,13 +1067,9 @@ function onFrameTick(deltaMs)
     render()
   end
 
-  -- 4. Si no queda nada que mover, se apaga el frame tick (ver wakeUp): el
+  -- 3. Si no queda nada que mover, se apaga el frame tick (ver wakeUp): el
   --    host solo vuelve a pedir frames cuando el flag pasa de falso a true.
-  local busy = animating
-    or heldKey ~= nil
-    or pendingRecenter
-    or pendingThumbs
-    or math.abs(scrollOffset - scrollSeen) > 0.5
+  local busy = animating or heldKey ~= nil
   if not busy then
     panel.setNeedsFrameTick(false)
   end

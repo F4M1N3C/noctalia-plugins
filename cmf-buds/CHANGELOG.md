@@ -32,8 +32,10 @@ de reglas vigente, en vez de guardar una vista parcial.
 ### `3e56ac6` — La identidad de un evento la da el valor, no el reloj
 
 Un evento es "el mismo" que otro si el volumen no ha cambiado; el motor ya no
-usa marcas de tiempo para decidir si un cambio es propio (el restore del
-volumen) o un gesto del usuario.
+usa marcas de tiempo para decidir **qué eventos son una misma pulsación** (eso
+lo decide el valor). El único reloj que queda es la caducidad de la marca de
+"cambio hecho por nosotros" (2 s, para que solo absorba el eco del
+dispositivo), que se describe mas abajo.
 
 ### `fb5e5fc` — Fuera los últimos proxies de identidad por reloj
 
@@ -51,7 +53,7 @@ ignora entera, con aviso, y **no** aborta la evaluación de las demás.
 El watcher registraba los errores y reintentaba; además se añadió
 `_handle_line()` para poder probar el camino de error de verdad.
 
-### Este cambio — Espera creciente real, registro verificable y pruebas que discriminan
+### Espera creciente real, registro verificable y pruebas que discriminan
 
 - **Las pruebas esperan a la condición, no a un tiempo.** Antes los tests del
   watcher dormían 0,6-0,8 s y luego miraban: si la máquina iba cargada y el
@@ -85,7 +87,7 @@ El watcher registraba los errores y reintentaba; además se añadió
   código a propósito (espera fija, sin reinicio, sin detección de cierre
   temprano): las tres fallan.
 
-### Este cambio — Ningún hilo puede morir en silencio; el fichero manda
+### Ningún hilo puede morir en silencio; el fichero manda
 
 Cuatro hilos podían morir en silencio (una excepción sin capturar los
 mataba y la tarea se perdía sin rastro):
@@ -110,7 +112,7 @@ que el compositor lo abra.
 
 Suite: 37 → 44 comprobaciones.
 
-### Comprobaciones finales — el lector no puede repetir el error
+### El lector no puede repetir el error
 
 Un error inesperado en el lector RFCOMM se registraba y **se seguia leyendo**:
 si el fallo era persistente (un bug al interpretar los datos), se repetia con
@@ -203,7 +205,7 @@ corrupta, el parser se quedaba esperando para siempre y el buffer crecia sin
 limite (el enlace dejaba de leerse). Ahora, si el buffer se pasa de 8 KB, se
 descarta y se vuelve a buscar el inicio de la siguiente trama.
 
-### Comprobaciones finales — ciclo de vida del demonio
+### Ciclo de vida del demonio
 
 Comprobado en caliente:
 
@@ -223,14 +225,14 @@ Comprobado en caliente:
 - **El log esta limpio**: las 70 trazas que hay son de las 14:52-15:01
   (auriculares apagados, el comando ANC) → ninguna desde entonces ✓.
 
-### Comprobaciones finales — una prueba era intermitente
+### Una prueba era intermitente
 
 La prueba 18 comprobaba que el hilo del watcher **ya habia terminado**
 justo despues de pararlo: el hilo puede estar a medio salir, asi que
 fallaba de vez en cuando (1 de cada 10 veces). Ahora espera a que termine
 y despues lo comprueba. Diez pasadas seguidas sin fallos.
 
-### Comprobaciones finales — el estado del plugin no lo borra el demonio
+### El estado del plugin no lo borra el demonio
 
 El plugin recuerda la ultima pestana abierta con `noctalia.state`, que
 guarda en el mismo `state.json` que el demonio. Como el demonio reescribe
@@ -285,19 +287,39 @@ se puede reescribir la historia del repositorio:
 
 ## Pruebas
 
-`bin/test_local_actions.py` (37 comprobaciones) cubre el motor sin necesidad
-de auriculares: la precedencia de las reglas de N pulsaciones y su respaldo, el
-aislamiento de una regla malformada, que el watcher registre los errores sin
-morir, que avise si no puede suscribirse, **que la espera entre reintentos
-crezca (1, 2, 3, 4 s)**, **que el contador se reinicie cuando la suscripción
-vuelve a funcionar** (un fallo, una suscripción sana y otro fallo: el segundo
-vuelve a ser el nº1) y **que una suscripción que se cierra antes de tiempo
-cuente como fallo**.
+`bin/test_local_actions.py` (116 comprobaciones) cubre el motor y el demonio
+sin necesidad de auriculares:
 
-Las comprobaciones del watcher se validaron **rompiendo el código a
-propósito** (espera fija de 1 s, sin reinicio del contador, sin detección del
-cierre temprano): las tres fallan, así que no son vacuas. La de la regla
-malformada cubre la propiedad en su conjunto —que una regla inválida no
-impida ejecutar las demás—, y se comprobó rompiendo a la vez las dos capas
-que la sostienen (la lectura tolerante y el aislamiento por regla): la suite
-falla.
+- la precedencia de las reglas de N pulsaciones y su respaldo (con una regla
+  de N pendiente el respaldo espera al final del gesto; sin ella, dispara al
+  instante)
+- el aislamiento de una regla malformada
+- que el watcher registre los errores sin morir, que avise si no puede
+  suscribirse, **que la espera entre reintentos crezca (1, 2, 3, 4 s)**, **que
+  el contador se reinicie cuando la suscripción vuelve a funcionar** (un fallo,
+  una suscripción sana y otro fallo: el segundo vuelve a ser el nº1) y **que una
+  suscripción que se cierra antes de tiempo cuente como fallo**
+- que el lector RFCOMM cierre su socket al morir y que al reconectar se
+  cierre el enlace anterior
+- el protocolo de tramas (construcción, CRC, ida y vuelta, basura, trama
+  incompleta y el tope del buffer) y el códec de floats del ecualizador con la
+  detección de modelo del dispositivo
+- la traducción de códigos de tecla a modificadores (si el de SUPER se
+  cambiara, las reglas que lo exigen no se dispararían nunca)
+- el aviso del atajo (que se lance y que, si falla, quede anotado)
+- un **contrato entre el Luau y el motor**: modificadores, disparadores,
+  niveles de ANC, acciones permitidas por gesto y paneles tienen que usar los
+  mismos nombres en los dos lados
+- que los ajustes inválidos se rechacen (el lado del auricular, el nivel de
+  ANC, la acción de un gesto) y que el volumen se marque ya recortado
+- que la marca de "cambio hecho por nosotros" caduca, que el restore no pise
+  un cambio del usuario y que el apagado automático del anillo reintente
+
+Las comprobaciones se validaron **rompiendo el código a propósito** (espera
+fija de 1 s, sin reinicio del contador, sin detección del cierre temprano,
+sin la caducidad de la marca, sin la protección del restore, sin el cierre
+del socket, sin la validación del gesto o del nivel de ANC...): cada una
+falla, así que no son vacuas. La de la regla malformada cubre la propiedad
+en su conjunto —que una regla inválida no impida ejecutar las demás—, y se
+comprobó rompiendo a la vez las dos capas que la sostienen (la lectura
+tolerante y el aislamiento por regla): la suite falla.

@@ -15,8 +15,15 @@
 # temporal y renombrarlo genera un IN_MOVED_TO: el shell solo llega a ver el
 # fichero completo, nunca a medias.
 #
-# Ademas comprueba despues que la carga ha ido bien, para que un fallo de
-# carga no pase desapercibido.
+# POR QUE ADEMAS COMPRUEBA Y REINTENTA
+#
+# El watcher descarta cualquier aviso que llegue menos de 100 ms despues del
+# anterior (mismo fichero, file_watcher.cpp: "elapsed.count() < 100"). Si la
+# recarga con el fichero incompleto y la del fichero completo llegan juntas,
+# solo se atiende la primera y el plugin se queda roto aunque el fichero en
+# disco este bien. Por eso, si la carga falla, el despliegue repite el
+# renombrado (un aviso nuevo, ya fuera de la ventana del throttle) y vuelve a
+# comprobar; y si sigue fallando, sale con error.
 #
 # Uso:  bin/deploy.sh [directorio_destino]
 
@@ -57,23 +64,95 @@ else
   echo "aviso: luac5.1 no esta disponible; se despliega sin comprobar la sintaxis" >&2
 fi
 
-mkdir -p "$destino/bin" "$destino/translations"
-
-for f in "${ficheros[@]}"; do
-  origen="$raiz/$f"
-  [ -f "$origen" ] || continue
-  destino_final="$destino/$f"
+copiar_uno() {
+  local f="$1"
+  local origen="$raiz/$f"
+  local destino_final="$destino/$f"
+  local temporal
+  [ -f "$origen" ] || return 0
   temporal="$(dirname "$destino_final")/.$(basename "$destino_final").tmp.$$"
   cp "$origen" "$temporal"
   chmod --reference="$origen" "$temporal" 2>/dev/null || true
   mv -f "$temporal" "$destino_final"   # rename: atomico
-done
+}
 
-echo "desplegado en $destino"
+desplegar() {
+  mkdir -p "$destino/bin" "$destino/translations"
+  for f in "${ficheros[@]}"; do
+    copiar_uno "$f"
+  done
+}
 
-# Comprobacion: el shell deberia haber recargado el script sin errores.
+# Lineas del log a partir de las cuales hay que mirar (0 = log sin usar).
+lineas_previas() {
+  [ -f "$log" ] && wc -l < "$log" || echo 0
+}
+
+# Comprueba la carga: debe haber recarga del script y no debe haber error.
+comprobar_carga() {
+  local desde="$1"
+  local espera="${2:-6}"
+  local i lineas_ok=0
+  for ((i = 0; i < espera * 5; i++)); do
+    sleep 0.2
+    [ -f "$log" ] || continue
+    lineas_ok=1
+    local nuevas
+    nuevas="$(tail -n +$((desde + 1)) "$log" 2>/dev/null || true)"
+    if printf '%s' "$nuevas" | grep -qE "luau_load failed|unhealthy|disabled after repeated"; then
+      echo "FALLO: el shell no ha podido cargar el script:" >&2
+      printf '%s\n' "$nuevas" | grep -E "luau_load failed|unhealthy|disabled after repeated" | tail -3 >&2
+      return 1
+    fi
+    if printf '%s' "$nuevas" | grep -q "hot reload"; then
+      return 0
+    fi
+  done
+  if [ "$lineas_ok" = 0 ]; then
+    echo "aviso: no hay log en $log; no se puede comprobar la carga" >&2
+    return 0
+  fi
+  echo "aviso: el shell no ha registrado recarga en ${espera}s; revisa $log" >&2
+  return 1
+}
+
+# Comprobacion de la carga en el shell, con reintento (ver cabecera).
 if [ -f "$log" ]; then
-  sleep 2
-  echo "--- ultimas lineas del shell sobre este plugin ---"
-  grep -E "wallpaper-carousel" "$log" | grep -E "hot reload|luau_load failed|unhealthy|disabled after" | tail -5 || echo "(sin novedades)"
+  # La marca se toma ANTES de desplegar: si se tomara despues, la linea de
+  # recarga podria quedar fuera de la ventana y la comprobacion no serviria.
+  desde="$(lineas_previas)"
+  sleep 0.4
+  desplegar
+  echo "desplegado en $destino"
+
+  # Los ficheros desplegados tienen que ser identicos a los del repositorio.
+  for f in "${ficheros[@]}"; do
+    [ -f "$raiz/$f" ] || continue
+    if ! cmp -s "$raiz/$f" "$destino/$f"; then
+      echo "ERROR: $f desplegado no coincide con el del repositorio" >&2
+      exit 1
+    fi
+  done
+  echo "contenido verificado ✓"
+
+  if comprobar_carga "$desde" 6; then
+    echo "carga comprobada ✓"
+  else
+    echo "reintentando el despliegue (el watcher puede haber descartado el aviso)..." >&2
+    sleep 0.4
+    desde="$(lineas_previas)"
+    desplegar
+    sleep 0.4
+    if comprobar_carga "$desde" 6; then
+      echo "carga comprobada en el reintento ✓"
+    else
+      echo "ERROR: el shell no carga el plugin tras desplegar" >&2
+      tail -n +$((desde + 1)) "$log" 2>/dev/null | tail -5 >&2 || true
+      exit 1
+    fi
+  fi
+else
+  mkdir -p "$destino/bin" "$destino/translations"
+  desplegar
+  echo "desplegado en $destino (sin log: no se puede comprobar la carga)"
 fi

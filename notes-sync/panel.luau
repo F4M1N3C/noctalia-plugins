@@ -234,6 +234,10 @@ render = function()
 end
 
 function onOpen(_context)
+  -- El servicio publica el estado cada 10 s: sin pedirlo, el boton de enviar
+  -- podria quedarse deshabilitado hasta el siguiente tic. Se pide estado
+  -- fresco y, cuando el servicio publique, el panel se repinta solo.
+  noctalia.runAsync("noctalia msg plugin " .. shellQuote(serviceId()) .. " all refresh")
   render()
 end
 

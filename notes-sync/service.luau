@@ -31,6 +31,7 @@ local MAX_IN_FLIGHT = 4 -- el host acepta 8; se deja margen para otras acciones
 
 local inFlight = 0
 local queue = {}
+local fullStateTick = 0
 
 local function tr(key, params)
   if params ~= nil then
@@ -449,8 +450,18 @@ end
 
 -- ------------------------------------------------------------------ ciclo
 
+-- Cada cuanto se pide el estado completo (no el resumen): el estado trae la
+-- lista de notas, asi que no se pide en cada tic. El resumen (salud) es
+-- ligero y se pide siempre.
+local fullStateEvery = 6
+
 function update()
   refresh()
+  fullStateTick = (fullStateTick or 0) + 1
+  if fullStateTick >= fullStateEvery then
+    fullStateTick = 0
+    refreshState()
+  end
 end
 
 function onConfigChanged()

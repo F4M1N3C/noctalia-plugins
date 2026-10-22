@@ -123,6 +123,27 @@ function M.pluginWindows(clients, monitors, nameForClass)
   return windows
 end
 
+-- Zonas ocupadas por las ventanas del plugin en el monitor de destino.
+-- `excludeAddress` deja fuera una ventana (la que se va a recolocar: si no,
+-- se taparía a sí misma y acabaría en un hueco cualquiera).
+function M.occupiedRects(clients, monitors, targetOutput, excludeAddress)
+  local occupied = {}
+  for _, client in ipairs(clients or {}) do
+    if M.isPluginClass(client.class) and client.address ~= excludeAddress then
+      local monitor = (monitors or {})[client.monitor]
+      if monitor ~= nil and (targetOutput == "" or monitor.name == targetOutput) then
+        table.insert(occupied, {
+          x = client.x - monitor.x,
+          y = client.y - monitor.y,
+          w = client.w,
+          h = client.h,
+        })
+      end
+    end
+  end
+  return occupied
+end
+
 local function moveExpression(selector, x, y)
   return string.format(
     "hl.dsp.window.move({ x = %d, y = %d, window = %s })",

@@ -280,25 +280,6 @@ local function rectsOverlap(a, b)
     and b.y + tolerance < a.y + a.h
 end
 
--- Zonas ocupadas por las ventanas del plugin en el monitor de destino.
-local function collectOccupied(clients, monitors, targetOutput)
-  local occupied = {}
-  for _, client in ipairs(clients or {}) do
-    if win.isPluginClass(client.class) then
-      local monitor = (monitors or {})[client.monitor]
-      if monitor ~= nil and (targetOutput == "" or monitor.name == targetOutput) then
-        table.insert(occupied, {
-          x = client.x - monitor.x,
-          y = client.y - monitor.y,
-          w = client.w,
-          h = client.h,
-        })
-      end
-    end
-  end
-  return occupied
-end
-
 -- Posición más cercana a la deseada que no choque con otra ventana abierta.
 local function avoidCollisions(geometry, occupied, auto)
   local screenWidth, screenHeight = outputGeometry()
@@ -524,12 +505,20 @@ launch = function(name, opts)
 
   win.list(function(clients)
     win.monitors(function(monitors)
+      local existing = findByClass(clients, class)
       if cfg.avoidCollisions then
-        local occupied = collectOccupied(clients, monitors, geometry.output)
+        -- La ventana que ya está abierta se excluye: si no, se taparía a sí
+        -- misma y al volver a pulsarla acabaría en un hueco cualquiera en vez
+        -- de volver a su sitio.
+        local occupied = win.occupiedRects(
+          clients,
+          monitors,
+          geometry.output,
+          existing ~= nil and existing.address or nil
+        )
         geometry.x, geometry.y = avoidCollisions(geometry, occupied, geometry.auto)
       end
 
-      local existing = findByClass(clients, class)
       if existing ~= nil and cfg.reuseExisting then
         win.focusExisting(class, geometry, function()
           finish(true)
@@ -623,7 +612,6 @@ openAll = function()
           return
         end
         launch(name, {
-          quiet = true,
           keepOpen = true,
           onDone = function()
             nextWidget()
@@ -1151,14 +1139,8 @@ function onIpc(event, payload)
   elseif event == "remove" then
     loadConfig()
     loadWidgets()
-    local removed, err = removeWidget(tostring(payload or ""))
-    if not removed then
-      noctalia.notifyError(tr("title"), err)
-      return
-    end
-    if state.open then
-      render()
-    end
+    -- Same path as the panel's delete button: the window is closed too.
+    deleteWidget(tostring(payload or ""))
   elseif event == "refresh" then
     loadConfig()
     loadWidgets()

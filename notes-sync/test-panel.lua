@@ -30,6 +30,7 @@ end
 local state = {}
 local commands = {}
 local notifications = {}
+local settingsOpened = 0
 local rendered = 0
 
 local function json_encode(v)
@@ -78,6 +79,9 @@ local mock = {
   },
   runAsync = function(cmd)
     commands[#commands + 1] = cmd
+  end,
+  openSettings = function()
+    settingsOpened = (settingsOpened or 0) + 1
   end,
   notify = function(a, b)
     notifications[#notifications + 1] = { kind = "ok", a = a, b = b }
@@ -191,6 +195,22 @@ pcall(function()
   onRefresh()
 end)
 check("onRefresh lanza refresh al servicio", true, (#commands > 0 and string.find(commands[1], "all refresh", 1, true) ~= nil))
+
+-- ------------------------------------------- onOpenSettings y onOpen
+
+settingsOpened = 0
+pcall(function()
+  onOpenSettings()
+end)
+check("onOpenSettings abre los ajustes", 1, settingsOpened)
+
+-- Al abrir el panel se pide estado fresco: sin eso, el boton de enviar puede
+-- quedarse deshabilitado hasta el siguiente tic del servicio.
+commands = {}
+pcall(function()
+  onOpen("panel")
+end)
+check("onOpen pide estado fresco al servicio", true, (#commands > 0 and string.find(commands[1], "all refresh", 1, true) ~= nil))
 
 -- --------------------------------------------------- cita de nombres de nota
 -- Un nombre con comilla simple no debe romper la linea de comandos.

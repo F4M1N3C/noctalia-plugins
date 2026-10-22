@@ -195,7 +195,8 @@ local function notesCurrentFile()
   return root .. "/" .. notesPluginId() .. "/current.json"
 end
 
--- Devuelve {name, content} de la nota abierta en el panel de notas, o nil.
+-- Devuelve {name, content, open} de la ultima nota con la que se trabajo en
+-- el panel de notas, o nil. `open` dice si esa nota esta abierta ahora mismo.
 local function readCurrentNote()
   local path = notesCurrentFile()
   if path == nil then
@@ -212,7 +213,11 @@ local function readCurrentNote()
   if type(decoded.name) ~= "string" or decoded.name == "" then
     return nil
   end
-  return { name = decoded.name, content = decoded.content or "" }
+  return {
+    name = decoded.name,
+    content = decoded.content or "",
+    open = decoded.open == true,
+  }
 end
 
 -- ------------------------------------------------------------------ estado
@@ -227,6 +232,7 @@ local snapshot = {
   checkedAt = "",
   error = "",
   currentNote = "",
+  currentOpen = false,
 }
 
 local function publish()
@@ -234,6 +240,7 @@ local function publish()
   snapshot.checkedAt = noctalia.formatTime("%H:%M:%S")
   local current = readCurrentNote()
   snapshot.currentNote = current and current.name or ""
+  snapshot.currentOpen = current and current.open or false
   noctalia.state.set("notes_sync", snapshot)
 end
 

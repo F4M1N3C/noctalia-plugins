@@ -76,11 +76,15 @@ The plugin writes the note that is currently open to
 `~/.local/state/noctalia/plugins/data/faminec/notes/current.json`:
 
 ```json
-{ "name": "my note.md", "content": "…", "at": "2026-10-21 17:22:23" }
+{ "name": "my note.md", "content": "…", "open": true, "at": "2026-10-21 17:22:23" }
 ```
 
-It is rewritten whenever a note is opened or saved. `faminec/notes-sync` reads
-it to know which note is open, and any other tool can read it too.
+It is rewritten whenever a note is opened, saved, or changed from the
+outside. `faminec/notes-sync` reads it to know which note to send to the
+phone, and any other tool can read it too.
+
+`open` is `false` when the panel is closed: the note is then the **last one**
+you worked on, not one that is open.
 
 ## Notes
 

@@ -119,6 +119,22 @@ local function urlRow()
   return statusRow(tr("label_url"), tostring(s.url or ""), "on_surface_variant")
 end
 
+-- La nota con la que se esta trabajando en el panel de notas. Los dos panels
+-- no pueden estar abiertos a la vez (Noctalia muestra uno), asi que puede ser
+-- la ultima nota, no la que esta abierta ahora.
+local function currentRow()
+  local s = readSync()
+  local name = tostring(s.currentNote or "")
+  if name == "" then
+    return statusRow(tr("label_note"), tr("value_no_note"), "on_surface_variant")
+  end
+  local text = name
+  if s.currentOpen ~= true then
+    text = tr("value_last_note", { name = name })
+  end
+  return statusRow(tr("label_note"), text, "on_surface")
+end
+
 -- ------------------------------------------------------------------ acciones
 
 -- Cita un texto para el shell (las comillas simples de dentro se cierran y
@@ -186,6 +202,7 @@ local function body()
   table.insert(rows, pendingRow())
   table.insert(rows, notesRow())
   table.insert(rows, lastSeenRow())
+  table.insert(rows, currentRow())
   table.insert(rows, urlRow())
 
   if s.error ~= nil and s.error ~= "" then

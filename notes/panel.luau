@@ -21,6 +21,10 @@ local view = "list" -- "list" | "editor"
 local current = nil -- filename ("foo.md") while the editor is open
 local buffer = ""
 local loadedContent = "" -- what the file held when we last read/wrote it
+-- Ultima nota con la que se trabajo, aunque el panel este cerrado: es la que
+-- se puede mandar al celular desde el panel de sincronizacion.
+local lastNote = ""
+local lastContent = ""
 local editorRev = 0 -- bumped to reseed the editor input after external changes
 local dirty = false
 local idleTicks = 0
@@ -156,8 +160,13 @@ local function publishCurrent()
     return
   end
   local payload = noctalia.json.encode({
-    name = current or "",
-    content = current ~= nil and buffer or "",
+    name = current or lastNote,
+    content = current ~= nil and buffer or lastContent,
+    -- `open` dice si el panel tiene esa nota abierta ahora mismo. Cuando se
+    -- cierra, la nota sigue siendo la "ultima nota" para poder mandarla al
+    -- celular desde el panel de sincronizacion (los dos paneles no pueden
+    -- estar abiertos a la vez: Noctalia solo muestra uno).
+    open = current ~= nil,
     at = noctalia.formatTime("%Y-%m-%d %H:%M:%S"),
   })
   if payload == nil then
@@ -180,6 +189,8 @@ local function flush()
   end
   loadedContent = buffer
   dirty = false
+  lastNote = current or lastNote
+  lastContent = buffer
   -- El contenido guardado se publica para que otros plugins puedan usarlo
   -- (por ejemplo, para mandarlo al celular).
   noctalia.state.set("notes_content", buffer)
@@ -198,6 +209,8 @@ local function openNote(file)
   pendingDelete = nil
   -- Se publica la nota abierta para que otros plugins (por ejemplo
   -- faminec/notes-sync) puedan actuar sobre ella sin adivinar.
+  lastNote = file
+  lastContent = buffer
   noctalia.state.set("notes_current", file)
   noctalia.state.set("notes_content", buffer)
   publishCurrent()
@@ -495,8 +508,8 @@ end
 
 function onClose()
   flush()
-  -- El panel se cierra: no queda ninguna nota abierta. Se publica para que
-  -- otros plugins no intentan mandar una nota que ya no esta.
+  -- El panel se cierra: ya no hay ninguna nota ABIERTA, pero la ultima con
+  -- la que se trabajo sigue publicada (para poder mandarla al celular).
   current = nil
   buffer = ""
   noctalia.state.set("notes_current", "")

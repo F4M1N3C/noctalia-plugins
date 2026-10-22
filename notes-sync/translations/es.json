@@ -7,6 +7,7 @@
     "push_failed": "No se pudo enviar el mensaje al celular"
   },
   "label_last_seen": "Última conexión",
+  "label_note": "Nota",
   "label_notes": "Notas",
   "label_pending": "Mensajes en cola",
   "label_phone": "Celular",
@@ -47,8 +48,10 @@
   "value_disconnected": "sin conectar",
   "value_hours": "hace {count} h",
   "value_just_now": "ahora mismo",
+  "value_last_note": "{name} (la última)",
   "value_minutes": "hace {count} min",
   "value_never": "nunca",
+  "value_no_note": "—",
   "value_offline": "sin respuesta",
   "value_online": "en línea"
 }

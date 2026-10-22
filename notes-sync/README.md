@@ -135,12 +135,16 @@ is a small file instead:
 ```
 
 ```json
-{ "name": "my note.md", "content": "…", "at": "2026-10-21 17:22:23" }
+{ "name": "my note.md", "content": "…", "open": true, "at": "2026-10-21 17:22:23" }
 ```
 
-The notes plugin rewrites it whenever a note is opened or saved; the sync
-plugin reads it to know which note is open and what it contains. Any other
-tool can read it too.
+The notes plugin rewrites it whenever a note is opened, saved or changed from
+the outside; the sync plugin reads it to know which note to send.
+
+`open` says whether that note is open **right now**. Noctalia only shows one
+floating panel at a time, so opening the sync panel closes the notes panel:
+the last note stays published (with `open: false`) so "send to phone" still
+has something to send. The panel shows it as *last one* in that case.
 
 ## Notes
 

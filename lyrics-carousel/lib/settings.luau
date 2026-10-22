@@ -75,7 +75,30 @@ local function readOverrides()
   return data
 end
 
-M.overrides = readOverrides
+-- El panel consulta decenas de valores por render: el fichero de overrides
+-- se cachea para no leerlo en cada consulta. La cache se invalida al
+-- escribir (M.refresh) y tiene una caducidad corta por si el cambio viene
+-- de fuera. Ojo: os.clock() es tiempo de CPU, no de reloj, asi que para la
+-- caducidad se usa os.time().
+local cached = {}
+local cachedAt = 0
+local CACHE_SECONDS = 2
+
+function M.overrides()
+  local now = os.time()
+  if cachedAt ~= 0 and (now - cachedAt) < CACHE_SECONDS then
+    return cached
+  end
+  cached = readOverrides()
+  cachedAt = now
+  return cached
+end
+
+--- Fuerza a releer los overrides (despues de escribir).
+function M.refresh()
+  cachedAt = 0
+  cached = {}
+end
 
 --- Valor efectivo de un ajuste: overrides > configuracion > defecto.
 function M.value(key)

@@ -181,16 +181,11 @@ local pendingWrites = 0
 
 local function writeSetting(key, value)
   pendingWrites = pendingWrites + 1
-  local ok = settingsLib.write(key, value)
-  if not ok then
+  settingsLib.write(key, value, function(ok)
     pendingWrites = pendingWrites - 1
-    reportError(tr("write_failed"))
-    return
-  end
-  -- La escritura es asincrona: se descuenta al terminar.
-  runAsync({ "sleep", "0.4" }, function()
-    if pendingWrites > 0 then
-      pendingWrites = pendingWrites - 1
+    if not ok then
+      reportError(tr("write_failed"))
+      render()
     end
   end)
 end

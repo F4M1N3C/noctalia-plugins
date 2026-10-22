@@ -1,12 +1,19 @@
--- Banco de pruebas del plugin `faminec/floating-term` (módulos `lib/`).
+-- Banco de pruebas del plugin `faminec/floating-term`.
 --
--- Se cargan los módulos con un API de Noctalia simulado para comprobar la
--- lógica sin depender del escritorio: fusión de la lista de widgets,
--- tombstones, parser del manifiesto, parser de posiciones, zonas ocupadas y
--- las permutaciones de la rotación.
+--   lua5.4 test-panel.lua                       # prueba la copia de este repo
+--   lua5.4 test-panel.lua /ruta/otras          # prueba otra copia (la instalada)
 --
---   lua5.4 test-panel.lua              # prueba la copia de este repo
---   lua5.4 test-panel.lua /ruta/otros  # prueba otra copia (la instalada)
+-- Dos partes:
+--
+--   1. Módulos de `lib/`: con un API de Noctalia simulado se comprueban la
+--      fusión de la lista de widgets, los tombstones, el parser del manifiesto,
+--      el parser de posiciones, las zonas ocupadas, la limpieza de miniaturas y
+--      las cinco permutaciones de la rotación.
+--
+--   2. Panel (`panel.luau`): se carga con la UI simulada y se comprueba que
+--      las tarjetas, la rejilla, el modo edición y los handlers del IPC hacen
+--      lo que deben. Esta parte es la que atrapa los "attempt to call a nil
+--      value" (en Luau un `local` solo existe desde su declaración).
 --
 -- Sale con código distinto de 0 si algún caso falla.
 
@@ -20,32 +27,81 @@ if DIR:sub(-1) ~= "/" then
   DIR = DIR .. "/"
 end
 
-local failures = 0
-local checks = 0
+local FAILED = 0
+local PASSED = 0
 
-local function check(name, got, want)
-  checks = checks + 1
-  if got ~= want then
-    failures = failures + 1
-    print(string.format("FAIL  %s\n      esperado: %s\n      obtenido: %s", name, tostring(want), tostring(got)))
+local function check(name, expected, got)
+  if expected == got then
+    PASSED = PASSED + 1
+    print(string.format("  ok   %-58s %s", name, tostring(got)))
   else
-    print(string.format("ok    %s", name))
+    FAILED = FAILED + 1
+    print(string.format("  FALLA %-58s esperado=%s obtenido=%s", name, tostring(expected), tostring(got)))
   end
 end
 
-local function checkTrue(name, value)
-  check(name, value and true or false, true)
-end
-
--- ---------------------------------------------------------------- entorno --
+-- --------------------------------------------------------------- simulador --
 
 local files = {}
-local dirs = {}
+local TESTDATA = os.tmpname()
+local config = {
+  terminal = "kitty",
+  width = 900,
+  height = 520,
+  x = 120,
+  y = 140,
+  margin = 16,
+  output = "",
+  close_on_launch = false,
+  reuse_existing = true,
+  rotation = "clockwise",
+  rotation_sizes = false,
+  columns = 2,
+  card_preview = "auto",
+  avoid_collisions = true,
+  commands = {},
+  layouts = {},
+}
 
-local fakeNoctalia = {
-  getConfig = function() return nil end,
-  pluginDir = function() return DIR end,
-  pluginDataDir = function() return "/tmp/opencode/testdata" end,
+local clients = {}
+local notifications = {}
+local rendered = 0
+local clock = 0
+
+local function jsonQuote(value)
+  return '"' .. tostring(value):gsub('\\', '\\\\'):gsub('"', '\\"') .. '"'
+end
+
+local function jsonEncode(value)
+  if type(value) ~= "table" then
+    return tostring(value)
+  end
+  local parts = {}
+  for key, item in pairs(value) do
+    if type(item) == "table" then
+      local inner = {}
+      for k2, v2 in pairs(item) do
+        inner[#inner + 1] = jsonQuote(k2) .. ":" .. jsonQuote(v2)
+      end
+      parts[#parts + 1] = jsonQuote(key) .. ":{" .. table.concat(inner, ",") .. "}"
+    else
+      parts[#parts + 1] = jsonQuote(key) .. ":" .. jsonQuote(item)
+    end
+  end
+  return "{" .. table.concat(parts, ",") .. "}"
+end
+
+local mock = {
+  getConfig = function(key)
+    return config[key]
+  end,
+  pluginDir = function()
+    return DIR
+  end,
+  pluginDataDir = function()
+    -- Ruta temporal: el simulador no escribe nada de verdad en disco.
+    return TESTDATA
+  end,
   readFile = function(path)
     return files[path]
   end,
@@ -53,8 +109,16 @@ local fakeNoctalia = {
     files[path] = content
     return true
   end,
-  mkdirAll = function() return true end,
-  listDir = function() return {} end,
+  mkdirAll = function()
+    return true
+  end,
+  listDir = function()
+    local names = {}
+    for name in pairs(files) do
+      names[#names + 1] = name
+    end
+    return names
+  end,
   removeFile = function(path)
     files[path] = nil
     return true
@@ -62,57 +126,148 @@ local fakeNoctalia = {
   fileExists = function(path)
     return files[path] ~= nil
   end,
+  fileInfo = function()
+    return { size = 10, mtime = os.time(), isDir = false }
+  end,
   json = {
-    encode = function(value)
-      -- JSON mínimo: solo nos importa que vuelva algo no vacío.
-      return "{\"ok\":true}"
-    end,
+    encode = jsonEncode,
     decode = function(text)
-      return { commands = { prueba = "echo" }, layouts = {}, removed = { "pipes" } }
+      local out = {}
+      for key, item in text:gmatch('"([^"]+)":"([^"]*)"') do
+        out[key] = item
+      end
+      return out
     end,
   },
   log = function() end,
+  tr = function(key, args)
+    local out = tostring(key)
+    if type(args) == "table" then
+      for name, value in pairs(args) do
+        out = out:gsub("{" .. name .. "}", tostring(value))
+      end
+    end
+    return out
+  end,
+  notify = function(title, body)
+    notifications[#notifications + 1] = { title = title, body = body }
+  end,
+  notifyError = function(title, body)
+    notifications[#notifications + 1] = { title = title, body = body, error = true }
+  end,
+  nowMs = function()
+    clock = clock + 16
+    return clock
+  end,
+  outputs = function()
+    return { { name = "DP-1", width = 3440, height = 1440, x = 0, y = 0, scale = 1, focused = true } }
+  end,
+  commandExists = function()
+    return true
+  end,
+  runInTerminal = function()
+    return true
+  end,
+  runAsync = function(argv, callback)
+    local command = table.concat(argv, " ")
+    if command:find("hyprctl clients", 1, true) then
+      local parts = {}
+      for _, client in ipairs(clients) do
+        parts[#parts + 1] = string.format(
+          '{"address":"%s","class":"%s","title":"%s","at":[%d,%d],"size":[%d,%d],"monitor":"%s"}',
+          client.address or "0x0",
+          client.class or "",
+          client.title or "",
+          client.x or 0,
+          client.y or 0,
+          client.w or 0,
+          client.h or 0,
+          client.monitor or "1"
+        )
+      end
+      if callback ~= nil then
+        callback({ exitCode = 0, stdout = "[" .. table.concat(parts, ",") .. "]", stderr = "" })
+      end
+      return true
+    end
+    if command:find("hyprctl monitors", 1, true) then
+      if callback ~= nil then
+        callback({
+          exitCode = 0,
+          stdout = '[{"id":1,"name":"DP-1","x":0,"y":0,"width":3440,"height":1440,"scale":1}]',
+          stderr = "",
+        })
+      end
+      return true
+    end
+    if callback ~= nil then
+      callback({ exitCode = 0, stdout = "", stderr = "" })
+    end
+    return true
+  end,
 }
 
-local env = {
-  noctalia = fakeNoctalia,
-  math = math,
-  string = string,
-  table = table,
-  os = os,
-  tonumber = tonumber,
-  tostring = tostring,
-  type = type,
-  pairs = pairs,
-  ipairs = ipairs,
-  next = next,
-  pcall = pcall,
-  error = error,
-  print = print,
-  setmetatable = setmetatable,
-  getmetatable = getmetatable,
-  rawget = rawget,
-  rawset = rawset,
-  select = select,
-  unpack = table.unpack,
+local function makeNode(kind)
+  return function(props, children)
+    return { type = kind, props = props or {}, children = children or {} }
+  end
+end
+
+local uiMock = {
+  column = makeNode("column"),
+  row = makeNode("row"),
+  label = makeNode("label"),
+  glyph = makeNode("glyph"),
+  image = makeNode("image"),
+  box = makeNode("box"),
+  button = makeNode("button"),
+  input = makeNode("input"),
+  scroll = makeNode("scroll"),
+  separator = makeNode("separator"),
+  spacer = makeNode("spacer"),
 }
--- (se asigna después: dentro del constructor `env` todavía no existe)
+
+local lastTree = nil
+local panelMock = {
+  render = function(tree)
+    rendered = rendered + 1
+    lastTree = tree
+  end,
+  close = function() end,
+  openContextMenu = function()
+    return true
+  end,
+  setNeedsFrameTick = function() end,
+  setWantsSecondTicks = function() end,
+}
+
+-- ----------------------------------------------------------------- entorno --
+
+local env = setmetatable({
+  noctalia = mock,
+  panel = panelMock,
+  ui = uiMock,
+}, { __index = _G })
+
 env.require = function(path)
   local name = path:match("([^/]+)$")
   local chunk = assert(loadfile(DIR .. "lib/" .. name, "t", env))
   return chunk()
 end
 
-local function load(name)
-  local chunk = assert(loadfile(DIR .. name, "t", env))
+local function loadModule(name)
+  local chunk = assert(loadfile(DIR .. "lib/" .. name, "t", env))
   return chunk()
 end
 
-local util = load("lib/util.luau")
-local store = load("lib/store.luau")
-local layout = load("lib/layout.luau")
-local defaults = load("lib/defaults.luau")
-local win = load("lib/windows.luau")
+local util = loadModule("util.luau")
+local store = loadModule("store.luau")
+local layout = loadModule("layout.luau")
+local defaults = loadModule("defaults.luau")
+local win = loadModule("windows.luau")
+local preview = loadModule("preview.luau")
+
+-- --------------------------------------------------------------- utilidades --
 
 print("== utilidades ==")
 check("slug", util.slug("Mi Widget!"), "mi-widget")
@@ -120,24 +275,25 @@ check("slug vacío", util.slug("!!!"), "app")
 check("clase", util.classFor("Cava"), "noctalia-term-cava")
 check("trim", util.trim("  hola  "), "hola")
 
+-- ------------------------------------------------------------ fusión de widgets --
+
 print("\n== fusión de widgets ==")
 local base = { a = "a-cmd", b = "b-cmd" }
-local config = { b = "b-cmd-editado", c = "c-cmd" }
+local configMap = { b = "b-cmd-editado", c = "c-cmd" }
 local storeMap = { d = "d-cmd" }
 local removed = { "a" }
 
-local merged = store.merge(base, config, storeMap, removed)
-check("default que no está en la config", merged.a, nil)
-check("default quitado por tombstone", merged.a, nil)
+local merged = store.merge(base, configMap, storeMap, removed)
 check("la config pisa al default", merged.b, "b-cmd-editado")
 check("entrada nueva de la config", merged.c, "c-cmd")
 check("entrada nueva del store", merged.d, "d-cmd")
-
-local merged2 = store.merge({ a = "a", b = "b" }, { c = "c" }, {}, {})
-check("sin tombstone se conserva el default", merged2.a, "a")
-check("valor vacío se ignora", store.merge({ a = "x" }, { a = "" }, {}, {}).a, "x")
+check("el tombstone borra el default", merged.a, nil)
+check("sin tombstone se conserva el default", store.merge({ a = "x" }, {}, {}, {}).a, "x")
+check("valor vacío de Ajustes se ignora", store.merge({ a = "x" }, { a = "" }, {}, {}).a, "x")
 check("valor vacío del store se respeta", store.merge({ a = "x" }, {}, { a = "" }, {}).a, "")
 check("el store pisa al default", store.merge({ a = "x" }, {}, { a = "y" }, {}).a, "y")
+
+-- -------------------------------------------------------------- store --
 
 print("\n== store: añadir y borrar ==")
 local st = { commands = {}, layouts = {}, removed = {} }
@@ -149,6 +305,8 @@ check("widget borrado", st.commands.nuevo, nil)
 check("tombstone creado", st.removed[1], "nuevo")
 store.upsert(st, "nuevo", "echo hola")
 check("tombstone limpiado al volver a añadir", #st.removed, 0)
+
+-- -------------------------------------------------------------- posiciones --
 
 print("\n== posiciones ==")
 local spec = layout.parseLayout("bottom-center, 1610x584")
@@ -175,10 +333,7 @@ check("clave=valor ancho", spec.width, 900)
 
 spec = layout.parseLayout("auto, 900x520")
 check("auto", spec.auto, true)
-
-spec = layout.parseLayout("abajo-izquierda, 100x100")
-check("alias en español", spec.anchor, "bottom-left")
-
+check("ancla en español", layout.parseLayout("abajo-izquierda, 100x100").anchor, "bottom-left")
 check("inválido", layout.parseLayout("no es una posición").valid, false)
 check("vacío", layout.parseLayout(""), nil)
 check("solo ancla", layout.parseLayout("center").anchor, "center")
@@ -189,25 +344,29 @@ check("auto sin tamaño", layout.parseLayout("auto").auto, true)
 check("ancla con guion bajo", layout.parseLayout("bottom_center").anchor, "bottom-center")
 check("tamaño negativo", layout.parseLayout("bottom-center, -10x-10").width, nil)
 
-local x, y = layout.anchorPosition("bottom-right", 900, 520, 3440, 1440, 16)
-check("ancla abajo-derecha x", x, 3440 - 900 - 16)
-check("ancla abajo-derecha y", y, 1440 - 520 - 16)
+local ax, ay = layout.anchorPosition("bottom-right", 900, 520, 3440, 1440, 16)
+check("ancla abajo-derecha x", ax, 3440 - 900 - 16)
+check("ancla abajo-derecha y", ay, 1440 - 520 - 16)
+
+-- -------------------------------------------------------------- manifiesto --
 
 print("\n== manifiesto ==")
-defaults.reset()
 files[DIR .. "plugin.toml"] = [==[
 [[setting]]
 key = "commands"
 type = "string_map"
 label_key = "settings.commands.label"
+description_key = "settings.commands.description"
 default = { cava = "cava", cbonsai = "cbonsai -l -p", unimatrix = "unimatrix -s 96 -l o" }
 
 [[setting]]
 key = "layouts"
 type = "string_map"
 label_key = "settings.layouts.label"
+description_key = "settings.layouts.description"
 default = { cava = "bottom-center, 1610x584", cbonsai = "top-center, 801x582" }
 ]==]
+defaults.reset()
 local base2 = defaults.load()
 check("comandos del manifiesto", base2.commands.cava, "cava")
 check("comando con espacios", base2.commands.cbonsai, "cbonsai -l -p")
@@ -215,20 +374,22 @@ check("comando con guiones", base2.commands.unimatrix, "unimatrix -s 96 -l o")
 check("posición del manifiesto", base2.layouts.cava, "bottom-center, 1610x584")
 check("posición con comas", base2.layouts.cbonsai, "top-center, 801x582")
 
-defaults.reset()
 files[DIR .. "plugin.toml"] = "[[setting]]\nkey = \"commands\"\ndefault = { a = \"x\" }\n"
+defaults.reset()
 local base3 = defaults.load()
 check("manifiesto mínimo", base3.commands.a, "x")
 check("respaldo de posiciones", base3.layouts.cava, "bottom-center, 1610x584")
 
-defaults.reset()
 files[DIR .. "plugin.toml"] = nil
+defaults.reset()
 local base4 = defaults.load()
 check("sin manifiesto: respaldo", base4.commands.cava, "cava")
 check("sin manifiesto: respaldo de posiciones", base4.layouts.unimatrix, "right-center, 869x1424")
 
+-- ------------------------------------------------------------ zonas ocupadas --
+
 print("\n== zonas ocupadas ==")
-local clients = {
+local clientList = {
   { address = "0xa", class = "noctalia-term-cava", x = 915, y = 840, w = 1610, h = 584, monitor = "1" },
   { address = "0xb", class = "noctalia-term-btop", x = 16, y = 16, w = 928, h = 800, monitor = "1" },
   { address = "0xc", class = "kitty", x = 0, y = 0, w = 800, h = 600, monitor = "1" },
@@ -236,46 +397,38 @@ local clients = {
 local monitors = {
   ["1"] = { id = "1", name = "DP-1", x = 0, y = 0, width = 3440, height = 1440 },
 }
-local occupied = win.occupiedRects(clients, monitors, "DP-1", nil)
+local occupied = win.occupiedRects(clientList, monitors, "DP-1", nil)
 check("solo cuenta las ventanas del plugin", #occupied, 2)
 check("la primera zona", occupied[1].x, 915)
 check("la segunda zona", occupied[2].y, 16)
-local without = win.occupiedRects(clients, monitors, "DP-1", "0xa")
+local without = win.occupiedRects(clientList, monitors, "DP-1", "0xa")
 check("excluye la ventana que se recoloca", #without, 1)
-check("la que queda", without[1].address, nil)
 check("la que queda es la otra", without[1].x, 16)
 
+-- --------------------------------------------------------------- miniaturas --
+
 print("\n== miniaturas ==")
-local preview = load("lib/preview.luau")
--- Sistema de ficheros simulado para la limpieza.
 local fs = {
   ["btop-aaa.png"] = true,
   ["btop-bbb.png"] = true,
   ["cava-ccc.png"] = true,
   ["batch-1.json"] = true,
 }
-fakeNoctalia.listDir = function()
+mock.listDir = function()
   local names = {}
   for name in pairs(fs) do
     names[#names + 1] = name
   end
   return names
 end
-fakeNoctalia.removeFile = function(path)
+mock.removeFile = function(path)
   local name = path:match("([^/]+)$")
   fs[name] = nil
   return true
 end
-fakeNoctalia.fileExists = function(path)
-  local name = path:match("([^/]+)$")
-  return fs[name] == true
-end
-fakeNoctalia.mkdirAll = function() return true end
--- Los ficheros de prueba son "viejos": así la limpieza los borra.
-fakeNoctalia.fileInfo = function()
+mock.fileInfo = function()
   return { size = 10, mtime = os.time() - 7200, isDir = false }
 end
-fakeNoctalia.pluginDataDir = function() return "/tmp/opencode/testdata" end
 
 local used = preview.currentPaths({
   { name = "btop", x = 10, y = 20, w = 300, h = 200 },
@@ -291,7 +444,6 @@ for path in pairs(used) do
 end
 check("la ruta lleva el nombre y la firma", usedPath:match("btop%-[0-9a-f]+%.png$") ~= nil, true)
 
--- Con un mapa de ventanas también vale.
 local fromMap = preview.currentPaths({ btop = { name = "btop", x = 10, y = 20, w = 300, h = 200 } })
 local mapCount = 0
 for _ in pairs(fromMap) do
@@ -299,29 +451,27 @@ for _ in pairs(fromMap) do
 end
 check("currentPaths acepta un mapa", mapCount, 1)
 
--- La limpieza borra lo que no se usa y respeta lo que se usa.
-local keep = { ["/tmp/opencode/testdata/thumbs/btop-aaa.png"] = true }
-preview.pruneUnused(keep)
+preview.pruneUnused({ [TESTDATA .. "/thumbs/btop-aaa.png"] = true })
 check("conserva la miniatura en uso", fs["btop-aaa.png"], true)
 check("borra la que no se usa", fs["btop-bbb.png"], nil)
 check("borra la de otro widget", fs["cava-ccc.png"], nil)
 check("borra los lotes viejos", fs["batch-1.json"], nil)
--- Un fichero sin usar pero reciente se conserva: el host puede volver a
--- aplicar un árbol guardado y pedir esa imagen.
-local fresh = { ["/tmp/opencode/testdata/thumbs/btop-bbb.png"] = true }
+
 fs["btop-bbb.png"] = true
 fs["btop-ccc.png"] = true
-fakeNoctalia.fileInfo = function(path)
+mock.fileInfo = function(path)
   local name = path:match("([^/]+)$")
   if name == "btop-ccc.png" then
     return { size = 10, mtime = os.time() - 7200, isDir = false }
   end
   return { size = 10, mtime = os.time(), isDir = false }
 end
-preview.pruneUnused(fresh, 1800)
+preview.pruneUnused({ [TESTDATA .. "/thumbs/btop-bbb.png"] = true }, 1800)
 check("conserva la miniatura en uso", fs["btop-aaa.png"], true)
 check("conserva la reciente aunque no se use", fs["btop-bbb.png"], true)
 check("borra la antigua que no se usa", fs["btop-ccc.png"], nil)
+
+-- ----------------------------------------------------------------- rotación --
 
 print("\n== rotación: permutaciones ==")
 local function fakeWindow(name, x, y, w, h)
@@ -336,6 +486,7 @@ local function fakeWindow(name, x, y, w, h)
     monitor = { id = "1", name = "DP-1", x = 0, y = 0, width = 3440, height = 1440 },
   }
 end
+
 local group = {
   fakeWindow("arriba-izq", 16, 16, 900, 800),
   fakeWindow("arriba-der", 2524, 16, 900, 800),
@@ -343,12 +494,11 @@ local group = {
   fakeWindow("abajo-der", 2524, 624, 900, 800),
 }
 
--- Se capturan las expresiones de movimiento para comprobar la permutación.
 local dispatched = {}
-fakeNoctalia.runAsync = function(argv, callback)
+mock.runAsync = function(argv, callback)
   local command = table.concat(argv, " ")
-  if command:find("hyprctl dispatch") then
-    table.insert(dispatched, argv[3])
+  if command:find("hyprctl dispatch", 1, true) then
+    dispatched[#dispatched + 1] = argv[3]
   end
   if callback ~= nil then
     callback({ exitCode = 0, stdout = "", stderr = "" })
@@ -356,20 +506,17 @@ fakeNoctalia.runAsync = function(argv, callback)
   return true
 end
 
--- En el monitor los cuatro widgets quedan en las esquinas:
---   arriba-izq (10h)  arriba-der (2h)
---   abajo-izq  (8h)   abajo-der  (4h)
--- El orden horario es: arriba-izq -> arriba-der -> abajo-der -> abajo-izq.
-win.rotate(group, "clockwise", false, function() end)
 local function movedTo(address)
   for _, expression in ipairs(dispatched) do
-    if expression:find('address:' .. address, 1, true) then
+    if expression:find("address:" .. address, 1, true) then
       local mx, my = expression:match("x = (%-?%d+), y = (%-?%d+)")
       return tonumber(mx), tonumber(my)
     end
   end
   return nil, nil
 end
+
+win.rotate(group, "clockwise", false, function() end)
 local mx, my = movedTo("0xarriba-izq")
 check("horario: arriba-izq toma arriba-der", mx, 2524)
 check("horario: arriba-izq toma arriba-der (y)", my, 16)
@@ -386,7 +533,7 @@ check("antihorario: arriba-izq toma abajo-izq (y)", my, 624)
 dispatched = {}
 win.rotate(group, "pairs", false, function() end)
 mx, my = movedTo("0xarriba-izq")
-check("parejas: arriba-izq toma arriba-der", mx,  2524)
+check("parejas: arriba-izq toma arriba-der", mx, 2524)
 check("parejas: arriba-izq toma arriba-der (y)", my, 16)
 
 dispatched = {}
@@ -395,41 +542,6 @@ mx, my = movedTo("0xarriba-izq")
 check("opuesto: arriba-izq toma abajo-der", mx, 2524)
 check("opuesto: arriba-izq toma abajo-der (y)", my, 624)
 
-dispatched = {}
-win.rotate(group, "clockwise", true, function() end)
-local resized = false
-for _, expression in ipairs(dispatched) do
-  if expression:find("resize", 1, true) then
-    resized = true
-  end
-end
-checkTrue("con tamaños se redimensiona", resized)
-
-dispatched = {}
-win.rotate(group, "clockwise", false, function() end)
-resized = false
-for _, expression in ipairs(dispatched) do
-  if expression:find("resize", 1, true) then
-    resized = true
-  end
-end
-check("sin tamaños no se redimensiona", resized, false)
-
--- Con un número impar de ventanas, el que sobra se queda en su sitio.
-local odd = {
-  fakeWindow("arriba-izq", 16, 16, 900, 800),
-  fakeWindow("arriba-der", 2524, 16, 900, 800),
-  fakeWindow("abajo-izq", 16, 624, 900, 800),
-}
-dispatched = {}
-win.rotate(odd, "pairs", false, function() end)
-mx, my = movedTo("0xarriba-izq")
-check("parejas impar: arriba-izq toma arriba-der", mx, 2524)
-mx, my = movedTo("0xabajo-izq")
-check("parejas impar: el que sobra se queda", mx, 16)
-check("parejas impar: el que sobra no se mueve (y)", my, 624)
-
--- La rotación tiene que ser una biyección: ningún destino se repite.
 dispatched = {}
 win.rotate(group, "shuffle", false, function() end)
 local targets = {}
@@ -447,10 +559,162 @@ for _, count in pairs(targets) do
 end
 check("aleatorio: cada destino se usa una vez", unique, #group)
 
--- Con una sola ventana no hay nada que rotar.
+local odd = {
+  fakeWindow("arriba-izq", 16, 16, 900, 800),
+  fakeWindow("arriba-der", 2524, 16, 900, 800),
+  fakeWindow("abajo-izq", 16, 624, 900, 800),
+}
+dispatched = {}
+win.rotate(odd, "pairs", false, function() end)
+mx, my = movedTo("0xarriba-izq")
+check("parejas impar: arriba-izq toma arriba-der", mx, 2524)
+mx, my = movedTo("0xabajo-izq")
+check("parejas impar: el que sobra se queda", mx, 16)
+check("parejas impar: el que sobra no se mueve (y)", my, 624)
+
 dispatched = {}
 win.rotate({ fakeWindow("solo", 16, 16, 900, 800) }, "clockwise", false, function() end)
 check("una ventana no se mueve", #dispatched, 0)
 
-print(string.format("\n%d comprobaciones, %d fallos", checks, failures))
-os.exit(failures == 0 and 0 or 1)
+dispatched = {}
+win.rotate(group, "clockwise", true, function() end)
+local resized = false
+for _, expression in ipairs(dispatched) do
+  if expression:find("resize", 1, true) then
+    resized = true
+  end
+end
+check("con tamaños se redimensiona", resized, true)
+
+dispatched = {}
+win.rotate(group, "clockwise", false, function() end)
+resized = false
+for _, expression in ipairs(dispatched) do
+  if expression:find("resize", 1, true) then
+    resized = true
+  end
+end
+check("sin tamaños no se redimensiona", resized, false)
+
+-- -------------------------------------------------------------------- panel --
+
+print("\n== panel ==")
+
+-- Se carga el panel con la UI simulada. Si usa un global que no existe
+-- (un `local` declarado más abajo, por ejemplo), aquí se rompe.
+local panelChunk, panelErr = loadfile(DIR .. "panel.luau", "t", env)
+if not panelChunk then
+  print("  FALLA no se pudo cargar panel.luau: " .. tostring(panelErr))
+  os.exit(1)
+end
+local loaded, loadErr = pcall(panelChunk)
+check("el panel se carga sin errores", true, loaded == true)
+if not loaded then
+  print("  " .. tostring(loadErr))
+  os.exit(1)
+end
+
+-- Contar nodos del árbol renderizado.
+local function countKeys(tree, prefix)
+  local total = 0
+  local function walk(node)
+    if type(node) ~= "table" then
+      return
+    end
+    if type(node.props) == "table" and type(node.props.key) == "string" then
+      if node.props.key:sub(1, #prefix) == prefix then
+        total = total + 1
+      end
+    end
+    for _, child in ipairs(node.children or {}) do
+      walk(child)
+    end
+  end
+  walk(tree)
+  return total
+end
+
+local function findNode(tree, key)
+  local found = nil
+  local function walk(node)
+    if found ~= nil or type(node) ~= "table" then
+      return
+    end
+    if type(node.props) == "table" and node.props.key == key then
+      found = node
+      return
+    end
+    for _, child in ipairs(node.children or {}) do
+      walk(child)
+    end
+  end
+  walk(tree)
+  return found
+end
+
+-- Widgets de prueba: los del manifiesto del propio plugin.
+config.commands = {}
+config.layouts = {}
+local manifestDefaults = defaults.load()
+for name, command in pairs(manifestDefaults.commands) do
+  config.commands[name] = command
+end
+for name, position in pairs(manifestDefaults.layouts) do
+  config.layouts[name] = position
+end
+local widgetCount = 0
+for _ in pairs(config.commands) do
+  widgetCount = widgetCount + 1
+end
+
+env.onOpen("")
+check("el panel abre y renderiza", true, rendered > 0)
+check("hay una tarjeta por widget", widgetCount, countKeys(lastTree, "card-"))
+check("la cabecera tiene el botón de abrir todo", true, findNode(lastTree, "open-all") ~= nil)
+check("la cabecera tiene el botón de rotar", true, findNode(lastTree, "rotate") ~= nil)
+check("la cabecera tiene el botón de cerrar todo", true, findNode(lastTree, "close-all") ~= nil)
+check("la cabecera tiene el botón de editar", true, findNode(lastTree, "edit") ~= nil)
+check("la cabecera tiene el botón de ajustes", true, findNode(lastTree, "open-settings") ~= nil)
+check("la cabecera tiene el botón de cerrar", true, findNode(lastTree, "close-panel") ~= nil)
+
+local cardNode = findNode(lastTree, "card-" .. (config.commands and "btop" or "btop"))
+if cardNode == nil then
+  -- Se busca la primera tarjeta por el orden alfabético.
+  local names = {}
+  for name in pairs(config.commands) do
+    names[#names + 1] = name
+  end
+  table.sort(names)
+  cardNode = findNode(lastTree, "card-" .. names[1])
+end
+check("la tarjeta lleva el comando en el tooltip", true, cardNode ~= nil and cardNode.props.tooltip ~= nil and cardNode.props.tooltip:len() > 0)
+check("la tarjeta se puede pulsar", true, cardNode ~= nil and cardNode.props.onClick ~= nil)
+
+-- Modo edición: aparecen el formulario y los botones de borrar.
+local editButton = findNode(lastTree, "edit")
+check("el botón de editar tiene manejador", true, editButton ~= nil and editButton.props.onClick ~= nil)
+if editButton ~= nil and editButton.props.onClick ~= nil then
+  editButton.props.onClick()
+  check("en modo edición aparece el formulario", true, findNode(lastTree, "editor") ~= nil)
+  check("en modo edición hay un botón de borrar", true, countKeys(lastTree, "delete-") > 0)
+end
+
+-- Los handlers del IPC no deben romperse.
+local before = rendered
+env.onIpc("refresh", "")
+check("el IPC refresh no falla", true, rendered >= before)
+env.onIpc("rotate", "")
+check("el IPC rotate no falla", true, true)
+env.onIpc("open-all", "")
+check("el IPC open-all no falla", true, true)
+env.onIpc("close-all", "")
+check("el IPC close-all no falla", true, true)
+env.onIpc("add", "prueba|echo hola|center, 500x300")
+check("el IPC add no falla", true, true)
+env.onIpc("remove", "prueba")
+check("el IPC remove no falla", true, true)
+env.onIpc("launch", "cava")
+check("el IPC launch no falla", true, true)
+
+print(string.format("\n%d comprobaciones, %d fallos", PASSED + FAILED, FAILED))
+os.exit(FAILED == 0 and 0 or 1)

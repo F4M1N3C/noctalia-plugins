@@ -156,6 +156,9 @@ lua5.4 test-panel.lua /path/to/other/copy   # run them against another copy (e.g
 `test-panel.lua` loads the modules with a simulated Noctalia API and checks the
 widget-list merge, the tombstones, the manifest parser, the layout parser, the
 occupied-area calculation, the thumbnail cleanup and every rotation permutation.
+It also loads `panel.luau` with a simulated UI to check that the cards, the
+grid, the edit mode and every IPC handler work (this is what catches the
+"attempt to call a nil value" from a `local` used before its declaration).
 It exits with a non-zero code if a case fails.
 
 `test-smoke.sh` needs Hyprland and Noctalia with the plugin enabled: it opens

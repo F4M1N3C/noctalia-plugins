@@ -2343,10 +2343,6 @@ def main():
     parser.add_argument("--version", action="version", version=f"{APP} {VERSION}")
     args = parser.parse_args()
 
-    if args.diagnostics:
-        print(json.dumps(diagnostics(), ensure_ascii=False, sort_keys=True))
-        return 0
-
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except AttributeError:
@@ -2355,11 +2351,20 @@ def main():
     if args.clear_cache:
         if os.path.isdir(CACHE_DIR):
             for name in os.listdir(CACHE_DIR):
+                # El log de avisos no es cache: borrarlo dejaria al usuario
+                # sin diagnostico justo cuando acaba de vaciar la cache.
+                if name == "debug.log":
+                    continue
                 try:
                     os.remove(os.path.join(CACHE_DIR, name))
                 except OSError:
                     pass
         print(f"caché borrada: {CACHE_DIR}")
+        if not args.diagnostics:
+            return 0
+
+    if args.diagnostics:
+        print(json.dumps(diagnostics(), ensure_ascii=False, sort_keys=True))
         return 0
 
     os.makedirs(CACHE_DIR, exist_ok=True)

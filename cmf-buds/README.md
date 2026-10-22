@@ -131,10 +131,12 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre: la regla "cualquiera" sola, la precedencia de la de N pulsaciones y su
-respaldo, reglas con modificadores distintos, la especificidad, el comando
-vacío, las ráfagas, que un gesto tras restaurar el volumen no se pierda y que
-las reglas editadas fuera del panel se recargan.
+Cubre (18 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+pulsaciones y su respaldo, reglas con modificadores distintos, la
+especificidad, el comando vacío, las ráfagas, que un gesto tras restaurar el
+volumen no se pierda, que los pinchazos muy juntos (50 ms) se cuenten como
+varios, que nuestro propio cambio se reconozca por el valor y que las reglas
+editadas fuera del panel se recargan.
 
 ## Cómo funciona
 
@@ -182,8 +184,13 @@ Datos persistentes:
   contra el juego vigente, y las más específicas (SUPER antes que ninguna)
   ganan.
 - **Nuestro propio cambio de volumen no se confunde con un gesto:** se
-  reconoce por el valor que ponemos, no por una ventana de tiempo, para que un
-  gesto que llega justo después no se pierda.
+  reconoce por el **valor** que ponemos, no por una ventana de tiempo. La
+  identidad de un evento la da siempre el valor (el volumen), nunca el reloj:
+  las ventanas de tiempo se comían gestos reales del usuario.
+- **Nada se descarta en silencio:** si un gesto no encaja con ninguna regla, si
+  una regla de N pulsaciones hace esperar a la de "cualquiera", si un gesto se
+  omite por venir demasiado cerca del anterior o si se pierde la referencia
+  del volumen, queda anotado en el log del demonio.
 - Los gestos que no encajan con ninguna regla se avisan en el log, para que
   no parezca que los atajos están rotos.
 - **El eco del auricular se ignora.** Al restaurar el volumen, los auriculares

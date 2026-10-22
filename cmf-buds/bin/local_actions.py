@@ -32,27 +32,25 @@ import time
 GROUP_WINDOW = 0.7
 # Dos senales mas juntas que esto cuentan como la misma pulsacion.
 REPEAT_GAP = 0.12
-# Red de seguridad para eventos duplicados de un mismo cambio de volumen.
-# Lo que de verdad distingue nuestro cambio de un gesto del usuario es el
-# valor (el que ponemos nosotros), no el tiempo: con una ventana de tiempo
-# grande, un gesto del usuario que llegaba justo despues de restaurar el
-# volumen se perdia, y con ello las reglas de N pulsaciones no llegaban a
-# dispararse.
-SELF_CHANGE_GRACE = 0.05
-# Separacion minima entre dos eventos del mismo tipo.
-# Debe ser menor que el intervalo entre dos pinchazos reales (100-250 ms) para
-# no tragarselos: con 200 ms un triple rapido se contaba como un solo gesto y
-# la regla de N pulsaciones no llegaba a dispararse nunca. Solo tiene que
-# agrupar los eventos de una misma muesca (una rampa de PipeWire emite varios
-# seguidos, a ~16 ms).
-EVENT_GAP = 0.06
+# (Sin ventana temporal: nuestro cambio de volumen se reconoce por el valor
+# que ponemos, no por cuando lo hicimos. Una ventana de tiempo se comia los
+# gestos del usuario que llegaban justo despues de restaurar el volumen.)
+# Red de seguridad minima contra eventos duplicados. La identidad de un
+# evento la da el valor (dos eventos con el mismo volumen son el mismo), asi
+# que esta ventana solo tiene que ser mas pequena que el intervalo entre dos
+# pinchazos reales (100-250 ms): con 200 ms un triple rapido se contaba como
+# un solo gesto; con 60 ms todavia se perdian pinchazos muy juntos.
+EVENT_GAP = 0.03
 # Dos eventos del mismo tipo dentro de esta ventana son el mismo gesto.
 GESTURE_WINDOW = 0.5
 # Tras disparar un atajo se ignoran los eventos hasta que el volumen se
 # estabiliza: al restaurar el volumen, los auriculares devuelven el suyo y
 # generan un eco que dispararia el atajo otra vez (workspace +1 y -1).
-QUIET_STABLE = 1.2
-QUIET_MAX = 6.0
+# Ventana en la que se ignoran los eventos que son la cola de nuestra propia
+# escritura. Corta a proposito: una ventana larga se comia los gestos del
+# usuario que venian justo despues.
+QUIET_STABLE = 0.4
+QUIET_MAX = 3.0
 # Margen (%%) para el ajuste final del volumen: si el usuario ha cambiado el
 # volumen a proposito durante la ventana de calma, no se toca.
 SETTLE_TOLERANCE = 8
@@ -499,20 +497,25 @@ class LocalActionEngine:
         previous = self._last_volume
         self._last_volume = value
         if previous is None:
+            # Sin referencia no se puede saber cuanto ha cambiado el volumen:
+            # se reinicia la referencia y se avisa (no es un gesto).
+            if not getattr(self, "_no_baseline_logged", False):
+                self._no_baseline_logged = True
+                self.log("Sin referencia de volumen: se reinicia la referencia")
             return
+        self._no_baseline_logged = False
         delta = value - previous
         if delta == 0:
-            return
-        if now - self._self_change_at < SELF_CHANGE_GRACE:
-            # Rampa de nuestro propio cambio: se ignora.
             return
         if (
             self._self_set_volume is not None
             and abs(value - self._self_set_volume) <= 1
         ):
-            # Es el valor exacto que pusimos nosotros: se ignora, aunque ya
-            # haya pasado la ventana de la rampa.
+            # Es el valor exacto que pusimos nosotros: se ignora (el evento
+            # que genera nuestra propia escritura).
             return
+        # Es un cambio de verdad: nuestra marca deja de ser valida.
+        self._self_set_volume = None
         with self._lock:
             # Eco del restore: el auricular devuelve su volumen y genera otro
             # cambio. Mientras siga OSCILANDO se ignoran los eventos; cuando el
@@ -607,18 +610,28 @@ class LocalActionEngine:
                 chosen = fallback[0][2]
 
             if chosen is not None:
-                if now - self._last_fire.get(trigger, 0.0) >= GESTURE_WINDOW:
-                    self.last_event = {
-                        "trigger": trigger,
-                        "presses": count,
-                        "modifiers": modifiers,
-                        "at": int(time.time() * 1000),
-                    }
-                    self._last_fire[trigger] = now
-                    self._quiet_started = now
-                    self._quiet_last_event = now
-                    self._pending = None
-                    self._run_rule(chosen, trigger, count, modifiers, previous_volume)
+                if now - self._last_fire.get(trigger, 0.0) < GESTURE_WINDOW:
+                    # El gesto anterior acabo de dispararse: se ignora este
+                    # (giro continuo). Se avisa una vez para que se entienda
+                    # por que solo se ejecuto una accion.
+                    if not getattr(self, "_repeat_logged", None) == trigger:
+                        self._repeat_logged = trigger
+                        self.log(
+                            "El gesto %s se ha omitido: la accion anterior "
+                            "ainda no ha terminado" % trigger
+                        )
+                    return
+                self.last_event = {
+                    "trigger": trigger,
+                    "presses": count,
+                    "modifiers": modifiers,
+                    "at": int(time.time() * 1000),
+                }
+                self._last_fire[trigger] = now
+                self._quiet_started = now
+                self._quiet_last_event = now
+                self._pending = None
+                self._run_rule(chosen, trigger, count, modifiers, previous_volume)
                 return
 
             if not rules and not getattr(self, "_no_rule_logged", None) == trigger:

@@ -880,6 +880,57 @@ def test_aviso_del_atajo():
     return r.failures
 
 
+def test_contrato_luau_motor():
+    print("28) la UI y el motor usan los mismos nombres")
+    import re
+    import tomllib
+
+    import local_actions
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def lista_de(texto, nombre):
+        m = re.search(r"local %s = \{([^}]*)\}" % nombre, texto)
+        if m is None:
+            return None
+        return re.findall(r'"([^"]+)"', m.group(1))
+
+    with open(os.path.join(raiz, "lib", "panel_ui.luau"), encoding="utf-8") as fh:
+        ui = fh.read()
+    with open(os.path.join(raiz, "lib", "common.luau"), encoding="utf-8") as fh:
+        comun = fh.read()
+    with open(os.path.join(raiz, "plugin.toml"), "rb") as fh:
+        manifiesto = tomllib.load(fh)
+
+    modificadores_ui = lista_de(ui, "MODIFIERS")
+    r.check(
+        "los modificadores de la UI son los que el motor entiende",
+        set(modificadores_ui or []) == set(local_actions.MODIFIER_CODES.values()) | {"none", "no_super"},
+        modificadores_ui,
+    )
+    disparadores_ui = lista_de(ui, "TRIGGERS")
+    r.check(
+        "los disparadores de la UI son los del motor",
+        tuple(disparadores_ui or []) == tuple(local_actions.TRIGGERS),
+        (disparadores_ui, local_actions.TRIGGERS),
+    )
+    nombres_ui = lista_de(ui, "TRIGGER_NAMES")
+    r.check(
+        "todos los disparadores tienen nombre en la UI",
+        set(disparadores_ui or []) >= set(local_actions.TRIGGERS),
+        nombres_ui,
+    )
+    paneles_ui = re.findall(r'(\w+) = "(faminec/cmf-buds:panel-[\w-]+)"', comun)
+    paneles_manifiesto = {p["id"] for p in manifiesto["panel"]}
+    r.check(
+        "los paneles de la UI son los del manifiesto",
+        {v for k, v in paneles_ui} == {"faminec/cmf-buds:" + p for p in paneles_manifiesto},
+        (paneles_ui, paneles_manifiesto),
+    )
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -932,6 +983,7 @@ def main():
         test_ecodec_y_modelo,
         test_codigos_de_modificadores,
         test_aviso_del_atajo,
+        test_contrato_luau_motor,
     ):
         total += test()
     print("")

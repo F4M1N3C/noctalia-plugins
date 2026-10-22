@@ -60,6 +60,10 @@ MODIFIER_CODES = {
     54: "shift",
 }
 
+# Disparadores que el motor puede generar. La UI usa los mismos nombres:
+# si se desincronizasen, las reglas de la UI no se dispararian nunca.
+TRIGGERS = ("volume_up", "volume_down")
+
 MODIFIER_LABELS = {
     "super": "SUPER",
     "ctrl": "CTRL",
@@ -615,7 +619,7 @@ class LocalActionEngine:
             return
         # Es un cambio de verdad: nuestra marca deja de ser valida.
         self._self_set_volume = None
-        self._register("volume_up" if delta > 0 else "volume_down", sink, previous)
+        self._register(TRIGGERS[0] if delta > 0 else TRIGGERS[1], sink, previous)
 
     # -- agrupacion de pulsaciones -----------------------------------------
     def _register(self, trigger, sink=None, previous_volume=None):

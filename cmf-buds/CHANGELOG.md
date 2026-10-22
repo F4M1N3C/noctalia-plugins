@@ -129,12 +129,21 @@ Ademas se anade una prueba para el temporizador que cierra el gesto: si
 falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
 motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
 
-Suite: 44 -> 86 comprobaciones (nuevas: el cierre del gesto protegido, que el
+Suite: 44 -> 90 comprobaciones (nuevas: el cierre del gesto protegido, que el
 lector cierre su socket, que al reconectar se cierre el enlace anterior, el
 protocolo de tramas (construccion, CRC, parseo, basura y trama incompleta), el
 codec de floats del ecualizador con la deteccion de modelo del dispositivo, y
 la traduccion de codigos de tecla a modificadores, y el aviso del atajo:
-que se lance con notify-send y que, si falla, quede anotado en el log).
+que se lance con notify-send y que, si falle, quede anotado en el log, y un
+test de contrato entre el Luau y el motor: los modificadores, los
+disparadores y los paneles tienen que usar los mismos nombres en ambos
+lados).
+
+Ese ultimo test cubre el hueco que quedaba: el codigo Luau no tiene pruebas
+(propios tests), asi que un nombre desincronizado (por ejemplo "meta" en vez
+de "super") haria que las reglas de la UI no se dispararan nunca, sin dejar
+ni un error. Comprobado que discrimina: con un nombre cambiado en el Luau, la
+prueba falla ✓.
 
 La ultima es importante: la tabla de codigos (125 = SUPER) no tenia ninguna
 prueba, y si un codigo se equivocara las reglas que exigen SUPER dejarian de

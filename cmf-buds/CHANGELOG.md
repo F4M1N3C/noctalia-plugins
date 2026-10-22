@@ -51,7 +51,7 @@ ignora entera, con aviso, y **no** aborta la evaluación de las demás.
 El watcher registraba los errores y reintentaba; además se añadió
 `_handle_line()` para poder probar el camino de error de verdad.
 
-### Este cambio — Espera creciente real y registro verificable
+### Este cambio — Espera creciente real, registro verificable y pruebas que discriminan
 
 - **Espera creciente real.** Antes el contador de fallos se reiniciaba al
   empezar cada intento, así que la espera **nunca crecía**: con un fallo
@@ -62,6 +62,16 @@ El watcher registraba los errores y reintentaba; además se añadió
   (antes reiniciaba el bucle cada segundo, sin log).
 - **Registro:** este `CHANGELOG.md`, con la descripción verificada de cada
   cambio y las correcciones de los mensajes de commit imprecisos.
+- **Pruebas que discriminan.** La prueba que supuestamente cubría el reinicio del
+  contador era **vacua**: la suscripción sana era el primer intento (contador
+  ya a 0), así que la aserción se cumplía igual sin el reinicio. Se
+  demuestra desactivando el reinicio a propósito: la prueba antigua pasa
+  igual, la nueva falla. Ahora la secuencia es fallo → suscripción sana →
+  fallo, y el segundo fallo **tiene** que volver a ser el nº1. Además se
+  añadió la prueba de la suscripción que se cierra antes de tiempo, que solo
+  estaba verificada a mano. Las tres pruebas se comprobaron rompiendo el
+  código a propósito (espera fija, sin reinicio, sin detección de cierre
+  temprano): las tres fallan.
 
 ## Correcciones de descripciones anteriores
 
@@ -85,9 +95,19 @@ se puede reescribir la historia del repositorio:
 
 ## Pruebas
 
-`bin/test_local_actions.py` (31 comprobaciones) cubre el motor sin necesidad
+`bin/test_local_actions.py` (36 comprobaciones) cubre el motor sin necesidad
 de auriculares: la precedencia de las reglas de N pulsaciones y su respaldo, el
 aislamiento de una regla malformada, que el watcher registre los errores sin
 morir, que avise si no puede suscribirse, **que la espera entre reintentos
-crezca (1, 2, 3, 4 s)** y **que el contador se reinicie cuando la suscripción
-vuelve a funcionar**.
+crezca (1, 2, 3, 4 s)**, **que el contador se reinicie cuando la suscripción
+vuelve a funcionar** (un fallo, una suscripción sana y otro fallo: el segundo
+vuelve a ser el nº1) y **que una suscripción que se cierra antes de tiempo
+cuente como fallo**.
+
+Las comprobaciones del watcher se validaron **rompiendo el código a
+propósito** (espera fija de 1 s, sin reinicio del contador, sin detección del
+cierre temprano): las tres fallan, así que no son vacuas. La de la regla
+malformada cubre la propiedad en su conjunto —que una regla inválida no
+impida ejecutar las demás—, y se comprobó rompiendo a la vez las dos capas
+que la sostienen (la lectura tolerante y el aislamiento por regla): la suite
+falla.

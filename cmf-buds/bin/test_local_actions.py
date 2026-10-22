@@ -400,8 +400,16 @@ def test_espera_creciente():
         local_actions.subprocess.Popen = original
     r.check("las esperas crecen: 1, 2, 3, 4", waits == [1.0, 2.0, 3.0, 4.0], waits)
     r.check(
-        "el log lleva la cuenta de fallos",
-        any("(fallo 4)" in m for m in logs),
+        "el log lleva la cuenta de fallos y cuando reintenta",
+        any("(fallo 4): reintento en 4 s" in m for m in logs),
+        logs,
+    )
+    r.check(
+        "el numero de fallo y la espera van a juego",
+        all(
+            ("(fallo %d): reintento en %d s" % (n, n)) in m
+            for n, m in zip(range(1, 5), [x for x in logs if "fallo" in x])
+        ),
         logs,
     )
     return r.failures
@@ -422,15 +430,16 @@ def test_contador_se_reinicia():
         if cmd[:2] != ["pactl", "subscribe"]:
             return original(cmd, *args, **kwargs)
         llamadas["n"] += 1
-        if llamadas["n"] == 1:
-            # Una suscripcion que aguanta lo suficiente: cuenta como sana.
+        if llamadas["n"] == 2:
+            # El segundo intento es una suscripcion sana: reinicia el
+            # contador. Sin ese reinicio, el fallo siguiente seria el nº2.
             return FakeProc(["Event 'change' on sink #42\n"], delay=0.15)
         raise OSError("pactl no disponible")
 
     local_actions.subprocess.Popen = fake_popen
     try:
         watcher = VolumeWatcher(lambda: "sink-falso", lambda sink: None, logs.append)
-        watcher._stop = FakeStop(stop_after=3)
+        watcher._stop = FakeStop(stop_after=4)
         watcher.start()
         time.sleep(0.8)
         waits = list(watcher._stop.waits)
@@ -438,16 +447,62 @@ def test_contador_se_reinicia():
     finally:
         local_actions.subprocess.Popen = original
         local_actions.HEALTHY_SECONDS = original_healthy
-    r.check("la primera espera es de 1 s", waits[:1] == [1.0], waits)
+    r.check("el primer fallo espera 1 s", waits[:1] == [1.0], waits)
     r.check(
-        "tras funcionar, el fallo siguiente vuelve a ser el nº1",
-        any("(fallo 1)" in m for m in logs),
+        "dice que la suscripcion vuelve a funcionar",
+        any("vuelve a funcionar" in m for m in logs),
+        logs,
+    )
+    r.check(
+        "el fallo siguiente vuelve a ser el nº1 (contador reiniciado)",
+        len([m for m in logs if "(fallo 1)" in m]) == 2,
         logs,
     )
     r.check(
         "y el siguiente ya espera mas (2 s)",
         waits[-1:] == [2.0],
         waits,
+    )
+    return r.failures
+
+
+def test_suscripcion_corta():
+    print("17) una suscripcion que se cierra antes de tiempo cuenta como fallo")
+    import local_actions
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    logs = []
+    original = local_actions.subprocess.Popen
+    original_healthy = local_actions.HEALTHY_SECONDS
+    local_actions.HEALTHY_SECONDS = 5.0
+
+    def fake_popen(cmd, *args, **kwargs):
+        if cmd[:2] != ["pactl", "subscribe"]:
+            return original(cmd, *args, **kwargs)
+        # Una suscripcion que se cierra al instante.
+        return FakeProc([], delay=0.0)
+
+    local_actions.subprocess.Popen = fake_popen
+    try:
+        watcher = VolumeWatcher(lambda: "sink-falso", lambda sink: None, logs.append)
+        watcher._stop = FakeStop(stop_after=3)
+        watcher.start()
+        time.sleep(0.6)
+        waits = list(watcher._stop.waits)
+        watcher.stop()
+    finally:
+        local_actions.subprocess.Popen = original
+        local_actions.HEALTHY_SECONDS = original_healthy
+    r.check(
+        "avisa de que se cerro antes de tiempo",
+        any("se cerro antes de tiempo" in m for m in logs),
+        logs,
+    )
+    r.check("las esperas crecen", waits == [1.0, 2.0, 3.0], waits)
+    r.check(
+        "el log lleva la cuenta de fallos",
+        any("(fallo 3): reintento en 3 s" in m for m in logs),
+        logs,
     )
     return r.failures
 
@@ -492,6 +547,7 @@ def main():
         test_watcher_sin_suscripcion,
         test_espera_creciente,
         test_contador_se_reinicia,
+        test_suscripcion_corta,
         test_recarga,
     ):
         total += test()

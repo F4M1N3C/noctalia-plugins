@@ -131,7 +131,7 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (31 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (36 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
 especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
 separados disparen acciones distintas, que un gesto tras restaurar el volumen
@@ -140,7 +140,9 @@ que nuestro propio cambio se reconozca por el valor, que una regla malformada
 se ignore sin tapar a las demás, que el watcher registre un error puntual sin
 morir, que avise cuando no puede suscribirse a los cambios de volumen, **que
 la espera entre reintentos crezca (1, 2, 3, 4 s)**, **que el contador de
-fallos se reinicie cuando la suscripción vuelve a funcionar** y que las reglas
+fallos se reinicie cuando la suscripción vuelve a funcionar** (un fallo, una
+suscripción sana y otro fallo: el segundo vuelve a ser el nº1), **que una
+suscripción que se cierra antes de tiempo cuente como fallo** y que las reglas
 editadas fuera del panel se recargan.
 
 ## Cómo funciona
@@ -215,9 +217,10 @@ anteriores que resultaron inexactas) está en [`CHANGELOG.md`](CHANGELOG.md).
   se cierra antes de tiempo, se registran y se reintentan con una **espera
   creciente de 1 s, 2 s, 3 s… hasta 10 s**; y si no se puede abrir la
   suscripción también se avisa. El contador de fallos solo se reinicia cuando
-  la suscripción aguanta 5 s sin errores. Antes de esto, un fallo repetido
-  reiniciaba la suscripción cada segundo y los atajos no funcionaban nunca,
-  sin una sola línea en el log.
+  la suscripción aguanta 5 s sin errores, y al reiniciarse el siguiente
+  reintento vuelve a ser de 1 s. Antes de esto, un fallo repetido reiniciaba
+  la suscripción cada segundo y los atajos no funcionaban nunca, sin una sola
+  línea en el log.
 - **El eco del auricular se ignora.** Al restaurar el volumen, los auriculares
   devuelven el suyo y generan otro evento; el motor ignora los eventos hasta
   que el volumen se estabiliza (1,2 s) y luego vuelve a armarse solo.

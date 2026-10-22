@@ -389,11 +389,12 @@ class VolumeWatcher:
                     )
                 else:
                     # Solo se da por buena si ha aguantado sin errores: aqui
-                    # se reinicia el contador de fallos.
-                    delay = self._retry_delay()
+                    # se reinicia el contador de fallos y el siguiente reintento
+                    # vuelve a ser como el primero.
                     if self._failures:
                         self.log("Watcher: la suscripcion vuelve a funcionar")
                     self._failures = 0
+                    delay = self._retry_delay()
             finally:
                 try:
                     if self._proc:

@@ -6,6 +6,10 @@ Esa lógica se ha roto varias veces (un fallo sin atribuir se perdía y la
 pasada terminaba con "todo bien"), así que aquí se comprueba con fallos
 simulados.
 
+Las comprobaciones se hacen sobre el resultado estructurado del
+verificador (--json), no sobre el texto de sus mensajes: así se
+comprueba el comportamiento y no mis palabras.
+
 Nada de esto toca la instalación real: todo se hace sobre copias
 temporales del repositorio, del despliegue y del estado.
 
@@ -18,6 +22,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -27,14 +32,14 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 VERIFIER = os.path.join(HERE, "verify-plugins.py")
-DEPLOYED = os.path.expanduser(
-    "~/.local/share/noctalia/plugins/lyrics-carousel"
-)
+DEPLOYED = os.path.expanduser("~/.local/share/noctalia/plugins/lyrics-carousel")
+OWNER = "lyrics-carousel"
 EMPTY_BIN = os.path.join(tempfile.gettempdir(), "lyrics-carousel-emptybin")
 
 
 def run(root, env=None, ui=False, deploy=None, state=None):
-    cmd = [sys.executable, VERIFIER, "--root", root]
+    """Ejecuta el verificador y devuelve (codigo, resultado en JSON)."""
+    cmd = [sys.executable, VERIFIER, "--root", root, "--json"]
     if deploy:
         cmd += ["--deploy", deploy]
     if state:
@@ -44,10 +49,36 @@ def run(root, env=None, ui=False, deploy=None, state=None):
     result = subprocess.run(
         cmd, capture_output=True, text=True, timeout=1800, env=env
     )
-    fallos = [
-        line.strip() for line in result.stdout.split("\n") if "fallo de" in line
-    ]
-    return result.returncode, fallos, result.stdout
+    try:
+        datos = json.loads(result.stdout)
+    except ValueError:
+        datos = {}
+    return result.returncode, datos
+
+
+def fallos_propios(datos):
+    """Fallos atribuidos a este plugin."""
+    return [f for f in datos.get("fallos", []) if f.get("plugin") == OWNER]
+
+
+def fallos_infra(datos):
+    """Fallos de la propia verificacion (no tienen dueño: no son de nadie)."""
+    return [f for f in datos.get("fallos", []) if f.get("tipo") == "infra"]
+
+
+def avisos_propios(datos):
+    return [a for a in datos.get("avisos", []) if a.get("plugin") == OWNER]
+
+
+def autotest(datos, donde):
+    for a in datos.get("autotests", []):
+        if a.get("donde") == donde:
+            return a
+    return None
+
+
+def hay_etiqueta(lista, etiqueta):
+    return any(f.get("etiqueta") == etiqueta for f in lista)
 
 
 def copia_repo(root, con_tools=True):
@@ -76,19 +107,8 @@ def estado_temporal():
     return tempfile.mkdtemp(prefix="verifier-state-")
 
 
-def escenario(
-    nombre, rc, fallos, esperado_rc, esperado=None, no_esperado=None, salida=None
-):
-    ok = rc == esperado_rc
-    if esperado is not None:
-        # Un aviso no es un "fallo": si se pasa la salida, se busca ahi.
-        if salida is not None:
-            ok = ok and esperado in salida
-        else:
-            ok = ok and any(esperado in f for f in fallos)
-    if no_esperado is not None:
-        ok = ok and not any(no_esperado in f for f in fallos)
-    print("  %s %-52s rc=%d %s" % ("ok " if ok else "FALLO", nombre, rc, fallos[:2]))
+def escenario(nombre, ok, detalle=""):
+    print("  %s %-52s %s" % ("ok " if ok else "FALLO", nombre, detalle))
     return ok
 
 
@@ -99,29 +119,34 @@ def main(argv):
 
     resultados = []
 
-    print("1) estado normal -> rc 0")
-    rc, fallos, salida = run(root)
-    resultados.append(escenario("estado normal", rc, fallos, 0))
+    print("1) estado normal -> rc 0 y sin fallos propios")
+    rc, datos = run(root)
+    resultados.append(
+        escenario(
+            "estado normal",
+            rc == 0 and not fallos_propios(datos),
+            "rc=%d fallos=%d" % (rc, len(fallos_propios(datos))),
+        )
+    )
 
-    print("2) .luau con error de sintaxis en mi plugin -> rc 1, dos detecciones")
+    print("2) .luau con error de sintaxis en mi plugin -> dos detecciones")
     raiz = copia_repo(root)
     probe = os.path.join(raiz, "lyrics-carousel", "tmp_sintaxis.luau")
     with open(probe, "w", encoding="utf-8") as handle:
         handle.write('local x = 1\nif x == 1 then\n  print("sin cerrar"\n')
     try:
-        rc, fallos, salida = run(raiz)
-        resultados.append(
-            escenario("error de sintaxis propio", rc, fallos, 1, "fallo de luac")
-        )
-        # El error tiene que detectarlo tambien el autotest: dos vias
-        # independientes, para que no dependa solo de la estatica.
+        rc, datos = run(raiz)
         resultados.append(
             escenario(
-                "error de sintaxis en el autotest",
-                rc,
-                fallos,
-                1,
-                "fallo de selftest (repo)",
+                "error de sintaxis: lo ve la comprobacion estatica",
+                rc == 1 and hay_etiqueta(fallos_propios(datos), "luac"),
+                "fallos=%s" % [f["etiqueta"] for f in fallos_propios(datos)],
+            )
+        )
+        resultados.append(
+            escenario(
+                "error de sintaxis: lo ve tambien el autotest",
+                rc == 1 and (autotest(datos, "repo") or {}).get("ok") is False,
             )
         )
     finally:
@@ -133,27 +158,18 @@ def main(argv):
     with open(probe, "w", encoding="utf-8") as handle:
         handle.write("local x: number = 1\nprint(x)\n")
     try:
-        rc, fallos, salida = run(raiz)
-        # El fichero es valido: la comprobacion de sintaxis no debe
-        # llamarlo error. Lo que si falla es la invariante del plugin (sus
-        # .luau tienen que compilar tal cual), y eso es lo que mantiene
-        # concluyente la comprobacion estatica.
+        rc, datos = run(raiz)
         resultados.append(
             escenario(
-                "sintaxis de Luau: sin falso positivo",
-                rc,
-                fallos,
-                1,
-                no_esperado="fallo de luac",
+                "sintaxis de Luau: no es un error de sintaxis",
+                rc == 1 and not hay_etiqueta(fallos_propios(datos), "luac"),
+                "fallos=%s" % [f["etiqueta"] for f in fallos_propios(datos)],
             )
         )
         resultados.append(
             escenario(
-                "sintaxis de Luau: invariante del plugin",
-                rc,
-                fallos,
-                1,
-                esperado="fallo de selftest (repo)",
+                "sintaxis de Luau: se rompe la invariante del plugin",
+                rc == 1 and (autotest(datos, "repo") or {}).get("ok") is False,
             )
         )
     finally:
@@ -165,31 +181,24 @@ def main(argv):
     with open(probe, "w", encoding="utf-8") as handle:
         handle.write("local x: Array<number> = {}\nprint(x)\n")
     try:
-        rc, fallos, salida = run(raiz)
+        rc, datos = run(raiz)
         resultados.append(
             escenario(
-                "Luau con genericos: sin falso positivo",
-                rc,
-                fallos,
-                1,
-                no_esperado="fallo de luac",
+                "Luau con genericos: no es un error de sintaxis",
+                rc == 1 and not hay_etiqueta(fallos_propios(datos), "luac"),
             )
         )
-        # Y ademas tiene que avisar: si no, el fichero se pasaria por alto.
         resultados.append(
             escenario(
                 "Luau con genericos: se avisa",
-                rc,
-                fallos,
-                1,
-                salida=salida,
-                esperado="aviso de luac",
+                rc == 1 and hay_etiqueta(avisos_propios(datos), "luac"),
+                "avisos=%s" % [a["etiqueta"] for a in avisos_propios(datos)],
             )
         )
     finally:
         shutil.rmtree(raiz, ignore_errors=True)
 
-    print("4) autotest que falla sin nombrar al plugin -> rc 1")
+    print("4) autotest que falla sin nombrar al plugin -> se detecta")
     deploy, destino = copia_despliegue()
     selftest = os.path.join(destino, "bin", "selftest.py")
     with open(selftest, encoding="utf-8") as handle:
@@ -202,27 +211,28 @@ def main(argv):
             )
         )
     try:
-        rc, fallos, salida = run(root, deploy=deploy)
+        rc, datos = run(root, deploy=deploy)
         resultados.append(
             escenario(
                 "autotest sin nombrar",
-                rc,
-                fallos,
-                1,
-                "fallo de selftest (despliegue)",
+                rc == 1 and (autotest(datos, "despliegue") or {}).get("ok") is False,
             )
         )
     finally:
         shutil.rmtree(deploy, ignore_errors=True)
 
-    print("5) validador compartido que revienta -> rc 1 (infraestructura)")
+    print("5) validador compartido que reventa -> rc 1 (infraestructura)")
     raiz = copia_repo(root)
     with open(os.path.join(raiz, "tools", "check-luau-globals.py"), "w") as handle:
         handle.write("import sys\nsys.exit(3)\n")
     try:
-        rc, fallos, salida = run(raiz)
+        rc, datos = run(raiz)
         resultados.append(
-            escenario("validador que revienta", rc, fallos, 1, "fallo de check-luau-globals")
+            escenario(
+                "validador que revienta",
+                rc == 1
+                and hay_etiqueta(fallos_infra(datos), "check-luau-globals.py"),
+            )
         )
     finally:
         shutil.rmtree(raiz, ignore_errors=True)
@@ -232,8 +242,8 @@ def main(argv):
     os.makedirs(EMPTY_BIN, exist_ok=True)
     env = {**os.environ, "PATH": EMPTY_BIN}
     try:
-        rc, fallos, salida = run(raiz, env=env)
-        resultados.append(escenario("sin compilador", rc, fallos, 1))
+        rc, datos = run(raiz, env=env)
+        resultados.append(escenario("sin compilador", rc == 1))
     finally:
         shutil.rmtree(raiz, ignore_errors=True)
 
@@ -241,9 +251,16 @@ def main(argv):
     raiz = copia_repo(root)
     env = {**os.environ, "PATH": EMPTY_BIN}
     try:
-        rc, fallos, salida = run(raiz, env=env, ui=True)
+        rc, datos = run(raiz, env=env, ui=True)
         resultados.append(
-            escenario("sin noctalia", rc, fallos, 1, "fallo de ejercicio")
+            escenario(
+                "sin noctalia",
+                rc == 1
+                and any(
+                    f.get("etiqueta") == "ejercicio de los plugins"
+                    for f in fallos_infra(datos)
+                ),
+            )
         )
     finally:
         shutil.rmtree(raiz, ignore_errors=True)
@@ -256,9 +273,9 @@ def main(argv):
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             rc = modulo.main(["--no-ui"])
-        resultados.append(escenario("log inexistente", rc, [], 1))
+        resultados.append(escenario("log inexistente", rc == 1))
     except SystemExit:
-        resultados.append(escenario("log inexistente", 0, [], 1))
+        resultados.append(escenario("log inexistente", False))
 
     print("9) .luau con bytes que no son UTF-8 -> la verificacion no revienta")
     raiz = copia_repo(root)
@@ -266,20 +283,20 @@ def main(argv):
     with open(probe, "wb") as handle:
         handle.write(b"local x = '\xff\xfe'\nif x == 1 then\n  print(\"sin cerrar\"\n")
     try:
-        rc, fallos, salida = run(raiz)
+        rc, datos = run(raiz)
         resultados.append(
-            escenario("bytes no UTF-8", rc, fallos, 1, "fallo de luac")
+            escenario(
+                "bytes no UTF-8",
+                rc == 1 and hay_etiqueta(fallos_propios(datos), "luac"),
+            )
         )
     finally:
         shutil.rmtree(raiz, ignore_errors=True)
 
     print("10) el ejercicio se hace de verdad (el IPC llega al widget)")
-    rc, fallos, salida = run(root, ui=True)
-    resultados.append(escenario("el ejercicio se hace", rc, fallos, 0))
+    rc, datos = run(root, ui=True)
     resultados.append(
-        escenario("el verificador dice que el ejercicio fue ok", 0, [], 0)
-        if "ejercicio propio: ok" in salida
-        else escenario("el verificador dice que el ejercicio fue ok", 1, [], 0)
+        escenario("el ejercicio se hace", rc == 0 and datos.get("ejercicio") == "ok")
     )
 
     print("11) con ajustes pendientes -> se avisa y no se pisa nada")
@@ -291,9 +308,13 @@ def main(argv):
         os.makedirs(os.path.dirname(pendientes), exist_ok=True)
         with open(pendientes, "w", encoding="utf-8") as handle:
             handle.write('{"marker": true}')
-        rc, fallos, salida = run(root, ui=True, state=state)
+        rc, datos = run(root, ui=True, state=state)
         resultados.append(
-            escenario("ajustes pendientes: se avisa", rc, fallos, 1, "fallo de ejercicio")
+            escenario(
+                "ajustes pendientes: se avisa",
+                rc == 1 and bool(datos.get("ejercicio_problemas")),
+                "%s" % datos.get("ejercicio_problemas"),
+            )
         )
     finally:
         shutil.rmtree(state, ignore_errors=True)
@@ -305,13 +326,10 @@ def main(argv):
     destino = os.path.join(tempfile.gettempdir(), "verificador-escritura.json")
     if os.path.isfile(destino):
         os.remove(destino)
-    # Sin fichero: no se ha escrito nada.
     resultados.append(
         escenario(
             "escritura que no ocurre: se detecta",
-            0 if not modulo.escritura_realizada(destino, ["marker"]) else 1,
-            [],
-            0,
+            not modulo.escritura_realizada(destino, ["marker"]),
         )
     )
     with open(destino, "w", encoding="utf-8") as handle:
@@ -319,30 +337,20 @@ def main(argv):
     resultados.append(
         escenario(
             "escritura realizada: se reconoce",
-            0 if modulo.escritura_realizada(destino, ["marker"]) else 1,
-            [],
-            0,
+            modulo.escritura_realizada(destino, ["marker"]),
         )
     )
     resultados.append(
         escenario(
             "escritura de otra clave: no se reconoce",
-            0 if not modulo.escritura_realizada(destino, ["karaoke"]) else 1,
-            [],
-            0,
+            not modulo.escritura_realizada(destino, ["karaoke"]),
         )
     )
-    # Un fichero viejo con la clave de antes no vale: la escritura tiene
-    # que cambiar algo.
     viejo = modulo.estado_overrides(destino)
     resultados.append(
         escenario(
             "fichero viejo: no se da por buena",
-            0
-            if not modulo.escritura_realizada(destino, ["marker"], viejo)
-            else 1,
-            [],
-            0,
+            not modulo.escritura_realizada(destino, ["marker"], viejo),
         )
     )
     with open(destino, "w", encoding="utf-8") as handle:
@@ -350,9 +358,7 @@ def main(argv):
     resultados.append(
         escenario(
             "fichero cambiado: se reconoce",
-            0 if modulo.escritura_realizada(destino, ["marker"], viejo) else 1,
-            [],
-            0,
+            modulo.escritura_realizada(destino, ["marker"], viejo),
         )
     )
     os.remove(destino)
@@ -361,21 +367,22 @@ def main(argv):
     deploy, destino = copia_despliegue()
     os.remove(os.path.join(destino, "bin", "selftest.py"))
     try:
-        rc, fallos, salida = run(root, deploy=deploy)
+        rc, datos = run(root, deploy=deploy)
         resultados.append(
             escenario(
                 "despliegue sin autotest: se avisa",
-                rc,
-                fallos,
-                0,
-                salida=salida,
-                esperado="desactualizada",
+                rc == 0
+                and any(
+                    "desactualizada" in a.get("detalle", "")
+                    for a in avisos_propios(datos)
+                ),
+                "%s" % [a.get("etiqueta") for a in avisos_propios(datos)],
             )
         )
     finally:
         shutil.rmtree(deploy, ignore_errors=True)
 
-    print("13) el log rotado -> rc 1 (no se ha revisado nada)")
+    print("13) el log rotado -> se detecta")
     spec = importlib.util.spec_from_file_location("verificador_rotado", VERIFIER)
     modulo = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(modulo)
@@ -387,9 +394,7 @@ def main(argv):
     with open(log, "w", encoding="utf-8") as handle:
         handle.write("")
     try:
-        resultados.append(
-            escenario("el log rotado se detecta", 0 if modulo.log_rotated(offset) else 1, [], 0)
-        )
+        resultados.append(escenario("el log rotado se detecta", modulo.log_rotated(offset)))
     finally:
         if os.path.isfile(log):
             os.remove(log)
@@ -397,9 +402,16 @@ def main(argv):
     print("14) sin validadores compartidos -> rc 1 (infraestructura)")
     raiz = copia_repo(root, con_tools=False)
     try:
-        rc, fallos, salida = run(raiz)
+        rc, datos = run(raiz)
         resultados.append(
-            escenario("sin validadores compartidos", rc, fallos, 1)
+            escenario(
+                "sin validadores compartidos",
+                rc == 1
+                and any(
+                    f.get("etiqueta") == "validadores compartidos"
+                    for f in datos.get("fallos", [])
+                ),
+            )
         )
     finally:
         shutil.rmtree(raiz, ignore_errors=True)

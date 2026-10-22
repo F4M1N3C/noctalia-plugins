@@ -691,6 +691,11 @@ def _main(argv):
         default=STATE_DIR,
         help="carpeta de estado de Noctalia (por defecto, la de verdad)",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="imprimir el resultado en JSON (para las pruebas)",
+    )
     parser.add_argument("plugins", nargs="*")
     args = parser.parse_args(argv[1:])
 
@@ -756,21 +761,27 @@ def _main(argv):
         estado = "con problemas"
     else:
         estado = "ok"
-    print("plugins ejercitados: %d (ejercicio propio: %s)" % (len(plugins), estado))
-    print("líneas de log revisadas: %d" % len(text.split("\n")))
-    print("avisos esperados (ajustes de plugins no instalados): %d" % expected)
     my_problems = [item for item in problems if item[2] == OWNER]
     other_problems = [item for item in problems if item[2] != OWNER]
-    if my_problems:
-        print("--- PROBLEMAS (%d) ---" % len(my_problems))
-        for label, line, _ in my_problems[:40]:
-            print("  [%s] %s" % (label, line[-220:]))
-    elif other_problems:
-        print("--- sin errores propios; %d problema(s) de otra sesion ---" % len(other_problems))
-        for label, line, owner in other_problems[:10]:
-            print("  [%s] (%s) %s" % (label, owner or "?", line[-200:]))
-    else:
-        print("--- log de Noctalia: sin errores ni avisos inesperados ---")
+    if not args.json:
+        print(
+            "plugins ejercitados: %d (ejercicio propio: %s)" % (len(plugins), estado)
+        )
+        print("líneas de log revisadas: %d" % len(text.split("\n")))
+        print("avisos esperados (ajustes de plugins no instalados): %d" % expected)
+        if my_problems:
+            print("--- PROBLEMAS (%d) ---" % len(my_problems))
+            for label, line, _ in my_problems[:40]:
+                print("  [%s] %s" % (label, line[-220:]))
+        elif other_problems:
+            print(
+                "--- sin errores propios; %d problema(s) de otra sesion ---"
+                % len(other_problems)
+            )
+            for label, line, owner in other_problems[:10]:
+                print("  [%s] (%s) %s" % (label, owner or "?", line[-200:]))
+        else:
+            print("--- log de Noctalia: sin errores ni avisos inesperados ---")
 
     failures, compiled, skipped, doubtful = static_checks(args.root)
 
@@ -782,6 +793,7 @@ def _main(argv):
         os.path.join(args.root, "lyrics-carousel", "bin", "selftest.py"),
         os.path.join(args.deploy, "lyrics-carousel", "bin", "selftest.py"),
     ]
+    autotests = []
     for selftest in selftests:
         if not os.path.isfile(selftest):
             if selftest.startswith(args.root):
@@ -808,6 +820,13 @@ def _main(argv):
             continue
         result = run([sys.executable, selftest], timeout=90)
         where = "repo" if selftest.startswith(args.root) else "despliegue"
+        autotests.append(
+            {
+                "donde": where,
+                "ok": result is not None and result.returncode == 0,
+                "salida": (result.stdout or "")[-600:] if result else "",
+            }
+        )
         if result is None:
             failures.append(
                 (KIND_PLUGIN, OWNER, "selftest (%s)" % where, "no se pudo ejecutar")
@@ -821,15 +840,16 @@ def _main(argv):
                     result.stdout.strip()[-600:],
                 )
             )
-        else:
+        elif not args.json:
             print(
                 "autotest (%s): %s" % (where, result.stdout.strip().splitlines()[-1])
             )
 
-    print(
-        "ficheros .luau: %d compilados, %d con sintaxis de Luau (omitidos), "
-        "%d dudosos (no concluyentes)" % (compiled, skipped, doubtful)
-    )
+    if not args.json:
+        print(
+            "ficheros .luau: %d compilados, %d con sintaxis de Luau (omitidos), "
+            "%d dudosos (no concluyentes)" % (compiled, skipped, doubtful)
+        )
     mine = []
     others = []
     notes = []
@@ -854,15 +874,83 @@ def _main(argv):
             mine.append(("ejercicio", problema))
         else:
             others.append(("ejercicio", "[%s] %s" % (plugin, problema)))
-    for script, detail in others:
+    if args.json:
+        # Resultado estructurado: las pruebas comprueban los datos, no el
+        # texto de los mensajes (que puede cambiar sin que cambie el
+        # comportamiento).
+        import json as _json
+
         print(
-            "--- pendiente de otra sesion (%s) ---\n%s"
-            % (script, detail[-600:])
+            _json.dumps(
+                {
+                    "plugins": len(plugins),
+                    "ejercicio": estado,
+                    "log": {
+                        "lineas": len(text.split("\n")),
+                        "esperados": expected,
+                        "propios": [
+                            {"tipo": label, "linea": line}
+                            for label, line, _ in my_problems
+                        ],
+                        "ajenos": [
+                            {"tipo": label, "linea": line, "plugin": owner}
+                            for label, line, owner in other_problems
+                        ],
+                    },
+                    "fallos": [
+                        {
+                            "tipo": kind,
+                            "plugin": owner,
+                            "etiqueta": script,
+                            "detalle": detail[-600:],
+                        }
+                        for kind, owner, script, detail in failures
+                        if kind != KIND_NOTE
+                    ]
+                    + [
+                        {
+                            "tipo": "infra",
+                            "plugin": "",
+                            "etiqueta": label,
+                            "detalle": detail[-600:],
+                        }
+                        for _kind, _owner, label, detail in infra_problems
+                    ],
+                    "avisos": [
+                        {"tipo": kind, "plugin": owner, "etiqueta": script,
+                         "detalle": detail[-600:]}
+                        for kind, owner, script, detail in failures
+                        if kind == KIND_NOTE
+                    ],
+                    "ejercicio_problemas": [
+                        {"plugin": plugin, "problema": problema}
+                        for plugin, problema in exercise_problems
+                    ],
+                    "autotests": autotests,
+                    "luau": {
+                        "compilados": compiled,
+                        "omitidos": skipped,
+                        "dudosos": doubtful,
+                    },
+                    "codigo": 1 if (my_problems or mine) else 0,
+                },
+                ensure_ascii=False,
+                indent=1,
+                sort_keys=True,
+            )
         )
-    for script, detail in notes:
-        print("--- aviso de %s (no bloquea) ---\n%s" % (script, detail[-600:]))
-    for script, detail in mine:
-        print("--- fallo de %s ---\n%s" % (script, detail[-600:]))
+        return 1 if (my_problems or mine) else 0
+
+    if not args.json:
+        for script, detail in others:
+            print(
+                "--- pendiente de otra sesion (%s) ---\n%s"
+                % (script, detail[-600:])
+            )
+        for script, detail in notes:
+            print("--- aviso de %s (no bloquea) ---\n%s" % (script, detail[-600:]))
+        for script, detail in mine:
+            print("--- fallo de %s ---\n%s" % (script, detail[-600:]))
 
     return 1 if (my_problems or mine) else 0
 

@@ -1245,6 +1245,37 @@ def test_restaurar_volumen():
     return r.failures
 
 
+def test_contrato_del_estado():
+    print("36) la UI solo lee claves que el demonio publica")
+    import re
+
+    import budsctl
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    leidas = set()
+    for nombre in os.listdir(os.path.join(raiz, "lib")):
+        if not nombre.endswith(".luau"):
+            continue
+        with open(os.path.join(raiz, "lib", nombre), encoding="utf-8") as fh:
+            leidas |= set(re.findall(r"\bst\.([a-z_]+)", fh.read()))
+    for nombre in os.listdir(raiz):
+        if nombre.startswith("panel_") and nombre.endswith(".luau"):
+            with open(os.path.join(raiz, nombre), encoding="utf-8") as fh:
+                leidas |= set(re.findall(r"\bst\.([a-z_]+)", fh.read()))
+    with open(os.path.join(raiz, "widget.luau"), encoding="utf-8") as fh:
+        leidas |= set(re.findall(r"\bst\.([a-z_]+)", fh.read()))
+
+    publicadas = set(budsctl.empty_state().keys()) | {"local_actions"}
+    r.check("la UI lee alguna clave", len(leidas) > 5, sorted(leidas))
+    r.check(
+        "todas las claves que lee la UI las publica el demonio",
+        leidas <= publicadas,
+        sorted(leidas - publicadas),
+    )
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -1305,6 +1336,7 @@ def main():
         test_restore_respeta_al_usuario,
         test_modificador_prohibido,
         test_restaurar_volumen,
+        test_contrato_del_estado,
     ):
         total += test()
     print("")

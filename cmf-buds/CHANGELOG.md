@@ -53,6 +53,18 @@ El watcher registraba los errores y reintentaba; además se añadió
 
 ### Este cambio — Espera creciente real, registro verificable y pruebas que discriminan
 
+- **Las pruebas esperan a la condición, no a un tiempo.** Antes los tests del
+  watcher dormían 0,6-0,8 s y luego miraban: si la máquina iba cargada y el
+  bucle no había terminado sus iteraciones, la prueba fallaba por el motivo
+  equivocado. Ahora hay un helper `esperar(cond)` que espera a que se cumpla
+  lo que se quiere comprobar, con un tope de tiempo como red de seguridad.
+- **Numeración en orden.** El test de recarga de reglas estaba numerado como
+  7 pero se ejecutaba el último; ahora los tests se numeran y se ejecutan en
+  el mismo orden.
+- **Aserciones más fuertes:** el log de fallos se comprueba **en orden y en
+  bloque** (no solo "aparece uno"), y se comprueba que la suscripción sana
+  está **entre** los dos fallos, no solo que aparece.
+
 - **Espera creciente real.** Antes el contador de fallos se reiniciaba al
   empezar cada intento, así que la espera **nunca crecía**: con un fallo
   persistente se quedaba siempre en 2 s. Ahora el contador solo se reinicia
@@ -95,7 +107,7 @@ se puede reescribir la historia del repositorio:
 
 ## Pruebas
 
-`bin/test_local_actions.py` (36 comprobaciones) cubre el motor sin necesidad
+`bin/test_local_actions.py` (37 comprobaciones) cubre el motor sin necesidad
 de auriculares: la precedencia de las reglas de N pulsaciones y su respaldo, el
 aislamiento de una regla malformada, que el watcher registre los errores sin
 morir, que avise si no puede suscribirse, **que la espera entre reintentos

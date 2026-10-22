@@ -131,7 +131,7 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (36 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (37 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
 especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
 separados disparen acciones distintas, que un gesto tras restaurar el volumen
@@ -144,6 +144,10 @@ fallos se reinicie cuando la suscripción vuelve a funcionar** (un fallo, una
 suscripción sana y otro fallo: el segundo vuelve a ser el nº1), **que una
 suscripción que se cierra antes de tiempo cuente como fallo** y que las reglas
 editadas fuera del panel se recargan.
+
+Las pruebas **esperan a la condición que comprueban**, no a un tiempo fijo: si
+la máquina va cargada, no falla "por el motivo equivocado", y una comprobación
+no puede cumplirse antes de que se haya dado el caso que dice comprobar.
 
 ## Cómo funciona
 

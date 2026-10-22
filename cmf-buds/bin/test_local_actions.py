@@ -67,6 +67,22 @@ def rule(rid, trigger, presses, modifier, command):
     }
 
 
+def esperar(cond, timeout=10.0, paso=0.02):
+    """Espera a que se cumpla la condicion.
+
+    Los tests no duermen un tiempo fijo: esperan a que pase lo que tienen
+    que comprobar. Asi no dependen de que la maquina vaya rapido, y una
+    comprobacion no puede cumplirse "por casualidad" antes de que la
+    situacion que dice comprobar se haya dado.
+    """
+    fin = time.monotonic() + timeout
+    while time.monotonic() < fin:
+        if cond():
+            return True
+        time.sleep(paso)
+    return bool(cond())
+
+
 class Runner:
     def __init__(self, rules):
         self.engine = FakeEngine(rules)
@@ -320,7 +336,7 @@ def test_watcher_sin_suscripcion():
     try:
         watcher = VolumeWatcher(lambda: "sink-falso", lambda sink: None, logs.append)
         watcher.start()
-        time.sleep(1.5)
+        esperar(lambda: any("suscripcion" in m for m in logs))
         alive = watcher._thread.is_alive()
         watcher.stop()
     finally:
@@ -393,7 +409,7 @@ def test_espera_creciente():
         watcher = VolumeWatcher(lambda: "sink-falso", lambda sink: None, logs.append)
         watcher._stop = FakeStop(stop_after=4)
         watcher.start()
-        time.sleep(0.6)
+        esperar(lambda: len(watcher._stop.waits) >= 4)
         waits = list(watcher._stop.waits)
         watcher.stop()
     finally:
@@ -405,12 +421,14 @@ def test_espera_creciente():
         logs,
     )
     r.check(
-        "el numero de fallo y la espera van a juego",
-        all(
-            ("(fallo %d): reintento en %d s" % (n, n)) in m
-            for n, m in zip(range(1, 5), [x for x in logs if "fallo" in x])
-        ),
-        logs,
+        "el numero de fallo y la espera van a juego, en orden",
+        [m for m in logs if "fallo" in m]
+        == [
+            "Watcher: no se pudo abrir la suscripcion: pactl no disponible "
+            "(fallo %d): reintento en %d s" % (n, n)
+            for n in range(1, 5)
+        ],
+        [m for m in logs if "fallo" in m],
     )
     return r.failures
 
@@ -441,7 +459,7 @@ def test_contador_se_reinicia():
         watcher = VolumeWatcher(lambda: "sink-falso", lambda sink: None, logs.append)
         watcher._stop = FakeStop(stop_after=4)
         watcher.start()
-        time.sleep(0.8)
+        esperar(lambda: len(watcher._stop.waits) >= 4)
         waits = list(watcher._stop.waits)
         watcher.stop()
     finally:
@@ -456,6 +474,13 @@ def test_contador_se_reinicia():
     r.check(
         "el fallo siguiente vuelve a ser el nº1 (contador reiniciado)",
         len([m for m in logs if "(fallo 1)" in m]) == 2,
+        logs,
+    )
+    sanas = [i for i, m in enumerate(logs) if "vuelve a funcionar" in m]
+    fallos1 = [i for i, m in enumerate(logs) if "(fallo 1)" in m]
+    r.check(
+        "y la suscripcion sana esta entre los dos fallos",
+        len(sanas) == 1 and len(fallos1) == 2 and fallos1[0] < sanas[0] < fallos1[1],
         logs,
     )
     r.check(
@@ -487,7 +512,7 @@ def test_suscripcion_corta():
         watcher = VolumeWatcher(lambda: "sink-falso", lambda sink: None, logs.append)
         watcher._stop = FakeStop(stop_after=3)
         watcher.start()
-        time.sleep(0.6)
+        esperar(lambda: len(watcher._stop.waits) >= 3)
         waits = list(watcher._stop.waits)
         watcher.stop()
     finally:
@@ -538,6 +563,7 @@ def main():
         test_especificidad,
         test_comando_vacio,
         test_rafaga,
+        test_recarga,
         test_gesto_despues_de_restaurar,
         test_pinchazos_muy_juntos,
         test_cambio_propio_por_valor,
@@ -548,7 +574,6 @@ def main():
         test_espera_creciente,
         test_contador_se_reinicia,
         test_suscripcion_corta,
-        test_recarga,
     ):
         total += test()
     print("")

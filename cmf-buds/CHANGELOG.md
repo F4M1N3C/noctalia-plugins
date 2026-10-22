@@ -129,7 +129,7 @@ Ademas se anade una prueba para el temporizador que cierra el gesto: si
 falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
 motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
 
-Suite: 44 -> 97 comprobaciones (nuevas: el cierre del gesto protegido, que el
+Suite: 44 -> 101 comprobaciones (nuevas: el cierre del gesto protegido, que el
 lector cierre su socket, que al reconectar se cierre el enlace anterior, el
 protocolo de tramas (construccion, CRC, parseo, basura y trama incompleta), el
 codec de floats del ecualizador con la deteccion de modelo del dispositivo, y
@@ -150,6 +150,12 @@ entre las permitidas para ese gesto: se enviaba igual y el dispositivo la
 ignoraba en silencio. Ahora se comprueba (y el error dice el motivo, en vez
 de "no hay enlace"), y un test contrasta la lista de permitidas del demonio
 con la copia de la UI para que no se desincronicen.
+
+Y lo mismo con el nivel de ANC: se aceptaba cualquier nivel (caia a
+"strong" en silencio) mientras el estado guardaba el nivel invalido, asi que
+el panel y el auricular acababan diciendo cosas distintas. Ahora el nivel se
+valida, y un test contrasta los niveles que ofrece la UI con los que
+entiende el demonio.
 
 La ultima es importante: la tabla de codigos (125 = SUPER) no tenia ninguna
 prueba, y si un codigo se equivocara las reglas que exigen SUPER dejarian de

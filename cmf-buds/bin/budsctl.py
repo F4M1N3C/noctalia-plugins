@@ -973,15 +973,25 @@ class BudsDaemon:
         self.save()
         return True
 
-    def set_anc(self, mode: str, level: str | None = None):
+    @staticmethod
+    def _comprobar_anc(mode: str, level: str | None = None):
+        """Comprueba el modo y el nivel de ANC y devuelve el valor a enviar."""
         if mode == "off":
-            val = ANC_OFF
-        elif mode == "transparency":
-            val = ANC_TRANSPARENCY
-        elif mode == "anc":
-            val = ANC_LEVELS.get(level or "high", ANC_STRONG)
-        else:
-            raise ValueError("modo ANC inválido")
+            return ANC_OFF
+        if mode == "transparency":
+            return ANC_TRANSPARENCY
+        if mode == "anc":
+            nivel = level or "high"
+            if nivel not in ANC_LEVELS:
+                # Antes se caia a "strong" en silencio y el estado guardaba
+                # el nivel invalido: el panel y el dispositivo acababan
+                # diciendo cosas distintas.
+                raise ValueError("nivel ANC inválido")
+            return ANC_LEVELS[nivel]
+        raise ValueError("modo ANC inválido")
+
+    def set_anc(self, mode: str, level: str | None = None):
+        val = self._comprobar_anc(mode, level)
         self._require_link()
         self.link.send(CMD_ANC_SET, bytes([0x01, val, 0x00]), 1.2)
         with self.lock:

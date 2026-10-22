@@ -922,6 +922,14 @@ def test_contrato_luau_motor():
         set(disparadores_ui or []) >= set(local_actions.TRIGGERS),
         nombres_ui,
     )
+    import budsctl as _budsctl
+
+    niveles_ui = set(re.findall(r'level == "(\w+)"', ui))
+    r.check(
+        "los niveles de ANC de la UI son los del demonio",
+        niveles_ui == set(_budsctl.ANC_LEVELS),
+        (sorted(niveles_ui), sorted(_budsctl.ANC_LEVELS)),
+    )
     paneles_ui = re.findall(r'(\w+) = "(faminec/cmf-buds:panel-[\w-]+)"', comun)
     paneles_manifiesto = {p["id"] for p in manifiesto["panel"]}
     r.check(
@@ -1012,6 +1020,30 @@ def test_gestos_permitidos():
     except ValueError as exc:
         error3 = str(exc)
     r.check("un gesto inexistente se rechaza", error3 is not None, error3)
+    # El nivel de ANC invalido tambien se rechaza (antes caia a "strong" en
+    # silencio y el estado guardaba el nivel invalido).
+    exc4 = None
+    try:
+        budsctl.BudsDaemon._comprobar_anc("anc", "inventado")
+    except Exception as exc:
+        exc4 = exc
+    r.check(
+        "un nivel de ANC invalido se rechaza con un error claro",
+        isinstance(exc4, ValueError) and "nivel" in str(exc4),
+        exc4,
+    )
+    r.check(
+        "un nivel de ANC valido se acepta",
+        budsctl.BudsDaemon._comprobar_anc("anc", "high") is not None
+        and budsctl.BudsDaemon._comprobar_anc("off") is not None
+        and budsctl.BudsDaemon._comprobar_anc("transparency") is not None,
+    )
+    error5 = None
+    try:
+        budsctl.BudsDaemon._comprobar_anc("inventado")
+    except ValueError as exc:
+        error5 = str(exc)
+    r.check("un modo de ANC invalido se rechaza", error5 is not None, error5)
     return r.failures
 
 

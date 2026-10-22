@@ -126,9 +126,12 @@ validators) and checks that each one is reported and blocks the pass:
 A `.luau` that only uses Luau syntax is not an error: it is normalised
 with the shared `noctalia_api` module and compiled again. If it still does
 not compile, it is reported as a warning (not a failure) because it may be
-Luau syntax the normaliser does not cover yet; a real syntax error is
-caught at runtime instead (Noctalia logs `luau_load failed` and the
-plugin does not load).
+Luau syntax the normaliser does not cover yet.
+
+For this plugin that ambiguity does not exist: the self-test checks that
+every `.luau` compiles as it is, so a syntax error is always unambiguous
+and is caught statically (and by the self-test too, so there are two
+independent ways of noticing it).
 
 ```sh
 python3 ~/.local/share/noctalia/plugins/lyrics-carousel/tools/check-verifier.py

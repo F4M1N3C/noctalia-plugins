@@ -211,6 +211,7 @@ def classify(text: str):
 
 
 OWNER = "lyrics-carousel"
+OWNER_ID = "faminec/lyrics-carousel"
 
 # Cada fallo lleva su origen: de que plugin es, o que la propia verificacion
 # no ha podido comprobar algo (eso tambien bloquea: si no se puede verificar,
@@ -290,6 +291,18 @@ def owners_of(detail: str):
 def infra(label: str, detail: str = ""):
     """Fallo de la propia verificacion: no se ha podido comprobar."""
     return (KIND_INFRA, "", label, detail)
+
+
+# Los mismos nombres que busca el modulo compartido (luac5.4, luac, ...).
+COMPILERS = ("luac5.4", "luac", "luac5.3", "luac5.1", "luajit")
+
+
+def find_compiler() -> str:
+    for name in COMPILERS:
+        path = shutil.which(name)
+        if path:
+            return path
+    return ""
 
 
 def load_api(root: str):
@@ -406,7 +419,7 @@ def static_checks(root: str):
     skipped = 0
     compiled = 0
     api = load_api(root)
-    compiler = api.luac() if api is not None else shutil.which("luac")
+    compiler = api.luac() if api is not None else find_compiler()
     if not compiler:
         # Sin compilador no se comprueba la sintaxis: es un fallo de la
         # verificacion, no un "todo bien" silencioso.
@@ -437,7 +450,9 @@ def static_checks(root: str):
             elif state == "dudoso":
                 # Aviso, no fallo: puede ser sintaxis de Luau. Si ademas
                 # fuese un error real, el plugin no cargaria y el log lo
-                # diria (la revision del log lo cubre).
+                # diria; la revision del log lo cubre si el fichero se
+                # carga durante la verificacion (el panel se abre, el
+                # widget se compila al arrancar).
                 skipped += 1
                 failures.append(
                     (

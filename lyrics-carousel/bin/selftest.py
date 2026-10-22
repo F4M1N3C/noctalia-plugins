@@ -192,7 +192,41 @@ def main(argv):
         # lanza el script por ruta absoluta. Si no esta, no es un fallo.
         print("  (no hay enlace simbólico en %s: el panel usa la ruta absoluta)" % LAUNCHER)
 
-    # 8) el autotest no debe dejar bytecode en el directorio desde el que se
+    # 8) los .luau del plugin tienen que compilar tal cual. Si usaran
+    #    sintaxis de Luau, la comprobacion estatica no podria ser
+    #    concluyente (no hay compilador de Luau) y un error de verdad
+    #    pasaria desapercibido: el runtime solo lo detecta si el fichero
+    #    se recarga durante la verificacion.
+    compiler = ""
+    for name in ("luac5.4", "luac", "luac5.3", "luac5.1", "luajit"):
+        compiler = shutil.which(name) or ""
+        if compiler:
+            break
+    if not compiler:
+        check("compilador disponible", False, "no hay luac")
+    else:
+        malos = []
+        for root, dirs, names in os.walk(PLUGIN_DIR):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for name in sorted(names):
+                if not name.endswith(".luau"):
+                    continue
+                path = os.path.join(root, name)
+                try:
+                    result = subprocess.run(
+                        [compiler, "-p", path],
+                        capture_output=True,
+                        text=True,
+                        timeout=20,
+                    )
+                except (OSError, subprocess.SubprocessError) as error:
+                    malos.append("%s (%s)" % (name, error))
+                    continue
+                if result.returncode != 0:
+                    malos.append(name)
+        check("los .luau compilan tal cual", not malos, ", ".join(malos))
+
+    # 9) el autotest no debe dejar bytecode en el directorio desde el que se
     #    lanza el script.
     launcher_dir = os.path.dirname(LAUNCHER)
     cache = os.path.join(launcher_dir, "__pycache__")

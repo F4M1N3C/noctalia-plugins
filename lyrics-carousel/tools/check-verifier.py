@@ -57,10 +57,12 @@ def copia(root, con_tools=True):
     return raiz
 
 
-def escenario(nombre, rc, fallos, esperado_rc, esperado=None):
+def escenario(nombre, rc, fallos, esperado_rc, esperado=None, no_esperado=None):
     ok = rc == esperado_rc
     if esperado is not None:
         ok = ok and any(esperado in f for f in fallos)
+    if no_esperado is not None:
+        ok = ok and not any(no_esperado in f for f in fallos)
     print("  %s %-52s rc=%d %s" % ("ok " if ok else "FALLO", nombre, rc, fallos[:2]))
     return ok
 
@@ -85,17 +87,43 @@ def main(argv):
         resultados.append(
             escenario("error de sintaxis propio", rc, fallos, 1, "fallo de luac")
         )
+        # El error tiene que detectarlo tambien el autotest: dos vias
+        # independientes, para que no dependa solo de la estatica.
+        resultados.append(
+            escenario(
+                "error de sintaxis en el autotest", rc, fallos, 1, "fallo de selftest"
+            )
+        )
     finally:
         os.remove(probe)
 
-    print("3) .luau solo-Luau valido -> rc 0 (nada de falsos positivos)")
+    print("3) .luau solo-Luau valido -> sin falsos positivos de sintaxis")
     probe = os.path.join(root, "lyrics-carousel", "tmp_luau.luau")
     with open(probe, "w", encoding="utf-8") as handle:
         handle.write("local x: number = 1\nprint(x)\n")
     try:
         rc, fallos = run(root)
+        # El fichero es valido: la comprobacion de sintaxis no debe
+        # llamarlo error. Lo que si falla es la invariante del plugin (sus
+        # .luau tienen que compilar tal cual), y eso es lo que mantiene
+        # concluyente la comprobacion estatica.
         resultados.append(
-            escenario("sintaxis de Luau valida", rc, fallos, 0)
+            escenario(
+                "sintaxis de Luau: sin falso positivo",
+                rc,
+                fallos,
+                1,
+                no_esperado="fallo de luac",
+            )
+        )
+        resultados.append(
+            escenario(
+                "sintaxis de Luau: invariante del plugin",
+                rc,
+                fallos,
+                1,
+                esperado="fallo de selftest",
+            )
         )
     finally:
         os.remove(probe)

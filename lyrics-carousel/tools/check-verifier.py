@@ -88,7 +88,19 @@ def main(argv):
     finally:
         os.remove(probe)
 
-    print("3) autotest que falla sin nombrar al plugin -> rc 1 y attributed a mi")
+    print("3) .luau solo-Luau valido -> rc 0 (nada de falsos positivos)")
+    probe = os.path.join(root, "lyrics-carousel", "tmp_luau.luau")
+    with open(probe, "w", encoding="utf-8") as handle:
+        handle.write("local x: number = 1\nprint(x)\n")
+    try:
+        rc, fallos = run(root)
+        resultados.append(
+            escenario("sintaxis de Luau valida", rc, fallos, 0)
+        )
+    finally:
+        os.remove(probe)
+
+    print("4) autotest que falla sin nombrar al plugin -> rc 1 y attributed a mi")
     with open(DEPLOYED, encoding="utf-8") as handle:
         original = handle.read()
     with open(DEPLOYED, "w", encoding="utf-8") as handle:
@@ -109,7 +121,7 @@ def main(argv):
         with open(DEPLOYED, "w", encoding="utf-8") as handle:
             handle.write(original)
 
-    print("4) validador compartido que revienta -> rc 1 (infraestructura)")
+    print("5) validador compartido que reventa -> rc 1 (infraestructura)")
     raiz = copia(root)
     with open(os.path.join(raiz, "tools", "check-luau-globals.py"), "w") as handle:
         handle.write("import sys\nsys.exit(3)\n")
@@ -121,7 +133,7 @@ def main(argv):
     finally:
         shutil.rmtree(raiz, ignore_errors=True)
 
-    print("5) sin compilador -> rc 1 (infraestructura)")
+    print("6) sin compilador -> rc 1 (infraestructura)")
     raiz = copia(root)
     os.makedirs(EMPTY_BIN, exist_ok=True)
     env = {**os.environ, "PATH": EMPTY_BIN}
@@ -131,7 +143,7 @@ def main(argv):
     finally:
         shutil.rmtree(raiz, ignore_errors=True)
 
-    print("6) sin noctalia no se ejercita nada -> rc 1 (infraestructura)")
+    print("7) sin noctalia no se ejercita nada -> rc 1 (infraestructura)")
     raiz = copia(root)
     os.makedirs(EMPTY_BIN, exist_ok=True)
     env = {**os.environ, "PATH": EMPTY_BIN}
@@ -143,7 +155,7 @@ def main(argv):
     finally:
         shutil.rmtree(raiz, ignore_errors=True)
 
-    print("7) log de Noctalia inexistente -> rc 1 (infraestructura)")
+    print("8) log de Noctalia inexistente -> rc 1 (infraestructura)")
     spec = importlib.util.spec_from_file_location("verificador", VERIFIER)
     modulo = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(modulo)
@@ -154,6 +166,16 @@ def main(argv):
         resultados.append(escenario("log inexistente", rc, [], 1))
     except SystemExit:
         resultados.append(escenario("log inexistente", 0, [], 1))
+
+    print("9) sin validadores compartidos -> rc 1 (infraestructura)")
+    raiz = copia(root, con_tools=False)
+    try:
+        rc, fallos = run(raiz)
+        resultados.append(
+            escenario("sin validadores compartidos", rc, fallos, 1)
+        )
+    finally:
+        shutil.rmtree(raiz, ignore_errors=True)
 
     fallos = resultados.count(False)
     print("%d escenario(s), %d fallo(s)" % (len(resultados), fallos))

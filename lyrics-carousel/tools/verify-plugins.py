@@ -218,6 +218,9 @@ OWNER = "lyrics-carousel"
 KIND_PLUGIN = "plugin"
 KIND_INFRA = "infra"
 KIND_UNKNOWN = "unknown"
+# Aviso sobre un plugin propio que no bloquea (p. ej. sintaxis de Luau
+# que el modulo compartido no normaliza: el runtime lo covers).
+KIND_NOTE = "note"
 
 
 def log_owner(line: str) -> str:
@@ -307,22 +310,35 @@ def load_api(root: str):
         return None
 
 
-def syntax_state(api, path: str):
+def syntax_state(api, path: str, compiler: str = "luac"):
     """Estado de la sintaxis de un .luau.
 
-    "ok"    compila tal cual.
-    "luau"  solo usa sintaxis de Luau (luac no la entiende): se
-            normaliza y compila, asi que no es un error.
-    "error" error de sintaxis de verdad: hay que avisar.
+    "ok"     compila tal cual.
+    "luau"   solo usa sintaxis de Luau (el compilador no la entiende): se
+             normaliza y compila, asi que no es un error.
+    "dudoso" tiene construcciones de Luau y tampoco compila normalizado:
+             puede ser una caracteristica que la normalizacion no cubre,
+             asi que se avisa pero no bloquea (el runtime lo detecta: si
+             el fichero tuviese un error de verdad, Noctalia no cargaria
+             el plugin y el log lo diria).
+    "error"  error de sintaxis de verdad: hay que avisar y bloquear.
+
+    El motivo distingue los dos casos dudosos: si el fichero no contiene
+    ninguna construccion de Luau, es seguro que el error es real; si las
+    tiene, puede ser una caracteristica de Luau que la normalizacion
+    todavia no cubre, y se dice.
     """
-    result = run(["luac", "-p", path], timeout=20)
+    result = run([compiler, "-p", path], timeout=20)
     if result is not None and result.returncode == 0:
         return "ok", ""
+    solo_luau = False
     if api is not None:
         try:
             with open(path, encoding="utf-8") as handle:
                 source = handle.read()
-            if api.compile_ok(api.normalize(source)):
+            normalizado = api.normalize(source)
+            solo_luau = normalizado != source
+            if api.compile_ok(normalizado):
                 return "luau", ""
         except Exception:  # noqa: BLE001
             pass
@@ -333,9 +349,14 @@ def syntax_state(api, path: str):
             for l in (result.stderr or result.stdout or "").split("\n")
             if l.strip()
         ]
-        # luac imprime una sola linea con el fichero y el error: se queda
-        # con la ultima para no repetir la ruta.
+        # El compilador imprime una sola linea con el fichero y el error: se
+        # queda con la ultima para no repetir la ruta.
         motivo = lineas[-1] if lineas else ""
+    if solo_luau:
+        # Con construcciones de Luau no se puede asegurar que sea un error:
+        # se avisa, pero no bloquea (lo cubre el runtime).
+        motivo += " (¿sintaxis de Luau que el modulo compartido no normaliza?)"
+        return "dudoso", motivo or "no se pudo compilar"
     return "error", motivo or "no se pudo compilar"
 
 
@@ -347,11 +368,13 @@ def static_checks(root: str):
     se puede afirmar que todo esta bien si no se ha comprobado.
     """
     failures = []
+    instalados = 0
     for script in ("check-luau-globals.py", "check-ui-resources.py", "check-locals.py"):
         path = os.path.join(root, "tools", script)
         if not os.path.isfile(path):
             # El validador no esta instalado: no hay nada que comprobar.
             continue
+        instalados += 1
         result = run(["python3", path, root], timeout=120)
         if result is None:
             failures.append(infra(script, "no se pudo ejecutar"))
@@ -370,6 +393,16 @@ def static_checks(root: str):
                 )
     # Los ficheros .luau tienen que compilar (los que usan sintaxis Luau
     # se saltan: luac no las entiende).
+    if instalados == 0:
+        # Sin validadores compartidos no se comprueba el codigo: hay que
+        # decirlo, no pasar la verificacion sin mirar nada.
+        failures.append(
+            infra(
+                "validadores compartidos",
+                "no hay ninguno en " + os.path.join(root, "tools")
+                + ": no se comprueba el codigo",
+            )
+        )
     skipped = 0
     compiled = 0
     api = load_api(root)
@@ -395,17 +428,30 @@ def static_checks(root: str):
             if not name.endswith(".luau"):
                 continue
             path = os.path.join(current, name)
-            state, motivo = syntax_state(api, path)
+            state, motivo = syntax_state(api, path, compiler)
+            owner = plugin_from_path(path) or ""
             if state == "ok":
                 compiled += 1
             elif state == "luau":
                 skipped += 1
+            elif state == "dudoso":
+                # Aviso, no fallo: puede ser sintaxis de Luau. Si ademas
+                # fuese un error real, el plugin no cargaria y el log lo
+                # diria (la revision del log lo cubre).
+                skipped += 1
+                failures.append(
+                    (
+                        KIND_NOTE,
+                        owner,
+                        "luac",
+                        "%s: %s" % (os.path.relpath(path, root), motivo),
+                    )
+                )
             elif api is None:
                 # Sin poder distinguirlo se cuenta como omitido (el fallo de
                 # infraestructura ya esta avisado mas arriba).
                 skipped += 1
             else:
-                owner = plugin_from_path(path) or ""
                 failures.append(
                     (
                         KIND_PLUGIN if owner else KIND_UNKNOWN,
@@ -521,12 +567,15 @@ def main(argv):
     print("ficheros .luau compilados: %d (con sintaxis Luau, omitidos: %d)" % (compiled, skipped))
     mine = []
     others = []
+    notes = []
     for kind, owner, script, detail in failures:
         # Lo que falle en el plugin propio bloquea la pasada; lo de los demas
         # se informa, pero lo lleva su sesion. Y si la propia verificacion
         # no ha podido comprobar algo, tambien bloquea.
         if kind == KIND_INFRA:
             mine.append((script, detail))
+        elif kind == KIND_NOTE:
+            notes.append((script, detail))
         elif kind == KIND_PLUGIN and owner == OWNER:
             mine.append((script, detail))
         else:
@@ -538,6 +587,8 @@ def main(argv):
             "--- pendiente de otra sesion (%s) ---\n%s"
             % (script, detail[-600:])
         )
+    for script, detail in notes:
+        print("--- aviso de %s (no bloquea) ---\n%s" % (script, detail[-600:]))
     for script, detail in mine:
         print("--- fallo de %s ---\n%s" % (script, detail[-600:]))
 

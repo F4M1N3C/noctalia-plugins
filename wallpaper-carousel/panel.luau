@@ -77,6 +77,12 @@ local anchorOffset = nil -- distancia real del ancla (medida, px de superficie)
 -- Correccion fina del hueco hasta el ancla: se calcula con el salto real.
 local anchorGapAdjust = 0
 local lastRecenterComp = nil -- relleno usado en el ultimo recentrado
+-- Offset que el scroll deberia tener tras aplicar el ultimo relleno. El shell
+-- ajusta el scroll para que el contenido no se mueva cuando cambia el
+-- relleno; ese ajuste propio llega como un onScroll mas y no debe contar como
+-- un dentado de rueda.
+local expectedOffset = nil
+local lastComp = nil
 
 -- Puntero y teclado
 local hovered = nil
@@ -714,6 +720,16 @@ render = function()
   if not cfg.wheel then
     compensation = m.pad
   end
+  -- El shell mantiene la posicion visual cuando cambia el relleno: si el
+  -- relleno crece, el scroll retrocede lo mismo. Se anota el offset que
+  -- quedara para distinguir ese ajuste propio del desplazamiento del usuario.
+  local scale = uiScale()
+  if lastComp ~= nil then
+    expectedOffset = scrollOffset - (compensation - lastComp) * scale
+  else
+    expectedOffset = nil
+  end
+  lastComp = compensation
 
   local scroll = ui.scroll({
     key = "carousel-scroll",
@@ -982,6 +998,16 @@ end
 function onScroll(offset, _maxOffset)
   local newOffset = tonumber(offset) or 0
   wakeUp()
+
+  -- Ajuste propio del shell al cambiar el relleno: se sincroniza el offset y
+  -- no cuenta como dentado (si no, la cuenta se infla y la cinta avanza de
+  -- mas, o el primer dentado tras un salto se pierde).
+  if expectedOffset ~= nil and math.abs(newOffset - expectedOffset) < 1.5 then
+    scrollOffset = newOffset
+    expectedOffset = nil
+    return
+  end
+  expectedOffset = nil
 
   if scrollResetting then
     scrollResetting = false

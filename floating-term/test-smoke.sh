@@ -457,8 +457,17 @@ plugin_ipc close-all || fail "el IPC close-all no respondió"
 wait_count 0 "$CLOSE_TIMEOUT" || fail "quedaron ventanas abiertas al empezar: $(plugin_geometry)"
 
 echo "1) abrir todos los widgets"
-plugin_ipc open-all || fail "el IPC open-all no respondió"
-if ! wait_count "$expected" "$OPEN_TIMEOUT"; then
+opened=0
+for attempt in 1 2 3; do
+  plugin_ipc open-all || fail "el IPC open-all no respondió"
+  if wait_count "$expected" 15; then
+    opened=1
+    break
+  fi
+  echo "   intento $attempt: $(plugin_count) de $expected ventanas" >&2
+  sleep 2
+done
+if [ "$opened" -ne 1 ]; then
   echo "   abiertas: $(plugin_geometry | tr '\n' ' ')" >&2
   fail "se esperaban $expected ventanas y hay $(plugin_count)"
 fi

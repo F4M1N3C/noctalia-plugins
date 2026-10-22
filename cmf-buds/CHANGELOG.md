@@ -129,7 +129,7 @@ Ademas se anade una prueba para el temporizador que cierra el gesto: si
 falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
 motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
 
-Suite: 44 -> 111 comprobaciones (nuevas: el cierre del gesto protegido, que el
+Suite: 44 -> 112 comprobaciones (nuevas: el cierre del gesto protegido, que el
 lector cierre su socket, que al reconectar se cierre el enlace anterior, el
 protocolo de tramas (construccion, CRC, parseo, basura y trama incompleta), el
 codec de floats del ecualizador con la deteccion de modelo del dispositivo, y
@@ -176,6 +176,14 @@ Como el eco se acepta con +-1 de tolerancia, el primer giro del usuario que
 cayera dentro de ese margen se confounding con el eco y su atajo no se
 disparaba, aunque el giro hubiera ocurrido mucho despues. Ahora la marca
 dura 2 s: solo absorbe el eco y los gestos posteriores nunca se tragan.
+
+Y al releer la agrupacion de gestos con ojos frescos, aparecio un comentario
+que describia mal el comportamiento: decia que la regla "cualquiera" dispara
+al empezar el gesto, pero solo es asi cuando no hay ninguna regla de N
+pulsaciones pendiente; si la hay, espera a que termine el gesto (si no, se
+comeria las pulsaciones y la de N no se dispararia nunca). El comentario se
+corrige y ahora las pruebas lo anclan: con una regla de N pendiente, el
+respaldo espera; sin ella, dispara al instante.
 
 La ultima es importante: la tabla de codigos (125 = SUPER) no tenia ninguna
 prueba, y si un codigo se equivocara las reglas que exigen SUPER dejarian de

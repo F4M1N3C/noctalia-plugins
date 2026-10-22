@@ -673,10 +673,15 @@ render = function()
   -- asi que el relleno tiene que contar solo las que si existen.
   local firstIndex = math.max(1, center - m.half)
   local lead = viewportWidth() / 2 - cfg.cardWidth / 2 - (center - firstIndex) * cfg.cardWidth
+  -- El `ui.spacer` de Noctalia nace con flexGrow = 1: si se deja crecer se
+  -- come todo el ancho sobrante de la fila y el ancho del lead no se aplica,
+  -- así que la cinta se quedaba a la derecha del todo. Con flexGrow = 0
+  -- ocupa justo el ancho pedido.
   table.insert(nodes, 1, ui.spacer({
     key = "lead",
     width = math.max(0, math.floor(lead - fraction * cfg.cardWidth + 0.5)),
     height = 1,
+    flexGrow = 0,
   }))
 
   local ribbon = ui.row({
@@ -689,13 +694,13 @@ render = function()
 
   local children = {
     ribbon,
-    ui.spacer({ key = "anchor-gap", width = 1, height = m.anchorGap }),
+    ui.spacer({ key = "anchor-gap", width = 1, height = m.anchorGap, flexGrow = 0 }),
     -- Dos anclas con claves alternas: Noctalia sólo vuelve a revelar un
     -- descendente cuando la clave del `revealKey` cambia, así que se van
     -- turnando para poder recentrar el scroll tantas veces como haga falta.
     ui.box({ key = "anchor-0", width = 1, height = 1 }),
     ui.box({ key = "anchor-1", width = 1, height = 1 }),
-    ui.spacer({ key = "tail", width = 1, height = cfg.wheel and SCROLL_TAIL or 0 }),
+    ui.spacer({ key = "tail", width = 1, height = cfg.wheel and SCROLL_TAIL or 0, flexGrow = 0 }),
   }
 
   -- El relleno vertical del scroll compensa su propio desplazamiento: la

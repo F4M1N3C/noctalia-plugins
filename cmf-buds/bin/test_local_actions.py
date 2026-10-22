@@ -1047,6 +1047,37 @@ def test_gestos_permitidos():
     return r.failures
 
 
+def test_ajustes_invalidos():
+    print("30) los ajustes invalidos se rechazan, no se cambian en silencio")
+    import budsctl
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    exc = None
+    try:
+        budsctl.BudsDaemon._comprobar_lado("centro")
+    except Exception as e:
+        exc = e
+    r.check("un lado inválido se rechaza", isinstance(exc, ValueError), exc)
+    r.check(
+        "los lados validos se aceptan",
+        budsctl.BudsDaemon._comprobar_lado("left") == 0x02
+        and budsctl.BudsDaemon._comprobar_lado("right") == 0x03,
+    )
+    # El volumen se recorta antes de marcarlo como nuestro cambio: si se
+    # marcara el valor sin recortar, no coincidiria con el volumen real y el
+    # motor creeria que el cambio era un gesto del usuario.
+    import inspect
+
+    fuente = inspect.getsource(budsctl.BudsDaemon.set_volume)
+    r.check(
+        "el cambio se marca con el volumen ya recortado",
+        "note_self_change(pct)" in fuente
+        and "note_self_change(percent)" not in fuente,
+        fuente,
+    )
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -1101,6 +1132,7 @@ def main():
         test_aviso_del_atajo,
         test_contrato_luau_motor,
         test_gestos_permitidos,
+        test_ajustes_invalidos,
     ):
         total += test()
     print("")

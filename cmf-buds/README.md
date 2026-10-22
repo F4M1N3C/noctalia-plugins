@@ -131,7 +131,7 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (101 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (104 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
 especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
 separados disparen acciones distintas, que un gesto tras restaurar el volumen
@@ -259,10 +259,12 @@ anteriores que resultaron inexactas) está en [`CHANGELOG.md`](CHANGELOG.md).
   corrupta, el parser se quedaría esperando para siempre y el buffer crecería
   sin límite (el enlace dejaría de leerse). Ahora, si el buffer se pasa de
   8 KB, se descarta y se vuelve a buscar el inicio de la siguiente trama.
-- **Los ajustes se validan antes de enviarse.** El modo y el nivel de ANC y
-  la acción de cada gesto se comprueban: si no, el dispositivo los ignoraba
-  en silencio y el panel acababa diciendo algo distinto de lo que había en el
-  auricular.
+- **Los ajustes se validan antes de enviarse.** El modo y el nivel de ANC, la
+  acción de cada gesto y el lado del auricular se comprueban: si no, el
+  dispositivo los ignoraba en silencio y el panel acababa diciendo algo
+  distinto de lo que había en el auricular. Y el volumen se recorta **antes**
+  de marcarlo como cambio nuestro: si se marcara sin recortar, el motor
+  creería que era un gesto del usuario y dispararía un atajo solo.
 - **Los gestos validan la acción.** El demando comprueba que la acción que
   se asigna a un gesto esté entre las permitidas para ese gesto: si no, el
   dispositivo la ignoraba y no pasaba nada. Y la lista de permitidas se

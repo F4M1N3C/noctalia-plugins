@@ -1099,9 +1099,22 @@ class BudsDaemon:
         self.save()
         return self.state
 
+    @staticmethod
+    def _comprobar_lado(side: str):
+        """Comprueba el lado del auricular y devuelve su codigo.
+
+        Antes, un lado que no fuese "left" se convertia en "right" en
+        silencio (y ademas se guardaba una clave inventada en el estado).
+        """
+        if side == "left":
+            return 0x02
+        if side == "right":
+            return 0x03
+        raise ValueError("lado inválido")
+
     def ring(self, side: str, enabled: bool):
+        device = self._comprobar_lado(side)
         self._require_link()
-        device = 0x02 if side == "left" else 0x03
         self.link.send(CMD_RING_SET, bytes([device, 1 if enabled else 0]), 1.2)
         with self.lock:
             self.state["ring"][side] = bool(enabled)
@@ -1187,12 +1200,16 @@ class BudsDaemon:
         sink = self._sink()
         if not sink:
             raise RuntimeError("No hay sink de audio")
-        if self.local is not None:
-            # Se marca el valor que ponemos: el motor lo usa para distinguir
-            # nuestros cambios de los gestos del auricular.
-            self.local.note_self_change(percent)
+        pct = None
         if percent is not None:
             pct = max(0, min(150, int(percent)))
+            if self.local is not None:
+                # Se marca el valor que ponemos (ya recortado): el motor lo
+                # usa para distinguir nuestros cambios de los gestos del
+                # auricular. Si se marcara el valor sin recortar, no
+                # coincidiria con el volumen real y el motor creeria que
+                # el cambio era un gesto del usuario.
+                self.local.note_self_change(pct)
             run(["pactl", "set-sink-volume", sink, f"{pct}%"], 6)
         if mute == "toggle":
             run(["pactl", "set-sink-mute", sink, "toggle"], 6)

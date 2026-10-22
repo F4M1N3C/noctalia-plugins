@@ -129,7 +129,7 @@ Ademas se anade una prueba para el temporizador que cierra el gesto: si
 falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
 motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
 
-Suite: 44 -> 101 comprobaciones (nuevas: el cierre del gesto protegido, que el
+Suite: 44 -> 104 comprobaciones (nuevas: el cierre del gesto protegido, que el
 lector cierre su socket, que al reconectar se cierre el enlace anterior, el
 protocolo de tramas (construccion, CRC, parseo, basura y trama incompleta), el
 codec de floats del ecualizador con la deteccion de modelo del dispositivo, y
@@ -156,6 +156,13 @@ Y lo mismo con el nivel de ANC: se aceptaba cualquier nivel (caia a
 el panel y el auricular acababan diciendo cosas distintas. Ahora el nivel se
 valida, y un test contrasta los niveles que ofrece la UI con los que
 entiende el demonio.
+
+Y dos huecos mas de la misma familia: el lado del auricular no se validaba
+(un lado que no fuese "left" se convertia en "right" en silencio, y se
+guardaba una clave inventada en el estado), y el volumen se marcaba como
+cambio nuestro ANTES de recortarlo (si el valor recortado no coincidia con
+el marcado, el motor creeria que el cambio era un gesto del usuario y
+dispararia un atajo solo).
 
 La ultima es importante: la tabla de codigos (125 = SUPER) no tenia ninguna
 prueba, y si un codigo se equivocara las reglas que exigen SUPER dejarian de

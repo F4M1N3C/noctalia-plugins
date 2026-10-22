@@ -203,7 +203,13 @@ OWNER = "lyrics-carousel"
 
 
 def log_owner(line: str) -> str:
-    """Plugin al que pertenece una linea del log de Noctalia."""
+    """Plugin al que pertenece una linea del log de Noctalia.
+
+    Los errores de Lua traen el id completo ("plugin faminec/x:panel") y
+    los de este plugin el prefijo corto ("lyrics-carousel: ...").
+    """
+    if OWNER in line:
+        return OWNER
     match = re.search(r"faminec/([a-z0-9._-]+)", line)
     if match:
         return match.group(1)

@@ -15,34 +15,8 @@
 
 local settingsLib = require("./lib/settings.luau")
 
-local DEFAULTS = {
-  font_family = "Departure Mono",
-  font_size = 22,
-  render_mode = "image",
-  direction = "down",
-  marker = false,
-  karaoke = true,
-  equalizer = false,
-  footer = false,
-  hints = false,
-  header = false,
-  spacing = 2,
-  animation_ms = 650,
-  ghost = true,
-  offset_ms = 0,
-  width = 1200,
-  height = 820,
-  anchor = "center",
-  accent = "primary",
-  custom_color = "#e46767",
-  active_scale = 1.35,
-  visible_above = 6,
-  visible_below = 6,
-}
-
-local BOOL_KEYS = { marker = true, karaoke = true, equalizer = true, footer = true, hints = true, header = true, ghost = true }
-local INT_KEYS = { font_size = true, spacing = true, animation_ms = true, offset_ms = true, width = true, height = true, visible_above = true, visible_below = true }
-local FLOAT_KEYS = { active_scale = true }
+-- Los valores por defecto y la lista de claves viven en lib/settings.luau
+-- para que el panel, el widget y el script compartan una sola fuente.
 
 -- Solo monoespaciadas las acepta kitty; las demas solo valen en modo imagen.
 local FONT_CHOICES = {
@@ -168,7 +142,7 @@ local function boolOf(key)
 end
 
 local function numberOf(key)
-  return tonumber(valueOf(key)) or DEFAULTS[key]
+  return tonumber(valueOf(key)) or settingsLib.DEFAULTS[key]
 end
 
 -- Escribe un ajuste en la capa de overrides del plugin.
@@ -824,7 +798,7 @@ function onIpc(event, payload)
     launch()
   elseif event == "toggle" then
     -- Alterna un ajuste booleano: toggle marker
-    if type(payload) == "string" and BOOL_KEYS[payload] then
+    if type(payload) == "string" and settingsLib.BOOL_KEYS[payload] then
       toggleKey(payload)
     end
   elseif event == "set" then

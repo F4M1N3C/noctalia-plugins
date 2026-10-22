@@ -1177,6 +1177,32 @@ def test_restore_respeta_al_usuario():
     return r.failures
 
 
+def test_modificador_prohibido():
+    print("34) una regla puede exigir que un modificador NO este pulsado")
+    r = Runner([rule("a", "volume_up", 0, "none", "SIN_SUPER")])
+    # La opcion "no_super" de la UI se guarda como forbid: ["super"].
+    r.engine.rules[0]["require"] = []
+    r.engine.rules[0]["forbid"] = ["super"]
+    r.evento(60, ["super"])
+    time.sleep(0.3)
+    r.check("con SUPER pulsado no se ejecuta", r.engine.fired == [], r.engine.fired)
+    r.calmarse()
+    r.evento(70, [])
+    time.sleep(0.3)
+    r.check("sin SUPER si se ejecuta", r.engine.fired == ["SIN_SUPER"], r.engine.fired)
+    # Y una regla que exige SUPER sigue exigiendolo.
+    r.calmarse()
+    r2 = Runner([rule("b", "volume_up", 0, "super", "CON_SUPER")])
+    r2.evento(60, [])
+    time.sleep(0.3)
+    r2.check("la regla que exige SUPER no se ejecuta sin el", r2.engine.fired == [], r2.engine.fired)
+    r2.calmarse()
+    r2.evento(70, ["super"])
+    time.sleep(0.3)
+    r2.check("y si se ejecuta con el", r2.engine.fired == ["CON_SUPER"], r2.engine.fired)
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -1235,6 +1261,7 @@ def main():
         test_apagado_de_anillos,
         test_la_marca_caduca,
         test_restore_respeta_al_usuario,
+        test_modificador_prohibido,
     ):
         total += test()
     print("")

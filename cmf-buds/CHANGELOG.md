@@ -131,7 +131,7 @@ Ademas se anade una prueba para el temporizador que cierra el gesto: si
 falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
 motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
 
-Suite: 44 -> 116 comprobaciones (nuevas: el cierre del gesto protegido, que el
+Suite: 44 -> 120 comprobaciones (nuevas: el cierre del gesto protegido, que el
 lector cierre su socket, que al reconectar se cierre el enlace anterior, el
 protocolo de tramas (construccion, CRC, parseo, basura y trama incompleta), el
 codec de floats del ecualizador con la deteccion de modelo del dispositivo, y
@@ -312,6 +312,9 @@ sin necesidad de auriculares:
   mismos nombres en los dos lados
 - que los ajustes inválidos se rechacen (el lado del auricular, el nivel de
   ANC, la acción de un gesto) y que el volumen se marque ya recortado
+- que una regla pueda exigir que un modificador **no** esté pulsado (la
+  opción "no_super" del panel, que el motor guarda como forbid): no tenía
+  ninguna prueba y, si se rompía, dejaría de funcionar en silencio
 - que la marca de "cambio hecho por nosotros" caduca, que el restore no pise
   un cambio del usuario y que el apagado automático del anillo reintente
 

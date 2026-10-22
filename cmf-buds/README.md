@@ -131,7 +131,7 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (116 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (120 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
 especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
 separados disparen acciones distintas, que un gesto tras restaurar el volumen
@@ -149,7 +149,9 @@ del gesto no se pierda en silencio** y **que el lector cierre su socket al
 morir** y **que al reconectar se cierre el enlace anterior**,
 **que las tramas RFCOMM se construyan y se parseen bien** y **que el buffer de
 recepción no crezca sin límite**, **que el códec de floats del ecualizador
-haga ida y vuelta** y **que el modelo del dispositivo se detecte bien** y **que los códigos de
+haga ida y vuelta** y **que el modelo del dispositivo se detecte bien**, **que una regla pueda
+exigir que un modificador NO esté pulsado** (la opción "no_super" ✓) y
+**que los códigos de
 tecla se traduzcan al modificador correcto** (si el de SUPER se cambiara, las
 reglas que lo exigen no se dispararían nunca y no habría ningún error) y
 **que el aviso del atajo se lance y no se pierda en silencio si falla** y

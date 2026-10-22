@@ -109,6 +109,17 @@ def _as_list(value):
     return []
 
 
+def _modifier_de_evento(etype, code):
+    """Nombre del modificador de un evento de teclado, o None.
+
+    Aparte para poder comprobarlo: si un codigo se cambiara, las reglas que
+    exigen SUPER dejarian de dispararse nunca y no habria ningun error.
+    """
+    if etype != 1:  # EV_KEY
+        return None
+    return MODIFIER_CODES.get(code)
+
+
 def _list_event_devices():
     try:
         return [
@@ -238,9 +249,7 @@ class ModifierTracker:
                             )
                         except Exception:
                             continue
-                        if etype != 1:  # EV_KEY
-                            continue
-                        name = MODIFIER_CODES.get(code)
+                        name = _modifier_de_evento(etype, code)
                         if not name:
                             continue
                         with self._lock:

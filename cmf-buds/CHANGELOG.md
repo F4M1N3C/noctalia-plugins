@@ -129,10 +129,16 @@ Ademas se anade una prueba para el temporizador que cierra el gesto: si
 falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
 motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
 
-Suite: 44 -> 72 comprobaciones (nuevas: el cierre del gesto protegido, que el
+Suite: 44 -> 83 comprobaciones (nuevas: el cierre del gesto protegido, que el
 lector cierre su socket, que al reconectar se cierre el enlace anterior, el
-protocolo de tramas (construccion, CRC, parseo, basura y trama incompleta) y el
-codec de floats del ecualizador con la deteccion de modelo del dispositivo).
+protocolo de tramas (construccion, CRC, parseo, basura y trama incompleta), el
+codec de floats del ecualizador con la deteccion de modelo del dispositivo, y
+la traduccion de codigos de tecla a modificadores).
+
+La ultima es importante: la tabla de codigos (125 = SUPER) no tenia ninguna
+prueba, y si un codigo se equivocara las reglas que exigen SUPER dejarian de
+dispararse nunca, sin dejar ni un error. Ahora el mapeo es una funcion
+comprobable y la prueba falla si un codigo cambia (comprobado ✓).
 
 Ademas, el buffer de recepcion se acota: si una trama llega con la longitud
 corrupta, el parser se quedaba esperando para siempre y el buffer crecia sin

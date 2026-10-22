@@ -789,6 +789,45 @@ def test_ecodec_y_modelo():
     return r.failures
 
 
+def test_codigos_de_modificadores():
+    print("26) los codigos de tecla se traducen al modificador correcto")
+    import local_actions
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    esperados = {
+        125: "super",   # KEY_LEFTMETA
+        126: "super",   # KEY_RIGHTMETA
+        29: "ctrl",     # KEY_LEFTCTRL
+        97: "ctrl",     # KEY_RIGHTCTRL
+        56: "alt",      # KEY_LEFTALT
+        100: "alt",     # KEY_RIGHTALT
+        42: "shift",    # KEY_LEFTSHIFT
+        54: "shift",    # KEY_RIGHTSHIFT
+    }
+    for codigo, nombre in esperados.items():
+        r.check(
+            "el codigo %d es %s" % (codigo, nombre),
+            local_actions._modifier_de_evento(1, codigo) == nombre,
+            local_actions._modifier_de_evento(1, codigo),
+        )
+    r.check(
+        "una tecla normal no es modificador",
+        local_actions._modifier_de_evento(1, 30) is None,
+    )
+    r.check(
+        "un evento que no es de teclado no es modificador",
+        local_actions._modifier_de_evento(0, 125) is None
+        and local_actions._modifier_de_evento(2, 125) is None,
+    )
+    # Los nombres que usa el motor son los mismos que los de las reglas:
+    # si no, las reglas que exigen SUPER no se dispararian nunca.
+    r.check(
+        "los nombres del motor coinciden con los de las reglas",
+        set(local_actions.MODIFIER_CODES.values()) == {"super", "ctrl", "alt", "shift"},
+    )
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -839,6 +878,7 @@ def main():
         test_reconectar_cierra_el_enlace_anterior,
         test_tramas_rfcmm,
         test_ecodec_y_modelo,
+        test_codigos_de_modificadores,
     ):
         total += test()
     print("")

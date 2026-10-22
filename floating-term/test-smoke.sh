@@ -237,19 +237,24 @@ LOG_READY=1
 # Revisa todas las líneas nuevas del log (la copia), sin excluir ningún
 # patrón: cualquier [WRN] o [ERR] hace fallar la prueba, sea del plugin o no.
 review_log() {
-  local total problems
+  local total plugin_lines problems
   if [ ! -f "$tmp/run.log" ]; then
     echo "   (no hay copia del log; no se puede comprobar)" >&2
     return 1
   fi
   total=$(wc -l <"$tmp/run.log")
+  # El conteo estable es el del plugin (líneas propias + panel + recarga +
+  # hot-reload); el host añade ruido ajeno que varía entre pasadas. La
+  # revisión de [WRN]/[ERR] se hace sobre TODAS las líneas, sin filtrar.
+  plugin_lines=$(grep -c -E "floating-term|panel\.luau'" "$tmp/run.log" 2>/dev/null || true)
+  [ -n "$plugin_lines" ] || plugin_lines=0
   problems=$(grep -E "\[WRN\]|\[ERR\]" "$tmp/run.log" || true)
   if [ -n "$problems" ]; then
-    echo "   $total líneas nuevas; avisos/errores encontrados:" >&2
+    echo "   $total líneas del host ($plugin_lines del plugin); avisos/errores encontrados:" >&2
     printf '%s\n' "$problems" >&2
     return 1
   fi
-  echo "   $total líneas nuevas revisadas; ningún [WRN]/[ERR] ✔"
+  echo "   $total líneas del host revisadas ($plugin_lines del plugin); ningún [WRN]/[ERR] ✔"
   return 0
 }
 

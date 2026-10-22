@@ -171,7 +171,8 @@ waits for zero. Before each IPC it looks up the real active panel in
 `noctalia msg status` (another plugin can steal the focus) and retries the
 event if it is lost. Finally it closes the panel, confirms the close in the
 host state and in the log, and only then reads every new log line written since
-the first step (the closing included), reports how many lines it checked and
+the first step (the closing included), reports how many lines of the host it
+checked (and how many belong to the plugin, which is the stable figure) and
 fails on **any** `[WRN]` or `[ERR]`, whether it names the plugin or not. The
 host rotates `noctalia.log` and buffers the script-runtime lines, so the smoke
 follows the log with `tail -F` into a private copy and forces a flush with a

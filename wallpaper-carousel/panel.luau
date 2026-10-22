@@ -19,6 +19,11 @@
 
 local THUMB_VERSION = "v5"
 local SCROLL_STEP = 56 -- px de superficie por dentado de la rueda
+-- Margen para el umbral del paso. Un dentado mueve el scroll exactamente 56
+-- px, pero el shell lo reparte en varios saltos y al sumarlos uno a uno se
+-- queda unas centesimas por debajo (55,99). Sin este margen el paso se
+-- perdia y la cinta solo avanzaba un fondo de cada dos dentados.
+local SCROLL_EPS = 0.5 -- px
 local SCROLL_TAIL = 300 -- relleno final del contenido del scroll
 local SCROLL_JUMP = 1500 -- px que salta el scroll al recentrarse
 local KEY_REPEAT_DELAY = 380 -- ms antes de empezar a repetir
@@ -1038,8 +1043,23 @@ function onScroll(offset, _maxOffset)
   local delta = newOffset - scrollOffset
   scrollOffset = newOffset
   if math.abs(delta) > 0.5 then
+    -- Un salto mucho mayor que un dentado no lo ha dado el usuario: el shell
+    -- se reposiciona solo (al recalcular el relleno o al revelar el ancla) y
+    -- eso no debe mover la cinta de golpe. Se sincroniza y se sigue.
+    if math.abs(delta) > SCROLL_STEP * 2 then
+      scrollAccum = 0
+      render()
+      return
+    end
+    -- Al cambiar de sentido lo que queda acumulado pertenece al sentido
+    -- contrario, asi que no sirve: si se conserva, el resto y el dentado
+    -- nuevo no llegan a completar un paso y el primer dentado del giro nuevo
+    -- se traga (la cinta se queda quieta un dentado y luegoresponde).
+    if scrollAccum ~= 0 and (delta > 0) ~= (scrollAccum > 0) then
+      scrollAccum = 0
+    end
     scrollAccum = scrollAccum + delta
-    local steps = math.floor(math.abs(scrollAccum) / SCROLL_STEP)
+    local steps = math.floor((math.abs(scrollAccum) + SCROLL_EPS) / SCROLL_STEP)
     if steps > 0 then
       local direction = scrollAccum > 0 and 1 or -1
       scrollAccum = scrollAccum - direction * steps * SCROLL_STEP

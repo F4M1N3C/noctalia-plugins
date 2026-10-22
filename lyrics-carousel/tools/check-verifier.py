@@ -128,6 +128,24 @@ def main(argv):
     finally:
         os.remove(probe)
 
+    print("3b) .luau con Luau que ningun normalizador cubre -> sin error")
+    probe = os.path.join(root, "lyrics-carousel", "tmp_generico.luau")
+    with open(probe, "w", encoding="utf-8") as handle:
+        handle.write("local x: Array<number> = {}\nprint(x)\n")
+    try:
+        rc, fallos = run(root)
+        resultados.append(
+            escenario(
+                "Luau con genericos: sin falso positivo",
+                rc,
+                fallos,
+                1,
+                no_esperado="fallo de luac",
+            )
+        )
+    finally:
+        os.remove(probe)
+
     print("4) autotest que falla sin nombrar al plugin -> rc 1 y attributed a mi")
     with open(DEPLOYED, encoding="utf-8") as handle:
         original = handle.read()

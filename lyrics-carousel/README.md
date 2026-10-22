@@ -123,10 +123,12 @@ The verifier itself has a regression battery, which simulates failures
 validator that crashes, a missing compiler, a missing log, no shared
 validators) and checks that each one is reported and blocks the pass:
 
-A `.luau` that only uses Luau syntax is not an error: it is normalised
-with the shared `noctalia_api` module and compiled again. If it still does
-not compile, it is reported as a warning (not a failure) because it may be
-Luau syntax the normaliser does not cover yet.
+A `.luau` that only uses Luau syntax is not an error: type annotations are
+stripped first (the shared normaliser mangles them) and the rest is
+normalised with the shared `noctalia_api` module and compiled again. If it
+still does not compile, but the file has type annotations, it is reported
+as a warning (not a failure): it may be Luau syntax the normaliser does
+not cover yet.
 
 For this plugin that ambiguity does not exist: the self-test checks that
 every `.luau` compiles as it is, so a syntax error is always unambiguous

@@ -211,7 +211,6 @@ def classify(text: str):
 
 
 OWNER = "lyrics-carousel"
-OWNER_ID = "faminec/lyrics-carousel"
 
 # Cada fallo lleva su origen: de que plugin es, o que la propia verificacion
 # no ha podido comprobar algo (eso tambien bloquea: si no se puede verificar,
@@ -323,6 +322,25 @@ def load_api(root: str):
         return None
 
 
+# Anotaciones de tipo: el normalizador compartido las quita mal (convierte
+# "local x: number = 1" en "local x 1", que no compila). Aqui solo se
+# quita el tipo y se conserva el resto de la linea.
+TIPO_ANOTACION = re.compile(r"(\w+)\s*:\s*[A-Za-z_][\w.]*(\s*[,)=])")
+# Cualquier anotacion de tipo, incluidas las genericas ("x: Array<number>").
+# Se usa para no confundir la sintaxis de Luau con un error de verdad: un
+# fichero con anotaciones puede ser Luau que los normalizadores no cubren.
+ANOTACION = re.compile(
+    r"\b[A-Za-z_]\w*\s*:\s*[A-Za-z_][\w.]*(?:<[^>]*>)?(?!\s*\()"
+)
+
+
+def normalize_tipos(source: str) -> str:
+    out = []
+    for line in source.split("\n"):
+        out.append(TIPO_ANOTACION.sub(r"\1\2", line))
+    return "\n".join(out)
+
+
 def syntax_state(api, path: str, compiler: str = "luac"):
     """Estado de la sintaxis de un .luau.
 
@@ -345,16 +363,27 @@ def syntax_state(api, path: str, compiler: str = "luac"):
     if result is not None and result.returncode == 0:
         return "ok", ""
     solo_luau = False
+    try:
+        with open(path, encoding="utf-8") as handle:
+            if ANOTACION.search(handle.read()):
+                solo_luau = True
+    except OSError:
+        pass
     if api is not None:
         try:
             with open(path, encoding="utf-8") as handle:
                 source = handle.read()
-            normalizado = api.normalize(source)
-            solo_luau = normalizado != source
+            # Primero el nuestro (las anotaciones de tipo: el compartido
+            # las rompe) y despues el compartido (el resto de Luau).
+            normalizado = normalize_tipos(source)
+            normalizado = api.normalize(normalizado)
+            solo_luau = solo_luau or normalizado != source
             if api.compile_ok(normalizado):
                 return "luau", ""
         except Exception:  # noqa: BLE001
-            pass
+            # Si la normalizacion falla no se puede asegurar que sea un
+            # error de verdad: se trata como dudoso, no como error claro.
+            solo_luau = True
     motivo = ""
     if result is not None:
         lineas = [

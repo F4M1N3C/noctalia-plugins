@@ -644,6 +644,13 @@ local ok2, err2 = pcall(function()
   return true
 end)
 
+-- Fallo forzado a proposito: lo usa tools/test-codigos.sh para comprobar
+-- que este test sale con codigo de error cuando algo falla (si no, un test
+-- puede imprimir "1 fallos" y salir con codigo 0 y nadie se entera).
+if os.getenv("FORCE_TEST_FAILURE") == "1" then
+  check("fallo forzado (comprobacion del codigo de salida)", 1, 2)
+end
+
 print("")
 -- La carpeta de esta ejecucion se borra siempre (si se quiere verla para
 -- depurar, con KEEP_TEST_DIR=1 se deja).

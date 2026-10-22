@@ -129,7 +129,7 @@ Ademas se anade una prueba para el temporizador que cierra el gesto: si
 falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
 motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
 
-Suite: 44 -> 62 comprobaciones (nuevas: el cierre del gesto protegido, que el
+Suite: 44 -> 61 comprobaciones (nuevas: el cierre del gesto protegido, que el
 lector cierre su socket, que al reconectar se cierre el enlace anterior, y
 el protocolo de tramas: construccion, CRC, parseo, basura y trama incompleta).
 

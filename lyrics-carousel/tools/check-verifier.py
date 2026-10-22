@@ -175,6 +175,17 @@ def main(argv):
                 no_esperado="fallo de luac",
             )
         )
+        # Y ademas tiene que avisar: si no, el fichero se pasaria por alto.
+        resultados.append(
+            escenario(
+                "Luau con genericos: se avisa",
+                rc,
+                fallos,
+                1,
+                salida=salida,
+                esperado="aviso de luac",
+            )
+        )
     finally:
         shutil.rmtree(raiz, ignore_errors=True)
 
@@ -286,6 +297,42 @@ def main(argv):
         )
     finally:
         shutil.rmtree(state, ignore_errors=True)
+
+    print("11b) una escritura que no ocurre -> se detecta")
+    spec = importlib.util.spec_from_file_location("verificador_escritura", VERIFIER)
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    destino = os.path.join(tempfile.gettempdir(), "verificador-escritura.json")
+    if os.path.isfile(destino):
+        os.remove(destino)
+    # Sin fichero: no se ha escrito nada.
+    resultados.append(
+        escenario(
+            "escritura que no ocurre: se detecta",
+            0 if not modulo.escritura_realizada(destino, ["marker"]) else 1,
+            [],
+            0,
+        )
+    )
+    with open(destino, "w", encoding="utf-8") as handle:
+        handle.write('{"marker": true}')
+    resultados.append(
+        escenario(
+            "escritura realizada: se reconoce",
+            0 if modulo.escritura_realizada(destino, ["marker"]) else 1,
+            [],
+            0,
+        )
+    )
+    resultados.append(
+        escenario(
+            "escritura de otra clave: no se reconoce",
+            0 if not modulo.escritura_realizada(destino, ["karaoke"]) else 1,
+            [],
+            0,
+        )
+    )
+    os.remove(destino)
 
     print("12) despliegue sin autotest -> se avisa (copia desactualizada)")
     deploy, destino = copia_despliegue()

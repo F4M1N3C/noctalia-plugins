@@ -148,7 +148,9 @@ escapes, it says so and exits with an error.
 The runtime part is checked too: the panel is opened and closed, the
 widget is asked to open it, and a setting is written through the widget.
 Every step is checked: the answer must be `dispatched 1`, otherwise the
-event was lost and the step did not happen. The write goes through the
+event was lost and the step did not happen — and even a delivered event
+is not enough, so the overrides file is checked too: if the helper fails,
+the event is delivered and nothing is written. The write goes through the
 widget because it is always instantiated, while the panel entry only
 exists while the panel is open and takes a few seconds to be ready (sending
 the event too early loses it without a trace).

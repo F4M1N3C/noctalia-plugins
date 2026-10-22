@@ -58,6 +58,27 @@ def log_size() -> int:
         return 0
 
 
+def escritura_realizada(path: str, claves) -> bool:
+    """True si el fichero de overrides contiene las claves escritas.
+
+    Que el evento llegue al widget no garantiza que se escriba nada: si
+    el helper falla, el IPC se entrega igual y no se escribe. Esto es lo
+    que lo comprueba.
+    """
+    if not os.path.isfile(path):
+        return False
+    try:
+        import json
+
+        with open(path, encoding="utf-8") as handle:
+            datos = json.load(handle)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(datos, dict):
+        return False
+    return all(clave in datos for clave in claves)
+
+
 def log_rotated(offset: int) -> bool:
     """True si el log se ha rotado o trunco desde que se empezo.
 
@@ -239,6 +260,15 @@ def exercise(plugin: str):
                     "el widget de %s no atendio el IPC 'set' (%s)"
                     % (plugin, salida or "sin salida")
                 )
+            else:
+                # Que el evento llegue no garantiza que se escriba: se
+                # comprueba el fichero de overrides.
+                time.sleep(1.2)
+                if not escritura_realizada(pendientes, [keys[0]]):
+                    problems.append(
+                        "el widget de %s atendio el IPC pero no se escribio %s"
+                        % (plugin, keys[0])
+                    )
             time.sleep(1.2)
 
     # 2) ciclo del panel: al cerrarlo se vuelcan los overrides.

@@ -56,6 +56,14 @@ def run(root, env=None, ui=False, deploy=None, state=None):
         datos = json.loads(result.stdout)
     except ValueError:
         datos = {}
+    if "codigo" not in datos:
+        # Sin JSON no se puede comprobar nada: la escena pasaria en
+        # vacio. Se avisa para que no se de por buena.
+        print(
+            "  FALLO el verificador no devolvio JSON (rc=%d): %s"
+            % (result.returncode, result.stdout[-200:].replace("\n", " "))
+        )
+        CODIGO_INCOHERENTE.append(True)
     # El codigo de salida y el del JSON tienen que coincidir: si no, el
     # resultado estructurado miente.
     declarado = datos.get("codigo")
@@ -91,6 +99,16 @@ def autotest(datos, donde):
 
 def hay_etiqueta(lista, etiqueta):
     return any(f.get("etiqueta") == etiqueta for f in lista)
+
+
+def autotests_pasan(datos, cuantos=2):
+    """True si se ejecutaron todos los autotests y todos pasaron.
+
+    No vale con que la lista este vacia (eso haria que 'todos pasan'
+    fuese cierto sin comprobar nada).
+    """
+    autotests = datos.get("autotests", [])
+    return len(autotests) >= cuantos and all(a.get("ok") for a in autotests)
 
 
 HERRAMIENTAS = (
@@ -332,9 +350,13 @@ def main(argv):
         resultados.append(
             escenario(
                 "sin noctalia: el resto sigue bien",
-                all(a.get("ok") for a in datos.get("autotests", [])),
-                "autotests=%s"
-                % [(a["donde"], a["ok"]) for a in datos.get("autotests", [])],
+                autotests_pasan(datos)
+                and not hay_etiqueta(fallos_infra(datos), "check-luau-globals.py"),
+                "autotests=%s infra=%s"
+                % (
+                    [(a["donde"], a["ok"]) for a in datos.get("autotests", [])],
+                    [f["etiqueta"] for f in fallos_infra(datos)],
+                ),
             )
         )
     finally:

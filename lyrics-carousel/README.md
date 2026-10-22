@@ -131,7 +131,9 @@ state, so it never touches the real installation.
 
 The battery reads the verifier's result in JSON (`--json`), so it checks
 the behaviour (which failures, of which plugin, blocking or not) and not
-the wording of the messages. It also checks that the exit code and the
+the wording of the messages. Each scenario isolates its cause: a PATH with the usual tools minus the one
+it wants to be missing, so a scenario about a missing compiler does not
+also break the validators. It also checks that the exit code and the
 code reported in the JSON always agree:
 
 A `.luau` that only uses Luau syntax is not an error: type annotations are

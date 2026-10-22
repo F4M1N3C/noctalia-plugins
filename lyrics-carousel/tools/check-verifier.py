@@ -93,6 +93,41 @@ def hay_etiqueta(lista, etiqueta):
     return any(f.get("etiqueta") == etiqueta for f in lista)
 
 
+HERRAMIENTAS = (
+    "python3",
+    "kitty",
+    "fc-match",
+    "playerctl",
+    "hyprctl",
+    "luac5.4",
+    "luac",
+    "luac5.3",
+    "luac5.1",
+    "luajit",
+    "noctalia",
+)
+
+
+def bin_sin(*excluidas):
+    """Un PATH con las herramientas de siempre, menos las indicadas.
+
+    Asi cada escena aísla su causa: si se quita el PATH entero, fallan
+    tambien los validadores y los autotests, y la escena deja de probar
+    lo que dice probar.
+    """
+    carpeta = tempfile.mkdtemp(prefix="verifier-bin-")
+    for name in HERRAMIENTAS:
+        if name in excluidas:
+            continue
+        ruta = shutil.which(name)
+        if ruta:
+            try:
+                os.symlink(ruta, os.path.join(carpeta, name))
+            except OSError:
+                pass
+    return carpeta
+
+
 def copia_repo(root, con_tools=True):
     """Copia del repositorio: los ficheros de prueba no tocan el original."""
     raiz = tempfile.mkdtemp(prefix="verifier-repo-")
@@ -251,8 +286,8 @@ def main(argv):
 
     print("6) sin compilador -> rc 1 (infraestructura)")
     raiz = copia_repo(root)
-    os.makedirs(EMPTY_BIN, exist_ok=True)
-    env = {**os.environ, "PATH": EMPTY_BIN}
+    carpeta = bin_sin("luac5.4", "luac", "luac5.3", "luac5.1", "luajit")
+    env = {**os.environ, "PATH": carpeta}
     try:
         rc, datos = run(raiz, env=env)
         resultados.append(
@@ -262,12 +297,25 @@ def main(argv):
                 "infra=%s" % [f["etiqueta"] for f in fallos_infra(datos)],
             )
         )
+        # Los validadores tienen que seguir funcionando: si no, la escena
+        # no aísla la causa. Los autotests si fallan (comprueban la
+        # sintaxis, y sin compilador no pueden).
+        resultados.append(
+            escenario(
+                "sin compilador: los validadores siguen bien",
+                not hay_etiqueta(fallos_infra(datos), "check-luau-globals.py")
+                and not hay_etiqueta(fallos_infra(datos), "check-ui-resources.py"),
+                "infra=%s" % [f["etiqueta"] for f in fallos_infra(datos)],
+            )
+        )
     finally:
         shutil.rmtree(raiz, ignore_errors=True)
+        shutil.rmtree(carpeta, ignore_errors=True)
 
     print("7) sin noctalia no se ejercita nada -> rc 1 (infraestructura)")
     raiz = copia_repo(root)
-    env = {**os.environ, "PATH": EMPTY_BIN}
+    carpeta = bin_sin("noctalia")
+    env = {**os.environ, "PATH": carpeta}
     try:
         rc, datos = run(raiz, env=env, ui=True)
         resultados.append(
@@ -278,10 +326,20 @@ def main(argv):
                     f.get("etiqueta") == "ejercicio de los plugins"
                     for f in fallos_infra(datos)
                 ),
+                "infra=%s" % [f["etiqueta"] for f in fallos_infra(datos)],
+            )
+        )
+        resultados.append(
+            escenario(
+                "sin noctalia: el resto sigue bien",
+                all(a.get("ok") for a in datos.get("autotests", [])),
+                "autotests=%s"
+                % [(a["donde"], a["ok"]) for a in datos.get("autotests", [])],
             )
         )
     finally:
         shutil.rmtree(raiz, ignore_errors=True)
+        shutil.rmtree(carpeta, ignore_errors=True)
 
     print("8) log de Noctalia inexistente -> rc 1 (infraestructura)")
     spec = importlib.util.spec_from_file_location("verificador", VERIFIER)

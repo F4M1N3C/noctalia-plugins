@@ -110,6 +110,20 @@ que el compositor lo abra.
 
 Suite: 37 → 44 comprobaciones.
 
+### Comprobaciones finales — el lector no puede repetir el error
+
+Un error inesperado en el lector RFCOMM se registraba y **se seguia leyendo**:
+si el fallo era persistente (un bug al interpretar los datos), se repetia con
+cada trozo recibido y llenaba el log. Ahora el error deja el enlace en un
+estado desconocido, asi que **se cierra el enlace** y es el monitor quien lo
+vuelve a abrir (con una sola linea en el log).
+
+Ademas se anade una prueba para el temporizador que cierra el gesto: si
+falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
+motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
+
+Suite: 44 -> 45 comprobaciones.
+
 ### Comprobaciones finales — ciclo de vida del demonio
 
 Comprobado en caliente:

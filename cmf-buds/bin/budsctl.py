@@ -447,10 +447,12 @@ class BudsLink:
             except OSError:
                 break
             except Exception:
-                # El demonio se quedaria sin leer del dispositivo sin avisar:
-                # se registra y se sigue leyendo.
+                # Un error inesperado deja el enlace en un estado desconocido:
+                # se registra y se cierra el enlace, que el monitor volvera a
+                # abrir. Si se siguiera leyendo, el error se repetiria con
+                # cada trozo recibido y llenaria el log.
                 self.log("Error inesperado en el lector: " + traceback.format_exc())
-                time.sleep(0.2)
+                break
         self.connected = False
         self.log("RFCOMM desconectado")
         with self.pending_lock:

@@ -614,6 +614,41 @@ def test_no_se_pisan_las_reglas_del_fichero():
     return r.failures
 
 
+def test_gesto_no_se_pierde():
+    print("21) si el cierre del gesto falla, queda en el log")
+    # Con una regla de 3 pulsaciones, un solo pinchazo NO dispara nada: la
+    # accion se decide al cerrar el gesto (el temporizador que lo dispara).
+    r = Runner([
+        rule("any", "volume_up", 0, "super", "CUALQUIERA"),
+        rule("tres", "volume_up", 3, "super", "TRES"),
+    ])
+    logs = []
+    r.engine.log = logs.append
+
+    def falla():
+        raise RuntimeError("fallo simulado")
+
+    # Se rompe a proposito el cierre del gesto: si no esta protegido, el
+    # hilo del temporizador muere y el gesto se pierde sin que nadie se entere.
+    r.engine._fire_gesture = falla
+    r.evento(60, ["super"])
+    esperar(lambda: any("No se pudo cerrar el gesto" in m for m in logs), timeout=5.0)
+    r.check(
+        "queda anotado en el log",
+        any("No se pudo cerrar el gesto" in m for m in logs),
+        logs,
+    )
+    r.check("el gesto no se ejecuto", r.engine.fired == [], r.engine.fired)
+    # Y el motor sigue funcionando: se restituye el cierre y otro gesto va bien.
+    r.engine._fire_gesture = LocalActionEngine._fire_gesture.__get__(r.engine)
+    r.engine.fired.clear()
+    r.evento(70, ["super"])
+    esperar(lambda: r.engine.fired == [], timeout=0.5)
+    time.sleep(1.2)
+    r.check("el motor sigue vivo", r.engine.fired == ["CUALQUIERA"], r.engine.fired)
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -659,6 +694,7 @@ def main():
         test_watcher_resolutor_falla,
         test_restore_falla_visible,
         test_no_se_pisan_las_reglas_del_fichero,
+        test_gesto_no_se_pierde,
     ):
         total += test()
     print("")

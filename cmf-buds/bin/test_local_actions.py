@@ -309,8 +309,12 @@ def test_watcher_sin_suscripcion():
     logs = []
     original = local_actions.subprocess.Popen
 
-    def boom(*args, **kwargs):
-        raise OSError("pactl no disponible")
+    def boom(cmd, *args, **kwargs):
+        # Solo se intercepta la suscripcion: 'subprocess.run' (pactl list)
+        # tambien usa Popen por dentro y debe seguir funcionando.
+        if cmd[:2] == ["pactl", "subscribe"]:
+            raise OSError("pactl no disponible")
+        return original(cmd, *args, **kwargs)
 
     local_actions.subprocess.Popen = boom
     try:
@@ -326,6 +330,124 @@ def test_watcher_sin_suscripcion():
         "avisa del fallo en el log",
         any("suscripcion" in m for m in logs),
         logs,
+    )
+    return r.failures
+
+
+class FakeStop:
+    """Sustituto del evento de parada: anota las esperas sin dormir."""
+
+    def __init__(self, stop_after=None):
+        self.waits = []
+        self._stopped = False
+        self._stop_after = stop_after
+
+    def is_set(self):
+        return self._stopped
+
+    def wait(self, timeout=None):
+        self.waits.append(timeout)
+        if self._stop_after is not None and len(self.waits) >= self._stop_after:
+            self._stopped = True
+        return self._stopped
+
+    def set(self):
+        self._stopped = True
+
+
+class FakeProc:
+    """Proceso 'pactl subscribe' simulado."""
+
+    def __init__(self, lines=(), delay=0.0):
+        self.stdout = self._lines(lines, delay)
+        self.killed = False
+
+    def _lines(self, lines, delay):
+        for line in lines:
+            yield line
+        if delay:
+            time.sleep(delay)
+
+    def kill(self):
+        self.killed = True
+
+    def terminate(self):
+        self.killed = True
+
+
+def test_espera_creciente():
+    print("15) entre reintentos se espera cada vez mas")
+    import local_actions
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    logs = []
+    original = local_actions.subprocess.Popen
+
+    def boom(cmd, *args, **kwargs):
+        if cmd[:2] == ["pactl", "subscribe"]:
+            raise OSError("pactl no disponible")
+        return original(cmd, *args, **kwargs)
+
+    local_actions.subprocess.Popen = boom
+    try:
+        watcher = VolumeWatcher(lambda: "sink-falso", lambda sink: None, logs.append)
+        watcher._stop = FakeStop(stop_after=4)
+        watcher.start()
+        time.sleep(0.6)
+        waits = list(watcher._stop.waits)
+        watcher.stop()
+    finally:
+        local_actions.subprocess.Popen = original
+    r.check("las esperas crecen: 1, 2, 3, 4", waits == [1.0, 2.0, 3.0, 4.0], waits)
+    r.check(
+        "el log lleva la cuenta de fallos",
+        any("(fallo 4)" in m for m in logs),
+        logs,
+    )
+    return r.failures
+
+
+def test_contador_se_reinicia():
+    print("16) el contador de fallos se reinicia cuando la suscripcion funciona")
+    import local_actions
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    logs = []
+    llamadas = {"n": 0}
+    original = local_actions.subprocess.Popen
+    original_healthy = local_actions.HEALTHY_SECONDS
+    local_actions.HEALTHY_SECONDS = 0.05
+
+    def fake_popen(cmd, *args, **kwargs):
+        if cmd[:2] != ["pactl", "subscribe"]:
+            return original(cmd, *args, **kwargs)
+        llamadas["n"] += 1
+        if llamadas["n"] == 1:
+            # Una suscripcion que aguanta lo suficiente: cuenta como sana.
+            return FakeProc(["Event 'change' on sink #42\n"], delay=0.15)
+        raise OSError("pactl no disponible")
+
+    local_actions.subprocess.Popen = fake_popen
+    try:
+        watcher = VolumeWatcher(lambda: "sink-falso", lambda sink: None, logs.append)
+        watcher._stop = FakeStop(stop_after=3)
+        watcher.start()
+        time.sleep(0.8)
+        waits = list(watcher._stop.waits)
+        watcher.stop()
+    finally:
+        local_actions.subprocess.Popen = original
+        local_actions.HEALTHY_SECONDS = original_healthy
+    r.check("la primera espera es de 1 s", waits[:1] == [1.0], waits)
+    r.check(
+        "tras funcionar, el fallo siguiente vuelve a ser el nº1",
+        any("(fallo 1)" in m for m in logs),
+        logs,
+    )
+    r.check(
+        "y el siguiente ya espera mas (2 s)",
+        waits[-1:] == [2.0],
+        waits,
     )
     return r.failures
 
@@ -368,6 +490,8 @@ def main():
         test_regla_malformada,
         test_watcher_sobrevive,
         test_watcher_sin_suscripcion,
+        test_espera_creciente,
+        test_contador_se_reinicia,
         test_recarga,
     ):
         total += test()

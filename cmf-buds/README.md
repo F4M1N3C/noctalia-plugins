@@ -131,15 +131,17 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (26 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (31 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
 especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
 separados disparen acciones distintas, que un gesto tras restaurar el volumen
 no se pierda, que los pinchazos muy juntos (50 ms) se cuenten como varios,
 que nuestro propio cambio se reconozca por el valor, que una regla malformada
 se ignore sin tapar a las demás, que el watcher registre un error puntual sin
-morir, que avise cuando no puede suscribirse a los cambios de volumen y que
-las reglas editadas fuera del panel se recargan.
+morir, que avise cuando no puede suscribirse a los cambios de volumen, **que
+la espera entre reintentos crezca (1, 2, 3, 4 s)**, **que el contador de
+fallos se reinicie cuando la suscripción vuelve a funcionar** y que las reglas
+editadas fuera del panel se recargan.
 
 ## Cómo funciona
 
@@ -177,6 +179,9 @@ Datos persistentes:
 - [maniacx/BudsLink](https://github.com/maniacx/BudsLink) — implementación de
   referencia de los comandos RFCOMM de los Nothing Ear/CMF.
 
+El registro verificado de los cambios (con las correcciones de descripciones
+anteriores que resultaron inexactas) está en [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Detalles de comportamiento
 
 - **Un giro = una acción.** Varias muescas seguidas se agrupan en un solo
@@ -206,11 +211,13 @@ Datos persistentes:
   inválida —editada a mano— se **ignora entera**, con aviso en el log, de modo
   que ni tapa a las reglas bien escritas ni aborta la evaluación de las demás.
 - **El watcher no puede morir en silencio.** Un error al procesar un cambio se
-  registra y el hilo sigue; un error en la suscripción se registra y se
-  reintenta con una espera creciente (1 s, 2 s, … hasta 10 s) en vez de
-  reiniciarse en bucle; y si no se puede abrir la suscripción se avisa. Antes
-  de esto, un fallo repetido reiniciaba la suscripción cada segundo y los
-  atajos no funcionaban nunca, sin una sola línea en el log.
+  registra y el hilo sigue; un error en la suscripción, o una suscripción que
+  se cierra antes de tiempo, se registran y se reintentan con una **espera
+  creciente de 1 s, 2 s, 3 s… hasta 10 s**; y si no se puede abrir la
+  suscripción también se avisa. El contador de fallos solo se reinicia cuando
+  la suscripción aguanta 5 s sin errores. Antes de esto, un fallo repetido
+  reiniciaba la suscripción cada segundo y los atajos no funcionaban nunca,
+  sin una sola línea en el log.
 - **El eco del auricular se ignora.** Al restaurar el volumen, los auriculares
   devuelven el suyo y generan otro evento; el motor ignora los eventos hasta
   que el volumen se estabiliza (1,2 s) y luego vuelve a armarse solo.

@@ -74,6 +74,10 @@ INPUT_EVENT_FORMAT = "llHHi"
 # Linea de 'pactl subscribe' que avisa de un cambio en un sink.
 SINK_EVENT_PATTERN = re.compile(r"Event 'change' on sink #(\d+)")
 
+# Tiempo que una suscripcion debe aguantar sin errores para darse por buena.
+# Si se cierra antes, es un fallo mas (si no, se reiniciaria en bucle).
+HEALTHY_SECONDS = 5.0
+
 
 def _run(cmd, timeout=6):
     try:
@@ -276,6 +280,24 @@ class VolumeWatcher:
             except Exception:
                 pass
 
+    def _retry_delay(self):
+        """Espera antes del siguiente intento.
+
+        Se calcula con el numero de fallos *anteriores*: el primer fallo
+        espera 1 s, el segundo 2 s, el tercero 3 s... hasta un tope de 10 s.
+        """
+        return min(1.0 + self._failures, 10.0)
+
+    def _fail(self, message):
+        """Anota un fallo y devuelve cuanto hay que esperar antes de reintentar."""
+        delay = self._retry_delay()
+        self._failures += 1
+        self.log(
+            "%s (fallo %d): reintento en %.0f s"
+            % (message, self._failures, delay)
+        )
+        return delay
+
     def _sink_id(self, sink):
         res = _run(["pactl", "list", "sinks", "short"], 6)
         if not res:
@@ -325,10 +347,6 @@ class VolumeWatcher:
             sink_id = self._sink_id(sink)
             if self._reported_no_sink is not None:
                 self._reported_no_sink = None
-            if self._failures:
-                self.log("Watcher: la suscripcion vuelve a funcionar")
-                self._failures = 0
-            self.log("Watcher: vigilando %s (id %s)" % (sink, sink_id))
             try:
                 self._proc = subprocess.Popen(
                     ["pactl", "subscribe"],
@@ -339,14 +357,14 @@ class VolumeWatcher:
                 )
             except Exception as exc:
                 # Sin suscripcion no hay atajos: se avisa y se reintenta con
-                # la misma espera creciente que en el resto de fallos.
-                self._failures += 1
-                self.log(
-                    "Watcher: no se pudo abrir la suscripcion (%d): %s"
-                    % (self._failures, exc)
+                # la espera creciente (1 s, 2 s, 3 s... hasta 10 s).
+                delay = self._fail(
+                    "Watcher: no se pudo abrir la suscripcion: %s" % exc
                 )
-                self._stop.wait(min(1.0 + self._failures, 10.0))
+                self._stop.wait(delay)
                 continue
+            self.log("Watcher: vigilando %s (id %s)" % (sink, sink_id))
+            started = time.monotonic()
             try:
                 for line in self._proc.stdout:
                     if self._stop.is_set():
@@ -356,13 +374,26 @@ class VolumeWatcher:
                 # Un error aqui aborta la suscripcion. Antes se tragaba en
                 # silencio y el bucle se reiniciaba una y otra vez: con un
                 # fallo persistente los atajos no funcionaban nunca y no
-                # habia ni una linea en el log. Ahora se avisa y se reintenta
-                # con una pausa mayor cada vez, para no dar vueltas.
-                self._failures += 1
-                self.log(
-                    "Watcher: error en la suscripcion (%d): %s"
-                    % (self._failures, exc)
+                # habia ni una linea en el log.
+                delay = self._fail(
+                    "Watcher: error en la suscripcion: %s" % exc
                 )
+            else:
+                if self._stop.is_set():
+                    delay = 0.0
+                elif (time.monotonic() - started) < HEALTHY_SECONDS:
+                    # 'pactl subscribe' se cerraria solo: es un fallo mas, no
+                    # un reinicio normal (si no, se repetiria en bucle).
+                    delay = self._fail(
+                        "Watcher: la suscripcion se cerro antes de tiempo"
+                    )
+                else:
+                    # Solo se da por buena si ha aguantado sin errores: aqui
+                    # se reinicia el contador de fallos.
+                    delay = self._retry_delay()
+                    if self._failures:
+                        self.log("Watcher: la suscripcion vuelve a funcionar")
+                    self._failures = 0
             finally:
                 try:
                     if self._proc:
@@ -371,8 +402,7 @@ class VolumeWatcher:
                     pass
                 self._proc = None
             if not self._stop.is_set():
-                # Espera creciente: si el fallo se repite, no se martillea.
-                self._stop.wait(min(1.0 + self._failures, 10.0))
+                self._stop.wait(delay)
 
 
 class LocalActionEngine:

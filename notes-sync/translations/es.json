@@ -4,6 +4,7 @@
     "cannot_read": "No se pudo leer la nota",
     "empty": "El mensaje está vacío",
     "no_note_open": "No hay ninguna nota abierta en el panel",
+    "note_gone": "La nota ya no existe",
     "push_failed": "No se pudo enviar el mensaje al celular"
   },
   "label_last_seen": "Última conexión",

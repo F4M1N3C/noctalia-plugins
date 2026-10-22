@@ -170,8 +170,17 @@ local function jsonRequest(path, method, payload, cb, kind)
       cb(nil, "sin respuesta del servidor")
       return
     end
+    -- `res.ok` significa que la peticion se completo, NO que saliera bien:
+    -- un 404 o un 500 tambien llegan con `ok = true`. Lo que dice si fue un
+    -- fallo es el codigo de estado (comprobado con una sonda contra el
+    -- servidor: un 404 devuelve ok=true, status=404).
     if not res.ok then
-      cb(nil, "HTTP " .. tostring(res.status))
+      cb(nil, "sin respuesta del servidor")
+      return
+    end
+    local status = tonumber(res.status) or 0
+    if status >= 400 then
+      cb(nil, "HTTP " .. tostring(status))
       return
     end
     if res.body == nil or res.body == "" then
@@ -181,6 +190,12 @@ local function jsonRequest(path, method, payload, cb, kind)
     local ok, decoded = pcall(noctalia.json.decode, res.body)
     if not ok or type(decoded) ~= "table" then
       cb(nil, "respuesta ilegible")
+      return
+    end
+    -- El servidor responde los fallos con {"error": "..."}: si aparece esa
+    -- clave, es un fallo aunque el codigo no lo delatara.
+    if decoded.error ~= nil then
+      cb(nil, tostring(decoded.error))
       return
     end
     cb(decoded, nil)
@@ -393,6 +408,34 @@ local function openNotesPanel(noteName)
   noctalia.runAsync("noctalia msg panel-open " .. shellQuote(notesPanelId()))
 end
 
+-- Codifica un texto para ponerlo en una URL (los nombres de nota pueden
+-- llevar espacios, acentos o comillas).
+local function urlEncode(text)
+  local s = tostring(text)
+  s = s:gsub("([^%w%-%.%_%~])", function(c)
+    return string.format("%%%02X", string.byte(c))
+  end)
+  return s
+end
+
+-- ¿Sigue existiendo la nota? Se pregunta al servidor (que es quien ve el
+-- disco). El segundo valor es el error cuando no se pudo saber.
+local function noteExists(name, cb)
+  jsonRequest("/api/note/" .. urlEncode(name), "GET", nil, function(data, err)
+    if data ~= nil then
+      cb(true, nil)
+      return
+    end
+    -- "HTTP 404" es que no existe; cualquier otra cosa es que no se pudo
+    -- preguntar (y no es lo mismo).
+    if err ~= nil and err:match("^HTTP ") then
+      cb(false, nil)
+      return
+    end
+    cb(false, err or tr("errors.cannot_read"))
+  end, "action")
+end
+
 -- Encola un mensaje para el celular.
 local function pushToPhone(text, title, cb)
   if type(text) ~= "string" or text == "" then
@@ -424,7 +467,21 @@ local function sendCurrentNote()
     notifyErr(tr("errors.cannot_read"))
     return
   end
-  pushToPhone(current.content, current.name)
+  -- Antes de mandarla se comprueba que la nota sigue existiendo: si se
+  -- borro desde el movil mientras el panel de notas estaba cerrado, el canal
+  -- sigue publicando su nombre (el panel no vigila si esta cerrado) y se
+  -- mandaria una nota que ya no esta.
+  noteExists(current.name, function(exists, err)
+    if err ~= nil then
+      notifyErr(err)
+      return
+    end
+    if not exists then
+      notifyErr(tr("errors.note_gone"))
+      return
+    end
+    pushToPhone(current.content, current.name)
+  end)
 end
 
 -- ------------------------------------------------------------------- IPC

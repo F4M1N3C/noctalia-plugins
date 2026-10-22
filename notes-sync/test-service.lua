@@ -323,18 +323,37 @@ end
 -- ------------------------------------------------------------- utilidades
 
 -- Contesta una de las peticiones pendientes.
+--
+-- El cliente real de Noctalia pone `ok = true` siempre que la peticion se
+-- completo: un 404 o un 500 tambien llegan con ok=true (comprobado con una
+-- sonda contra el servidor). Lo que dice si fue un fallo es el codigo de
+-- estado, no `ok`. El mock copia ese comportamiento, porque un mock que
+-- "adivina" esconde justo los fallos que importan.
+local function normaliza(res)
+  if res == nil then
+    return nil
+  end
+  -- Una respuesta sin codigo y con ok=false es una peticion que no se
+  -- completo (el servidor caido); el resto son respuestas completas.
+  if res.status == nil and res.ok == false then
+    return res
+  end
+  res.ok = true
+  return res
+end
+
 local function responde(indice, res)
   local h = table.remove(pendingHttp, indice)
   if h == nil then
     error("no hay esa peticion pendiente")
   end
-  h.cb(res)
+  h.cb(normaliza(res))
 end
 
 local function respondeTodas(res)
   while #pendingHttp > 0 do
     local h = table.remove(pendingHttp)
-    h.cb(res)
+    h.cb(normaliza(res))
   end
 end
 
@@ -471,11 +490,31 @@ print("-- enviar al celular --")
 escribir(NOTES_DIR .. "/current.json", '{"name":"mi nota.md","content":"contenido de la nota","open":true}')
 limpiaEstado()
 onIpc("cmd", '{"op":"send-current"}')
-check("manda un POST a /api/push", "POST", ultimaPeticion() and ultimaPeticion().method or "ninguna")
+check("primero comprueba que la nota sigue existiendo", true, ultimaPeticion() and ultimaPeticion().url:find("/api/note/", 1, true) ~= nil)
+check("con el nombre codificado en la URL", true, ultimaPeticion().url:find("mi%20nota.md", 1, true) ~= nil)
+respondeTodas({ ok = true, status = 200, body = '{"name":"mi nota.md"}' })
+check("y luego manda el POST a /api/push", "POST", ultimaPeticion() and ultimaPeticion().method or "ninguna")
 check("con el texto de la nota", true, (ultimaPeticion().body or ""):find("contenido de la nota", 1, true) ~= nil)
 check("y el nombre como titulo", true, (ultimaPeticion().body or ""):find("mi nota.md", 1, true) ~= nil)
 respondeTodas({ ok = true, status = 201, body = '{"pending":1}' })
 check("avisa de que se ha enviado", "ok", notifications[#notifications] and notifications[#notifications].kind or "ninguno")
+
+-- Si la nota ya no existe (se borro desde el movil con el panel cerrado), no
+-- se manda: se avisaria de una nota que no esta.
+limpiaEstado()
+onIpc("cmd", '{"op":"send-current"}')
+respondeTodas({ status = 404, body = '{"error":"nota no encontrada"}' })
+check("una nota que ya no existe avisa de error", "error", notifications[#notifications] and notifications[#notifications].kind or "ninguno")
+-- El mensaje importa: tiene que decir que la nota ya no existe, no un error
+-- generico (asi se distingue un 404 de un fallo de conexion).
+check("y dice que la nota ya no existe", "errors.note_gone", notifications[#notifications] and notifications[#notifications].b or "ninguno")
+local huboPush = false
+for _, req in ipairs(sentHttp) do
+  if req.url:find("/api/push", 1, true) then
+    huboPush = true
+  end
+end
+check("y no se manda nada", false, huboPush)
 
 -- Sin nota abierta: avisa y no lanza nada.
 os.remove(NOTES_DIR .. "/current.json")
@@ -502,6 +541,42 @@ limpiaEstado()
 onIpc("cmd", '{"op":"push","text":"hola"}')
 respondeTodas(nil)
 check("sin respuesta del servidor avisa de error", "error", notifications[#notifications] and notifications[#notifications].kind or "ninguno")
+
+
+-- Un 404 llega con ok=true (asi funciona el cliente real): el codigo es lo
+-- que delata el fallo.
+limpiaEstado()
+onIpc("cmd", '{"op":"send-current"}')
+respondeTodas({ status = 500, body = '{"error":"el servidor se ha caido"}' })
+check("un 500 avisa de error", "error", notifications[#notifications] and notifications[#notifications].kind or "ninguno")
+huboPush = false
+for _, req in ipairs(sentHttp) do
+  if req.url:find("/api/push", 1, true) then
+    huboPush = true
+  end
+end
+check("y no se manda nada", false, huboPush)
+
+-- Si el push falla (por ejemplo, el servidor lo rechaza), no se dice que se
+-- ha enviado: se avisa de error.
+limpiaEstado()
+onIpc("cmd", '{"op":"push","text":"hola"}')
+respondeTodas({ status = 400, body = '{"error":"mensaje vacio"}' })
+check("un push rechazado avisa de error", "error", notifications[#notifications] and notifications[#notifications].kind or "ninguno")
+check("y no dice que se ha enviado", false, (notifications[#notifications] or {}).b == "push_sent")
+
+-- Una respuesta con {"error": ...} tambien es un fallo aunque el codigo sea 200.
+limpiaEstado()
+onIpc("cmd", '{"op":"push","text":"hola"}')
+respondeTodas({ status = 200, body = '{"error":"algo va mal"}' })
+check("una respuesta con error avisa de error", "error", notifications[#notifications] and notifications[#notifications].kind or "ninguno")
+
+-- Si la peticion ni siquiera se completa (el servidor esta-caido), tambien
+-- avisa de error.
+limpiaEstado()
+onIpc("cmd", '{"op":"push","text":"hola"}')
+respondeTodas({ ok = false })
+check("una peticion que no se completa avisa de error", "error", notifications[#notifications] and notifications[#notifications].kind or "ninguno")
 
 -- ------------------------------------------------------- el contrato IPC
 

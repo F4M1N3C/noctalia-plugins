@@ -4,6 +4,7 @@
     "cannot_read": "Could not read the note",
     "empty": "The message is empty",
     "no_note_open": "No note is open in the panel",
+    "note_gone": "The note no longer exists",
     "push_failed": "Could not send the message to the phone"
   },
   "label_last_seen": "Last seen",

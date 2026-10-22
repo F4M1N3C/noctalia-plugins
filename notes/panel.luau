@@ -627,6 +627,10 @@ function onExternalChange()
       dirty = buffer ~= loadedContent
       idleTicks = 0
       editorRev += 1
+      -- La nota cambio desde fuera (el movil, un editor, una sincronizacion).
+      -- Se vuelve a publicar para que el canal con el otro plugin no se
+      -- quede con una version antigua.
+      publishCurrent()
     end
   end
   render()

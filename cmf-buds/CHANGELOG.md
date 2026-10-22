@@ -110,6 +110,26 @@ que el compositor lo abra.
 
 Suite: 37 → 44 comprobaciones.
 
+### Comprobaciones finales — ciclo de vida del demonio
+
+Comprobado en caliente:
+
+- **El cierre por inactividad no muerde**: el demonio se cierra solo a los
+  5 min sin clientes, pero el ping del servicio (cada 20 s) cuenta como
+  cliente ✓ → no se cierra nunca solo ✓.
+- **No puede haber dos demonios**: el `flock` hace que un segundo intento
+  salga al instante con `already_running` ✓.
+- **Se relanza solo**: matado con `kill -9`, el servicio lo vuelve a
+  arrancar ✓ (pid nuevo ✓).
+- **Aguanta que le borren los ficheros**: sin `local_actions.json` el motor
+  sigue con sus reglas en memoria y sin romperse ✓; sin `state.json` el
+  demonio lo recrea ✓ conservando las claves del plugin ✓.
+- **RPC malformados, sin caidas**: una regla que no es un objeto, un
+  comando desconocido, JSON invalido o una regla sin id devuelven un error
+  claro (o generan el id) y el demonio sigue vivo ✓.
+- **El log esta limpio**: las 70 trazas que hay son de las 14:52-15:01
+  (auriculares apagados, el comando ANC) → ninguna desde entonces ✓.
+
 ### Comprobaciones finales — una prueba era intermitente
 
 La prueba 18 comprobaba que el hilo del watcher **ya habia terminado**

@@ -28,6 +28,13 @@
 --   }
 
 local MAX_IN_FLIGHT = 4 -- el host acepta 8; se deja margen para otras acciones
+-- Si el servidor se queda colgado (acepta la conexion pero no contesta), las
+-- peticiones se quedan en vuelo y la cola crece sin limite. Los sondeos viejos
+-- no sirven de nada (el estado se vuelve a pedir) y, lo peor, empujan las
+-- acciones del usuario (que si importan) hasta el final de la cola. Asi que la
+-- cola tiene un tope: se tiran los sondeos mas antiguos y se avisa a quien los
+-- pidio (su error se ve en el panel en vez de quedarse colgado).
+local MAX_QUEUE = 30
 
 local inFlight = 0
 local queue = {}
@@ -111,7 +118,7 @@ local function pump()
   end
 end
 
-local function request(path, method, body, cb)
+local function request(path, method, body, cb, kind)
   local headers = {}
   local token = serverToken()
   if token ~= "" then
@@ -119,6 +126,21 @@ local function request(path, method, body, cb)
   end
   if body ~= nil then
     table.insert(headers, "Content-Type: application/json")
+  end
+  -- Cola llena: se tira lo que menos importa (un sondeo) y se avisa a quien
+  -- lo pidio, para que no se quede esperando a un servidor que no contesta.
+  if #queue >= MAX_QUEUE then
+    local dropped = nil
+    for i, job in ipairs(queue) do
+      if job.kind == "poll" then
+        dropped = table.remove(queue, i)
+        break
+      end
+    end
+    if dropped == nil then
+      dropped = table.remove(queue, 1)
+    end
+    dropped.cb(nil)
   end
   table.insert(queue, {
     req = {
@@ -128,11 +150,12 @@ local function request(path, method, body, cb)
       body = body,
     },
     cb = cb,
+    kind = kind or "action",
   })
   pump()
 end
 
-local function jsonRequest(path, method, payload, cb)
+local function jsonRequest(path, method, payload, cb, kind)
   local encoded = nil
   if payload ~= nil then
     local ok, res = pcall(noctalia.json.encode, payload)
@@ -161,7 +184,7 @@ local function jsonRequest(path, method, payload, cb)
       return
     end
     cb(decoded, nil)
-  end)
+  end, kind)
 end
 
 -- ------------------------------------------------- nota abierta (otro plugin)
@@ -298,7 +321,7 @@ local function refresh()
       end
     end
     publish()
-  end)
+  end, "poll")
 end
 
 -- Tambien se mira el estado del servidor para saber cuantas notas hay.
@@ -324,7 +347,7 @@ local function refreshState()
       end
     end
     publish()
-  end)
+  end, "poll")
 end
 
 -- ---------------------------------------------------------------- acciones

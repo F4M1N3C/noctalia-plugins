@@ -643,6 +643,23 @@ function onExternalChange()
   loadPins()
   refreshFiles()
   if current ~= nil then
+    if not noctalia.fileExists(notePath(current)) then
+      -- La nota se borro o se renombro desde fuera (el movil, una
+      -- sincronizacion). Sin esto el panel se queda con un fantasma: un
+      -- nombre que ya no existe y un editor vacio, y el canal con el otro
+      -- plugin mandaria esa nota inexistente.
+      current = nil
+      buffer = ""
+      loadedContent = ""
+      dirty = false
+      view = "list"
+      lastNote = ""
+      lastContent = ""
+      noctalia.state.set("notes_current", "")
+      publishCurrent()
+      render()
+      return
+    end
     local contents = noctalia.readFile(notePath(current)) or ""
     if contents ~= loadedContent then
       if contents:sub(1, #loadedContent) == loadedContent then

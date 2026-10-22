@@ -324,6 +324,18 @@ check("tras borrar no queda ninguna nota", "", c and c.name or nil)
 check("y el contenido tampoco", "", c and c.content or nil)
 check("el fichero ya no esta", true, ficheros["renombrada.md"] == nil)
 
+-- Si la nota se renombra o se borra desde fuera (el movil), el panel no puede
+-- quedarse con un fantasma: un nombre que ya no existe y un editor vacio.
+ficheros["renombrada.md"] = "contenido"
+state.open_note = "renombrada.md"
+pcall(onOpen, {})
+ficheros["renombrada.md"] = nil -- como si se borrase desde fuera
+pcall(update)
+c = current()
+check("si la nota desaparece, no queda ninguna nota publicada", "", c and c.name or nil)
+check("ni se queda el contenido viejo", "", c and c.content or nil)
+check("y el estado publico tambien se vacia", "", tostring(state.notes_current or ""))
+
 print()
 print("== el test detecta una regresion ==")
 -- Un test que nunca falla no demuestra nada: se rompe el panel a proposito

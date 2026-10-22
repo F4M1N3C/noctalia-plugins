@@ -1108,6 +1108,40 @@ def test_apagado_de_anillos():
     return r.failures
 
 
+def test_la_marca_caduca():
+    print("32) la marca de cambio nuestro caduca (no se traga un gesto posterior)")
+    import local_actions
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    e = r.engine
+    e.modifiers.held = {"super"}
+    # 1) El eco del dispositivo (el mismo valor) se ignora siempre.
+    e.note_self_change(40)
+    e.volume = 40
+    e._on_volume_change("fake")
+    time.sleep(0.3)
+    r.check("el eco del dispositivo se ignora", e.fired == [], e.fired)
+
+    # 2) Dentro del plazo, un +1 del usuario cae en la tolerancia del eco y
+    # se confunde con el: el gesto se pierde.
+    e.fired.clear()
+    e.note_self_change(40)
+    e.volume = 41
+    e._on_volume_change("fake")
+    time.sleep(0.3)
+    r.check("dentro del plazo, un +1 se confunde con el eco", e.fired == [], e.fired)
+
+    # 3) Pasado el plazo, un +1 ya es un gesto del usuario y no se traga.
+    e.fired.clear()
+    e.note_self_change(40)
+    time.sleep(local_actions.SELF_CHANGE_TTL + 0.4)
+    e.volume = 41
+    e._on_volume_change("fake")
+    time.sleep(0.3)
+    r.check("un gesto posterior no se traga", e.fired == ["UNO"], e.fired)
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -1164,6 +1198,7 @@ def main():
         test_gestos_permitidos,
         test_ajustes_invalidos,
         test_apagado_de_anillos,
+        test_la_marca_caduca,
     ):
         total += test()
     print("")

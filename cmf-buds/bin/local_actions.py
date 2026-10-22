@@ -60,6 +60,11 @@ MODIFIER_CODES = {
     54: "shift",
 }
 
+# Tiempo que vive la marca de "cambio hecho por nosotros". Solo debe
+# absorber el eco del dispositivo: si viviera para siempre, el primer gesto
+# del usuario que cayera dentro de +-1 se tragaria.
+SELF_CHANGE_TTL = 2.0
+
 # Disparadores que el motor puede generar. La UI usa los mismos nombres:
 # si se desincronizasen, las reglas de la UI no se dispararian nunca.
 TRIGGERS = ("volume_up", "volume_down")
@@ -449,6 +454,7 @@ class LocalActionEngine:
         self._timer = None
         self._lock = threading.RLock()
         self._self_set_volume = None
+        self._self_set_at = 0.0
         self._last_event = {}
         self._restore_target = None
         self.modifiers = ModifierTracker(self.log)
@@ -573,6 +579,7 @@ class LocalActionEngine:
         if value is not None:
             try:
                 self._self_set_volume = int(value)
+                self._self_set_at = time.time()
                 self._last_volume = self._self_set_volume
             except (TypeError, ValueError):
                 pass
@@ -612,6 +619,7 @@ class LocalActionEngine:
             return
         if (
             self._self_set_volume is not None
+            and (time.time() - self._self_set_at) <= SELF_CHANGE_TTL
             and abs(value - self._self_set_volume) <= 1
         ):
             # Es el valor exacto que pusimos nosotros: se ignora (el evento

@@ -129,7 +129,7 @@ Ademas se anade una prueba para el temporizador que cierra el gesto: si
 falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
 motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
 
-Suite: 44 -> 108 comprobaciones (nuevas: el cierre del gesto protegido, que el
+Suite: 44 -> 111 comprobaciones (nuevas: el cierre del gesto protegido, que el
 lector cierre su socket, que al reconectar se cierre el enlace anterior, el
 protocolo de tramas (construccion, CRC, parseo, basura y trama incompleta), el
 codec de floats del ecualizador con la deteccion de modelo del dispositivo, y
@@ -169,6 +169,13 @@ uno con consecuencias: al apagar los anillos automaticamente, si el apagado
 fallaba (por ejemplo, porque se habia caido el enlace) se marcaba igualmente
 como apagado y no se volvia a intentarlo nunca, con lo que el anillo se
 quedaba sonando. Ahora, si falla, se reintenta en el siguiente ciclo.
+
+Y un caso borde del motor: la marca de "cambio hecho por nosotros" (la que
+permite distinguir el eco del dispositivo de un giro del dial) no caduca nunca.
+Como el eco se acepta con +-1 de tolerancia, el primer giro del usuario que
+cayera dentro de ese margen se confounding con el eco y su atajo no se
+disparaba, aunque el giro hubiera ocurrido mucho despues. Ahora la marca
+dura 2 s: solo absorbe el eco y los gestos posteriores nunca se tragan.
 
 La ultima es importante: la tabla de codigos (125 = SUPER) no tenia ninguna
 prueba, y si un codigo se equivocara las reglas que exigen SUPER dejarian de

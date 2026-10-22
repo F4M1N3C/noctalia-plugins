@@ -71,6 +71,9 @@ MODIFIER_LABELS = {
 INPUT_EVENT_SIZE = 24
 INPUT_EVENT_FORMAT = "llHHi"
 
+# Linea de 'pactl subscribe' que avisa de un cambio en un sink.
+SINK_EVENT_PATTERN = re.compile(r"Event 'change' on sink #(\d+)")
+
 
 def _run(cmd, timeout=6):
     try:
@@ -258,6 +261,7 @@ class VolumeWatcher:
         self._proc = None
         self._stop = threading.Event()
         self._reported_no_sink = None
+        self._failures = 0
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
     def start(self):
@@ -282,6 +286,31 @@ class VolumeWatcher:
                 return parts[0].strip()
         return None
 
+    def _handle_line(self, line, sink, sink_id):
+        """Procesa una linea de 'pactl subscribe'.
+
+        Devuelve el id del sink vigilado (puede cambiar si los auriculares se
+        reconectan). Un error al procesar el evento se registra y no se propaga:
+        si se propagara, el hilo del watcher moriria y los atajos dejarian de
+        funcionar sin decir nada.
+        """
+        match = SINK_EVENT_PATTERN.search(line or "")
+        if not match:
+            return sink_id
+        if sink_id and match.group(1) != sink_id:
+            # El sink se recrea cuando los auriculares se reconectan y cambia
+            # su id: se resuelve de nuevo.
+            refreshed = self._sink_id(sink)
+            if not refreshed or refreshed != match.group(1):
+                return sink_id
+            self.log("Watcher: el sink cambio de id a %s" % refreshed)
+            sink_id = refreshed
+        try:
+            self.on_change(sink)
+        except Exception as exc:
+            self.log("Watcher: error al procesar un cambio: %s" % exc)
+        return sink_id
+
     def _loop(self):
         while not self._stop.is_set():
             sink = self.sink_resolver()
@@ -296,6 +325,9 @@ class VolumeWatcher:
             sink_id = self._sink_id(sink)
             if self._reported_no_sink is not None:
                 self._reported_no_sink = None
+            if self._failures:
+                self.log("Watcher: la suscripcion vuelve a funcionar")
+                self._failures = 0
             self.log("Watcher: vigilando %s (id %s)" % (sink, sink_id))
             try:
                 self._proc = subprocess.Popen(
@@ -305,33 +337,32 @@ class VolumeWatcher:
                     text=True,
                     bufsize=1,
                 )
-            except Exception:
-                self._stop.wait(3.0)
+            except Exception as exc:
+                # Sin suscripcion no hay atajos: se avisa y se reintenta con
+                # la misma espera creciente que en el resto de fallos.
+                self._failures += 1
+                self.log(
+                    "Watcher: no se pudo abrir la suscripcion (%d): %s"
+                    % (self._failures, exc)
+                )
+                self._stop.wait(min(1.0 + self._failures, 10.0))
                 continue
-            pattern = re.compile(r"Event 'change' on sink #(\d+)")
             try:
                 for line in self._proc.stdout:
                     if self._stop.is_set():
                         break
-                    match = pattern.search(line or "")
-                    if not match:
-                        continue
-                    if sink_id and match.group(1) != sink_id:
-                        # El sink se recrea cuando los auriculares se
-                        # reconectan y cambia su id: se resuelve de nuevo.
-                        refreshed = self._sink_id(sink)
-                        if not refreshed or refreshed != match.group(1):
-                            continue
-                        self.log("Watcher: el sink cambio de id a %s" % refreshed)
-                        sink_id = refreshed
-                    try:
-                        self.on_change(sink)
-                    except Exception as exc:
-                        # Un error puntual no puede dejar el watcher muerto:
-                        # sin el, los atajos dejarian de funcionar.
-                        self.log("Watcher: error al procesar un cambio: %s" % exc)
-            except Exception:
-                pass
+                    sink_id = self._handle_line(line, sink, sink_id)
+            except Exception as exc:
+                # Un error aqui aborta la suscripcion. Antes se tragaba en
+                # silencio y el bucle se reiniciaba una y otra vez: con un
+                # fallo persistente los atajos no funcionaban nunca y no
+                # habia ni una linea en el log. Ahora se avisa y se reintenta
+                # con una pausa mayor cada vez, para no dar vueltas.
+                self._failures += 1
+                self.log(
+                    "Watcher: error en la suscripcion (%d): %s"
+                    % (self._failures, exc)
+                )
             finally:
                 try:
                     if self._proc:
@@ -340,7 +371,8 @@ class VolumeWatcher:
                     pass
                 self._proc = None
             if not self._stop.is_set():
-                self._stop.wait(1.0)
+                # Espera creciente: si el fallo se repite, no se martillea.
+                self._stop.wait(min(1.0 + self._failures, 10.0))
 
 
 class LocalActionEngine:
@@ -442,8 +474,11 @@ class LocalActionEngine:
             sink = sink_provider()
             if sink:
                 self._last_volume = self._read_volume(sink)
-        except Exception:
-            pass
+        except Exception as exc:
+            # No es critico (el valor inicial solo sirve de referencia), pero
+            # si falla conviene saberlo: sin el, el primer gesto no tendria
+            # contra que restaurar el volumen.
+            self.log("No se pudo leer el volumen inicial: %s" % exc)
         self.modifiers.start()
         self.watcher = VolumeWatcher(sink_provider, self._on_volume_change, self.log)
         self.watcher.start()
@@ -764,7 +799,14 @@ class LocalActionEngine:
             if not sink:
                 return
             self.note_self_change(int(percent))
-            _run(["pactl", "set-sink-volume", sink, "%d%%" % int(percent)], 6)
+            res = _run(
+                ["pactl", "set-sink-volume", sink, "%d%%" % int(percent)], 6
+            )
+            if res is None or res.returncode != 0:
+                self.log(
+                    "No se pudo restaurar el volumen a %d%% en %s (rc=%s)"
+                    % (int(percent), sink, res.returncode if res else "error")
+                )
             time.sleep(0.3)
             current = self._read_volume(sink)
             self.log(
@@ -871,8 +913,9 @@ class LocalActionEngine:
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            # El atajo ya se ha ejecutado; solo falla el aviso.
+            self.log("No se pudo mostrar el aviso del atajo: %s" % exc)
 
     # -- estado --------------------------------------------------------------
     def snapshot(self):

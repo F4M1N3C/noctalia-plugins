@@ -272,21 +272,61 @@ def test_regla_malformada():
 
 
 def test_watcher_sobrevive():
-    print("13) el watcher sobrevive a un error puntual")
+    print("13) el watcher sobrevive a un error puntual y lo registra")
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
     calls = {"n": 0}
+    logs = []
 
     def on_change(sink):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("fallo simulado")
 
-    watcher = VolumeWatcher(lambda: "sink-falso", on_change)
-    watcher.start()
-    time.sleep(0.6)
-    alive = watcher._thread.is_alive()
-    watcher.stop()
-    r.check("el hilo sigue vivo tras el error", alive)
+    watcher = VolumeWatcher(lambda: "sink-falso", on_change, logs.append)
+    # Se inyecta el evento a mano: sin auriculares no hay 'pactl subscribe'
+    # que avise de nada, y el camino del error hay que ejercitarlo de verdad.
+    try:
+        watcher._handle_line("Event 'change' on sink #42", "sink-falso", "42")
+        ok = True
+    except Exception as exc:
+        ok = False
+        logs.append("excepcion: %s" % exc)
+    r.check("el error no se propaga", ok, logs)
+    r.check(
+        "el error queda en el log",
+        any("fallo simulado" in m for m in logs),
+        logs,
+    )
+    r.check("el evento se intento procesar", calls["n"] == 1, calls)
+    return r.failures
+
+
+def test_watcher_sin_suscripcion():
+    print("14) si no se puede suscribir, avisa y sigue reintentando")
+    import local_actions
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    logs = []
+    original = local_actions.subprocess.Popen
+
+    def boom(*args, **kwargs):
+        raise OSError("pactl no disponible")
+
+    local_actions.subprocess.Popen = boom
+    try:
+        watcher = VolumeWatcher(lambda: "sink-falso", lambda sink: None, logs.append)
+        watcher.start()
+        time.sleep(1.5)
+        alive = watcher._thread.is_alive()
+        watcher.stop()
+    finally:
+        local_actions.subprocess.Popen = original
+    r.check("el hilo sigue vivo", alive)
+    r.check(
+        "avisa del fallo en el log",
+        any("suscripcion" in m for m in logs),
+        logs,
+    )
     return r.failures
 
 
@@ -300,9 +340,9 @@ def test_recarga():
     r.evento(60, ["super"])
     time.sleep(0.2)
     r.check("usa la regla del fichero", r.engine.fired == ["DESDE_FICHERO"], r.engine.fired)
-    return r.failures
     if os.path.exists(path):
         os.unlink(path)
+    return r.failures
 
 
 def _json_rule(rid, trigger, presses, modifier, command):
@@ -327,6 +367,7 @@ def main():
         test_gestos_separados,
         test_regla_malformada,
         test_watcher_sobrevive,
+        test_watcher_sin_suscripcion,
         test_recarga,
     ):
         total += test()

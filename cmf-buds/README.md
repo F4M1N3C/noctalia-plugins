@@ -131,14 +131,15 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (22 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (26 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
 especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
 separados disparen acciones distintas, que un gesto tras restaurar el volumen
 no se pierda, que los pinchazos muy juntos (50 ms) se cuenten como varios,
 que nuestro propio cambio se reconozca por el valor, que una regla malformada
-se ignore sin tapar a las demás, que el watcher sobreviva a un error puntual y
-que las reglas editadas fuera del panel se recargan.
+se ignore sin tapar a las demás, que el watcher registre un error puntual sin
+morir, que avise cuando no puede suscribirse a los cambios de volumen y que
+las reglas editadas fuera del panel se recargan.
 
 ## Cómo funciona
 
@@ -200,6 +201,16 @@ Datos persistentes:
   del volumen, queda anotado en el log del demonio.
 - Los gestos que no encajan con ninguna regla se avisan en el log, para que
   no parezca que los atajos están rotos.
+- **Una regla malformada no puede romper el motor.** Los campos de cada regla
+  (`presses`, `require`, `forbid`) se leen de forma tolerante y una regla
+  inválida —editada a mano— se **ignora entera**, con aviso en el log, de modo
+  que ni tapa a las reglas bien escritas ni aborta la evaluación de las demás.
+- **El watcher no puede morir en silencio.** Un error al procesar un cambio se
+  registra y el hilo sigue; un error en la suscripción se registra y se
+  reintenta con una espera creciente (1 s, 2 s, … hasta 10 s) en vez de
+  reiniciarse en bucle; y si no se puede abrir la suscripción se avisa. Antes
+  de esto, un fallo repetido reiniciaba la suscripción cada segundo y los
+  atajos no funcionaban nunca, sin una sola línea en el log.
 - **El eco del auricular se ignora.** Al restaurar el volumen, los auriculares
   devuelven el suyo y generan otro evento; el motor ignora los eventos hasta
   que el volumen se estabiliza (1,2 s) y luego vuelve a armarse solo.

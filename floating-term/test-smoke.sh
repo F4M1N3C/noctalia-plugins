@@ -229,9 +229,9 @@ wait_log_quiet() {
   return 0
 }
 
-# Punto de partida estable: se espera a que el log deje de crecer un segundo,
+# Punto de partida estable: se espera a que el log deje de crecer dos segundos,
 # para que la revisión no arrastre ruido de la pasada anterior ni del arranque.
-wait_log_quiet 5 25
+wait_log_quiet 10 50
 LOG_READY=1
 
 # Revisa todas las líneas nuevas del log (la copia), sin excluir ningún
@@ -491,13 +491,16 @@ echo "   ventanas restantes: 0 ✔"
 
 echo "4) cerrar el panel de la prueba"
 ensure_panel
-noctalia msg panel-close "$PANEL" >/dev/null 2>&1 || true
-# El cierre se confirma en el estado del host, no en el log (que va con
-# retraso). Otro panel puede quedar activo, pero el nuestro no.
-deadline=$((SECONDS + 5))
+# Dar tiempo a que el panel termine de abrirse antes de cerrarlo.
+sleep 0.5
+# El cierre se confirma en el estado del host. Se reintenta porque otro panel
+# puede robar el foco justo antes o el host puede ignorar un cierre durante
+# la animación de apertura.
+deadline=$((SECONDS + 8))
 while [ "$SECONDS" -lt "$deadline" ]; do
   [ "$(active_panel)" != "$PANEL" ] && break
-  sleep 0.15
+  noctalia msg panel-close "$PANEL" >/dev/null 2>&1 || true
+  sleep 0.3
 done
 if [ "$(active_panel)" = "$PANEL" ]; then
   fail "el panel no se cerró (sigue activo)"
@@ -508,7 +511,7 @@ if ! flush_log; then
 fi
 # Capturar las líneas que lleguen tarde (ruido ajeno o volcado diferido) antes
 # de congelar la copia.
-wait_log_quiet 3 15
+wait_log_quiet 5 25
 stop_follower
 # Con la copia volcada se comprueba que el cierre quedó registrado. El seguidor
 # drena el fichero viejo antes de cambiar, así que la línea debe estar.

@@ -86,6 +86,26 @@ def msg(*args):
     return True, (result.stdout or "").strip()
 
 
+def plugin_id(plugin: str) -> str:
+    """Id completo del plugin ("faminec/lyrics-carousel")."""
+    manifest = os.path.join(PLUGIN_DIR, plugin, "plugin.toml")
+    try:
+        import tomllib
+
+        with open(manifest, "rb") as handle:
+            data = tomllib.load(handle)
+        return str(data.get("id") or "faminec/" + plugin)
+    except Exception:  # noqa: BLE001
+        return "faminec/" + plugin
+
+
+def overrides_path(plugin: str) -> str:
+    """Fichero de overrides de un plugin (el del panel, con lo pendiente)."""
+    return os.path.expanduser(
+        "~/.local/state/noctalia/plugins/data/%s/overrides.json" % plugin_id(plugin)
+    )
+
+
 def panel_of(plugin: str) -> str:
     """Id de la entrada de panel del plugin (o "" si no tiene)."""
     manifest = os.path.join(PLUGIN_DIR, plugin, "plugin.toml")
@@ -168,45 +188,79 @@ def plugin_id(plugin: str) -> str:
 
 
 def exercise(plugin: str):
-    """Ejercita un plugin (abrir/cerrar su panel y tocar un ajuste).
+    """Ejercita un plugin: escribe un ajuste, abre y cierra su panel y
+    comprueba que el widget lo abre.
 
-    Devuelve (ok, problemas). Se comprueba que el IPC llega de verdad: la
-    entrada del panel solo existe con el panel abierto, y tarda unos
-    segundos en estar lista. Sin comprobarlo, el ejercicio podria no
-    ejercitar nada y no decir nada.
+    Devuelve (ok, problemas). Se comprueba que cada evento llega de
+    verdad: la entrada del panel solo existe con el panel abierto y
+    tarda en estar lista, asi que la escritura se hace por el widget
+    (que siempre esta instanciado) y el panel solo se abre y se cierra.
     """
     ok = False
     problems = []
     panel = panel_of(plugin)
-    if panel:
-        abierto, _ = msg("panel-toggle", panel)
-        ok = abierto or ok
-        # La entrada del panel tarda en estar lista: si se manda el IPC
-        # antes, Noctalia responde "not ready" y el evento se pierde.
-        time.sleep(3.5)
-        keys = bool_settings(plugin)
-        if keys:
+    widget = widget_of(plugin)
+    pendientes = overrides_path(plugin)
+
+    # 1) escritura de un ajuste: por el widget, que siempre esta listo.
+    #    Se reescribe el MISMO valor, asi la configuracion no cambia pero
+    #    se ejercitan la escritura y el volcado al cerrar el panel.
+    # Los eventos 'set' y 'launch' solo existen en el widget de este
+    # plugin (su widget los documenta); para el resto no se sabe que
+    # eventos soporta su entrada, asi que no se le mandan.
+    propio = plugin == OWNER
+    keys = bool_settings(plugin)
+    if propio and keys and widget:
+        if os.path.isfile(pendientes):
+            # Hay ajustes pendientes (el panel todavia no los ha volcado):
+            # escribir el valor del settings.toml los pisaria.
+            problems.append(
+                "el panel de %s tiene ajustes pendientes: no se toca nada" % plugin
+            )
+        else:
             value = current_bool(plugin, keys[0])
             enviado, salida = msg(
-                "plugin", panel, "all", "set",
+                "plugin", widget, "all", "set",
                 "%s=%s bool" % (keys[0], "true" if value else "false"),
             )
             ok = enviado or ok
-            if not enviado or "dispatched" not in salida:
+            if not enviado or "dispatched 1" not in salida:
                 problems.append(
-                    "el panel de %s no atendio el IPC 'set' (%s)"
+                    "el widget de %s no atendio el IPC 'set' (%s)"
                     % (plugin, salida or "sin salida")
                 )
-            time.sleep(1.5)
-        cerrado, _ = msg("panel-toggle", panel)
+            time.sleep(1.2)
+
+    # 2) ciclo del panel: al cerrarlo se vuelcan los overrides.
+    if panel:
+        abierto, salida = msg("panel-toggle", panel)
+        ok = abierto or ok
+        if not abierto:
+            problems.append(
+                "el panel de %s no se pudo abrir (%s)" % (plugin, salida or "sin salida")
+            )
+        time.sleep(2.5)
+        cerrado, salida = msg("panel-toggle", panel)
         ok = cerrado or ok
+        if not cerrado:
+            problems.append(
+                "el panel de %s no se pudo cerrar (%s)" % (plugin, salida or "sin salida")
+            )
         time.sleep(0.7)
-    widget = widget_of(plugin)
-    if widget:
-        ok = msg("panel-toggle", widget)[0] or ok
-        time.sleep(1.0)
-        ok = msg("panel-toggle", widget)[0] or ok
-        time.sleep(0.5)
+
+    # 3) el widget abre el panel (y se vuelve a cerrar).
+    if propio and widget:
+        enviado, salida = msg("plugin", widget, "all", "launch")
+        ok = enviado or ok
+        if not enviado or "dispatched 1" not in salida:
+            problems.append(
+                "el widget de %s no atendio el IPC 'launch' (%s)"
+                % (plugin, salida or "sin salida")
+            )
+        time.sleep(2.0)
+        if panel:
+            msg("panel-toggle", panel)
+            time.sleep(0.7)
     return ok, problems
 
 

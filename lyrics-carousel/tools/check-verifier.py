@@ -242,7 +242,30 @@ def main(argv):
         else escenario("el verificador dice que el ejercicio fue ok", 1, [], 0)
     )
 
-    print("11) sin validadores compartidos -> rc 1 (infraestructura)")
+    print("11) con ajustes pendientes -> se avisa y no se pisa nada")
+    pendientes = os.path.expanduser(
+        "~/.local/state/noctalia/plugins/data/faminec/lyrics-carousel/overrides.json"
+    )
+    helper = os.path.expanduser(
+        "~/.local/share/noctalia/plugins/lyrics-carousel/bin/set-setting.py"
+    )
+    try:
+        with open(pendientes, "w", encoding="utf-8") as handle:
+            handle.write('{"marker": true}')
+        rc, fallos, salida = run(root, ui=True)
+        resultados.append(
+            escenario("ajustes pendientes: se avisa", rc, fallos, 1, "fallo de ejercicio")
+        )
+    finally:
+        if os.path.isfile(pendientes):
+            os.remove(pendientes)
+        subprocess.run(
+            [sys.executable, helper, "marker", "false", "bool"],
+            capture_output=True,
+            timeout=30,
+        )
+
+    print("12) sin validadores compartidos -> rc 1 (infraestructura)")
     raiz = copia(root, con_tools=False)
     try:
         rc, fallos, salida = run(raiz)

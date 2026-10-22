@@ -30,8 +30,6 @@ import time
 
 # Ventana para agrupar varias pulsaciones en una (multitactil).
 GROUP_WINDOW = 0.7
-# Dos senales mas juntas que esto cuentan como la misma pulsacion.
-REPEAT_GAP = 0.12
 # (Sin ventana temporal: nuestro cambio de volumen se reconoce por el valor
 # que ponemos, no por cuando lo hicimos. Una ventana de tiempo se comia los
 # gestos del usuario que llegaban justo despues de restaurar el volumen.)
@@ -44,9 +42,6 @@ EVENT_GAP = 0.03
 # Tras disparar un atajo se ignoran los eventos hasta que el volumen se
 # estabiliza: al restaurar el volumen, los auriculares devuelven el suyo y
 # generan un eco que dispararia el atajo otra vez (workspace +1 y -1).
-# Margen (%%) para el ajuste final del volumen: si el usuario ha cambiado el
-# volumen a proposito durante la ventana de calma, no se toca.
-SETTLE_TOLERANCE = 8
 # Espera antes de restaurar el volumen: PipeWire aplica el volumen con una
 # rampa de ~0.5 s, y un cambio emitido durante la rampa se pierde (el
 # destino de la rampa gana). Hay que esperar a que termine.

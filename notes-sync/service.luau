@@ -32,9 +32,17 @@ local MAX_IN_FLIGHT = 4 -- el host acepta 8; se deja margen para otras acciones
 -- peticiones se quedan en vuelo y la cola crece sin limite. Los sondeos viejos
 -- no sirven de nada (el estado se vuelve a pedir) y, lo peor, empujan las
 -- acciones del usuario (que si importan) hasta el final de la cola. Asi que la
--- cola tiene un tope: se tiran los sondeos mas antiguos y se avisa a quien los
--- pidio (su error se ve en el panel en vez de quedarse colgado).
+-- cola tiene un tope.
 local MAX_QUEUE = 30
+-- Que se puede tirar y que no. Cada peticion declara su prioridad y hay una
+-- sola regla: cuando la cola esta llena se tira lo mas desechable (primero
+-- un sondeo y despues una comprobacion). El mensaje del usuario NO se tira
+-- nunca: si la cola esta llena solo de mensajes, se rechaza el nuevo (el
+-- usuario se entera) y los anteriores se conservan para cuando el servidor
+-- vuelva.
+local PRIO_SONDEO = 1 -- el estado se vuelve a pedir: da igual perderlo
+local PRIO_COMPROBACION = 2 -- una comprobacion: se vuelve a hacer
+local PRIO_MENSAJE = 3 -- el mensaje del usuario: no se tira nunca
 
 local inFlight = 0
 local queue = {}
@@ -118,7 +126,7 @@ local function pump()
   end
 end
 
-local function request(path, method, body, cb, kind)
+local function request(path, method, body, cb, priority)
   local headers = {}
   local token = serverToken()
   if token ~= "" then
@@ -127,18 +135,27 @@ local function request(path, method, body, cb, kind)
   if body ~= nil then
     table.insert(headers, "Content-Type: application/json")
   end
-  -- Cola llena: se tira lo que menos importa (un sondeo) y se avisa a quien
-  -- lo pidio, para que no se quede esperando a un servidor que no contesta.
+  -- Cola llena: se tira lo mas desechable y se avisa a quien lo pidio, para
+  -- que no se quede esperando a un servidor que no contesta.
   if #queue >= MAX_QUEUE then
     local dropped = nil
-    for i, job in ipairs(queue) do
-      if job.kind == "poll" then
-        dropped = table.remove(queue, i)
+    for _, p in ipairs({ PRIO_SONDEO, PRIO_COMPROBACION }) do
+      for i, job in ipairs(queue) do
+        if job.priority == p then
+          dropped = table.remove(queue, i)
+          break
+        end
+      end
+      if dropped ~= nil then
         break
       end
     end
     if dropped == nil then
-      dropped = table.remove(queue, 1)
+      -- En la cola solo hay mensajes del usuario: no se tira ninguno. Se
+      -- rechaza el nuevo (y el usuario se entera) y los anteriores se
+      -- conservan para cuando el servidor vuelva.
+      cb(nil, tr("errors.queue_full"))
+      return
     end
     dropped.cb(nil)
   end
@@ -150,12 +167,12 @@ local function request(path, method, body, cb, kind)
       body = body,
     },
     cb = cb,
-    kind = kind or "action",
+    priority = priority or PRIO_MENSAJE,
   })
   pump()
 end
 
-local function jsonRequest(path, method, payload, cb, kind)
+local function jsonRequest(path, method, payload, cb, priority)
   local encoded = nil
   if payload ~= nil then
     local ok, res = pcall(noctalia.json.encode, payload)
@@ -165,7 +182,11 @@ local function jsonRequest(path, method, payload, cb, kind)
     end
     encoded = res
   end
-  request(path, method, encoded, function(res)
+  request(path, method, encoded, function(res, forceError)
+    if forceError ~= nil then
+      cb(nil, forceError)
+      return
+    end
     if res == nil then
       cb(nil, "sin respuesta del servidor")
       return
@@ -199,7 +220,7 @@ local function jsonRequest(path, method, payload, cb, kind)
       return
     end
     cb(decoded, nil)
-  end, kind)
+  end, priority)
 end
 
 -- ------------------------------------------------- nota abierta (otro plugin)
@@ -336,7 +357,7 @@ local function refresh()
       end
     end
     publish()
-  end, "poll")
+  end, PRIO_SONDEO)
 end
 
 -- Tambien se mira el estado del servidor para saber cuantas notas hay.
@@ -362,7 +383,7 @@ local function refreshState()
       end
     end
     publish()
-  end, "poll")
+  end, PRIO_SONDEO)
 end
 
 -- ---------------------------------------------------------------- acciones
@@ -433,7 +454,7 @@ local function noteExists(name, cb)
       return
     end
     cb(false, err or tr("errors.cannot_read"))
-  end, "action")
+  end, PRIO_COMPROBACION)
 end
 
 -- Encola un mensaje para el celular.
@@ -453,7 +474,7 @@ local function pushToPhone(text, title, cb)
     publish()
     notifyOk(tr("push_sent"))
     if cb then cb(true) end
-  end)
+  end, PRIO_MENSAJE)
 end
 
 -- Manda al celular la nota que hay abierta en el panel de notas.

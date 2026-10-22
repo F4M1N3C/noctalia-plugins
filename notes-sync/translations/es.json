@@ -5,7 +5,8 @@
     "empty": "El mensaje está vacío",
     "no_note_open": "No hay ninguna nota abierta en el panel",
     "note_gone": "La nota ya no existe",
-    "push_failed": "No se pudo enviar el mensaje al celular"
+    "push_failed": "No se pudo enviar el mensaje al celular",
+    "queue_full": "La cola de mensajes está llena: el servidor no responde"
   },
   "label_last_seen": "Última conexión",
   "label_note": "Nota",

@@ -473,15 +473,26 @@ for _, req in ipairs(sentHttp) do
 end
 check("el push llega al servidor", true, huboPush)
 
--- Si lo que se tira es el mensaje del usuario, se avisa de error (no se queda
--- colgado esperando una respuesta que no va a llegar).
+-- Si la cola esta llena solo de mensajes del usuario, NO se tira ninguno:
+-- se rechaza el nuevo (con un aviso claro) y los anteriores se conservan para
+-- cuando el servidor vuelva.
 limpiaEstado()
--- 4 en vuelo + 30 en cola + 1 que no cabe: ese ultimo es el que tira el
--- primero de la cola.
+-- 4 en vuelo + 30 en cola + 1 que no cabe: ese ultimo es el que se rechaza.
 for _ = 1, 35 do
   onIpc("cmd", '{"op":"push","text":"mensaje"}')
 end
-check("el mensaje que se tira avisa de error", "error", notifications[#notifications] and notifications[#notifications].kind or "ninguno")
+check("el mensaje rechazado avisa de error", "error", notifications[#notifications] and notifications[#notifications].kind or "ninguno")
+check("y dice que la cola esta llena", "errors.queue_full", notifications[#notifications] and notifications[#notifications].b or "ninguno")
+-- Al vaciar la cola, se ven cuantos mensajes llegaron a salir: los 34
+-- aceptados (el que se rechazo nunca llego a salir).
+respondeTodas({ ok = true, status = 201, body = '{"pending":1}' })
+local pushesEnviados = 0
+for _, req in ipairs(sentHttp) do
+  if req.url:find("/api/push", 1, true) then
+    pushesEnviados = pushesEnviados + 1
+  end
+end
+check("los mensajes anteriores se conservan", 34, pushesEnviados)
 
 -- ------------------------------------------------------- enviar al movil
 

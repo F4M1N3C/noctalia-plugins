@@ -5,7 +5,8 @@
     "empty": "The message is empty",
     "no_note_open": "No note is open in the panel",
     "note_gone": "The note no longer exists",
-    "push_failed": "Could not send the message to the phone"
+    "push_failed": "Could not send the message to the phone",
+    "queue_full": "The message queue is full: the server is not responding"
   },
   "label_last_seen": "Last seen",
   "label_note": "Note",

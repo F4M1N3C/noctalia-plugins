@@ -3,8 +3,10 @@
 #
 # Necesita Hyprland con Noctalia y el plugin activados. Abre el panel, lanza
 # todos los widgets, comprueba que están todos, los rota, comprueba que las
-# posiciones se permutan y los cierra. Al final revisa **todas** las líneas
-# nuevas del log y falla si hay cualquier [WRN] o [ERR], sea del plugin o no.
+# posiciones se permutan, los cierra y cierra el panel. Al final revisa
+# **todas** las líneas nuevas del log desde el primer al último paso, también
+# si la prueba falla antes, y falla si hay cualquier [WRN] o [ERR], sea del
+# plugin o no.
 #
 #   ./test-smoke.sh                  # usa el plugin instalado
 #   ./test-smoke.sh /ruta/otra       # usa el manifiesto de otra copia
@@ -31,8 +33,41 @@ CLOSE_TIMEOUT="${CLOSE_TIMEOUT:-20}"
 # ventana por delante (`cbonsai -l -p` tardaba ~7 s en imprimir y salir).
 SETTLE="${SETTLE:-8}"
 
+LOG_READY=0
+LOG_CHECKED=0
+FOLLOWER_PID=""
+tmp=""
+
+stop_follower() {
+  if [ -n "$FOLLOWER_PID" ]; then
+    kill "$FOLLOWER_PID" 2>/dev/null || true
+    wait "$FOLLOWER_PID" 2>/dev/null || true
+    FOLLOWER_PID=""
+  fi
+}
+
+cleanup() {
+  stop_follower
+  if [ -n "$tmp" ]; then
+    rm -rf "$tmp"
+  fi
+}
+trap cleanup EXIT
+
 fail() {
   echo "FALLA: $*" >&2
+  # Aunque la prueba se corte a medias, las líneas nuevas del log se revisan
+  # igualmente: un fallo no puede ocultar avisos o errores.
+  if [ "$LOG_READY" -eq 1 ] && [ "$LOG_CHECKED" -eq 0 ]; then
+    # Volcar antes de revisar: si no, las últimas líneas del plugin pueden
+    # seguir en el búfer del host y el fallo quedaría sin contexto.
+    if [ -n "$FOLLOWER_PID" ]; then
+      flush_log >/dev/null 2>&1 || true
+      stop_follower
+    fi
+    echo "--- [WRN]/[ERR] nuevas en el log hasta el fallo ---" >&2
+    review_log >&2 || true
+  fi
   exit 1
 }
 
@@ -100,12 +135,75 @@ read -r expected names <<<"$expected_line"
 [ "$expected" -ge 1 ] || fail "no hay ningún widget configurado"
 echo "widgets esperados: $expected ($names)"
 
-# Línea del log desde la que empieza la prueba: al final solo se revisa lo
-# que se escriba a partir de aquí.
-baseline=0
-if [ -f "$LOG" ]; then
-  baseline=$(wc -l <"$LOG")
-fi
+# El host rota/trunca `noctalia.log` y sus líneas del script-runtime pueden
+# tardar en volcarse. `tail -F` sigue el fichero (aunque lo renombren o lo
+# vacíen) y deja una copia privada con todas las líneas nuevas; el smoke
+# revisa esa copia, no el fichero volátil.
+tmp=$(mktemp -d /tmp/opencode/floating-term-smoke.XXXXXX) || {
+  echo "no se pudo crear el directorio temporal" >&2
+  exit 2
+}
+tail -n 0 -F "$LOG" >"$tmp/run.log" 2>/dev/null &
+FOLLOWER_PID=$!
+sleep 0.2
+LOG_READY=1
+
+# Revisa todas las líneas nuevas del log (la copia), sin excluir ningún
+# patrón: cualquier [WRN] o [ERR] hace fallar la prueba, sea del plugin o no.
+review_log() {
+  local total problems
+  if [ ! -f "$tmp/run.log" ]; then
+    echo "   (no hay copia del log; no se puede comprobar)" >&2
+    return 1
+  fi
+  total=$(wc -l <"$tmp/run.log")
+  problems=$(grep -E "\[WRN\]|\[ERR\]" "$tmp/run.log" || true)
+  if [ -n "$problems" ]; then
+    echo "   $total líneas nuevas; avisos/errores encontrados:" >&2
+    printf '%s\n' "$problems" >&2
+    return 1
+  fi
+  echo "   $total líneas nuevas revisadas; ningún [WRN]/[ERR] ✔"
+  return 0
+}
+
+# Espera hasta $2 segundos a que aparezca $1 en las líneas nuevas de $3
+# (la copia del log) desde la marca $4. Las líneas nativas del host se
+# escriben al momento; las del script-runtime pueden seguir en el búfer.
+wait_log_line() {
+  local pattern="$1" deadline=$((SECONDS + ${2:-2})) file="${3:-$tmp/run.log}" mark="${4:-0}"
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if [ -f "$file" ] && tail -n +"$((mark + 1))" "$file" | grep -q "$pattern"; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  return 1
+}
+
+# El host escribe los logs del script-runtime en un búfer y puede tardar
+# decenas de segundos en volcarlos al fichero. `log-level-set` con el nivel
+# actual es un no-op que escribe una línea nativa y vacía ese búfer; se espera
+# a ver esa línea en la copia para no revisar un log incompleto.
+flush_log() {
+  local level mark deadline
+  level=$(noctalia msg log-level-status 2>/dev/null) || return 1
+  [ -n "$level" ] || return 1
+  mark=$(wc -l <"$tmp/run.log" 2>/dev/null || echo 0)
+  deadline=$((SECONDS + 12))
+  # El host puede tardar varios segundos en procesar la cola: se reintenta y
+  # se espera a que cualquiera de las líneas nativas llegue a la copia. Como
+  # van detrás de las del plugin, ver una implica que esas también se
+  # volcaron.
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    noctalia msg log-level-set "$level" >/dev/null 2>&1 || return 1
+    if wait_log_line "log level set to $level" 2 "$tmp/run.log" "$mark"; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
 
 plugin_geometry() {
   hyprctl clients -j 2>/dev/null | python3 -c '
@@ -161,23 +259,54 @@ wait_stable() {
   return 1
 }
 
-# El panel solo atiende el IPC cuando está abierto. `panel-open` es
-# idempotente (no alterna): si ya estaba abierto lo deja como está. Cuando lo
-# abre de verdad, el plugin deja "widgets ->" en el log; si esa línea no
-# aparece en un segundo es que ya estaba abierto.
+# Panel activo según el host. Es la única fuente fiable: otro plugin puede
+# robar el foco y el log puede tardar segundos en volcarse.
+active_panel() {
+  noctalia msg status 2>/dev/null | python3 -c '
+import json
+import sys
+
+try:
+    print(json.load(sys.stdin).get("activePanelId") or "")
+except Exception:
+    print("")
+'
+}
+
+# El panel solo atiende el IPC cuando está abierto y activo. `panel-open` es
+# idempotente: si ya está abierto lo reactiva. Se comprueba en el estado real
+# del host, no en el log.
 ensure_panel() {
-  local mark=0 deadline
-  if [ -f "$LOG" ]; then
-    mark=$(wc -l <"$LOG")
+  local active deadline
+  active=$(active_panel)
+  if [ "$active" = "$PANEL" ]; then
+    return 0
   fi
   noctalia msg panel-open "$PANEL" >/dev/null 2>&1 || fail "el panel no se pudo abrir"
-  deadline=$((SECONDS + 1))
+  deadline=$((SECONDS + 5))
   while [ "$SECONDS" -lt "$deadline" ]; do
-    if [ -f "$LOG" ] && tail -n +"$((mark + 1))" "$LOG" | grep -q "floating-term: widgets ->"; then
+    active=$(active_panel)
+    if [ "$active" = "$PANEL" ]; then
       return 0
     fi
-    sleep 0.1
+    sleep 0.15
   done
+  fail "el panel no quedó activo (activo: ${active:-ninguno})"
+}
+
+# Envía un evento al panel y reintenta si otro panel le robó el foco justo
+# antes: `ensure_panel` lo reactiva y se vuelve a enviar.
+plugin_ipc() {
+  local event="$1" tries=3
+  while [ "$tries" -gt 0 ]; do
+    ensure_panel
+    if noctalia msg plugin "$PANEL" all "$event" >/dev/null 2>&1; then
+      return 0
+    fi
+    tries=$((tries - 1))
+    sleep 0.2
+  done
+  return 1
 }
 
 # El plugin analiza `plugin.toml` una vez y lo guarda en memoria; el host solo
@@ -191,13 +320,11 @@ if [ -f "$INSTALLED_PANEL" ]; then
 fi
 
 echo "0) partir de cero"
-ensure_panel
-noctalia msg plugin "$PANEL" all close-all >/dev/null 2>&1 || fail "el IPC close-all no respondió"
+plugin_ipc close-all || fail "el IPC close-all no respondió"
 wait_count 0 "$CLOSE_TIMEOUT" || fail "quedaron ventanas abiertas al empezar: $(plugin_geometry)"
 
 echo "1) abrir todos los widgets"
-ensure_panel
-noctalia msg plugin "$PANEL" all open-all >/dev/null 2>&1 || fail "el IPC open-all no respondió"
+plugin_ipc open-all || fail "el IPC open-all no respondió"
 if ! wait_count "$expected" "$OPEN_TIMEOUT"; then
   echo "   abiertas: $(plugin_geometry | tr '\n' ' ')" >&2
   fail "se esperaban $expected ventanas y hay $(plugin_count)"
@@ -211,8 +338,6 @@ fi
 echo "   ventanas abiertas: $(plugin_count) ✔"
 
 echo "2) rotar"
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
 cat >"$tmp/check_rotation.py" <<'PY'
 import sys
 
@@ -249,7 +374,7 @@ print(
 PY
 ensure_panel
 plugin_geometry >"$tmp/before"
-noctalia msg plugin "$PANEL" all rotate >/dev/null 2>&1 || fail "el IPC rotate no respondió"
+plugin_ipc rotate || fail "el IPC rotate no respondió"
 deadline=$((SECONDS + ROTATE_TIMEOUT))
 rotated=0
 while [ "$SECONDS" -lt "$deadline" ]; do
@@ -271,26 +396,40 @@ fi
 cat "$tmp/check"
 
 echo "3) cerrar todas"
-ensure_panel
-noctalia msg plugin "$PANEL" all close-all >/dev/null 2>&1 || fail "el IPC close-all no respondió"
+plugin_ipc close-all || fail "el IPC close-all no respondió"
 if ! wait_count 0 "$CLOSE_TIMEOUT"; then
   echo "   restantes: $(plugin_geometry | tr '\n' ' ')" >&2
   fail "quedaron $(plugin_count) ventanas abiertas"
 fi
 echo "   ventanas restantes: 0 ✔"
 
-echo "4) avisos y errores nuevos en el log durante la prueba"
-if [ -f "$LOG" ]; then
-  problems=$(tail -n +"$((baseline + 1))" "$LOG" | grep -E "\[WRN\]|\[ERR\]" || true)
-  if [ -n "$problems" ]; then
-    echo "$problems" >&2
-    fail "el log recibió avisos o errores durante la prueba"
-  fi
-  echo "   ninguno ✔"
-else
-  echo "   (no hay log en $LOG; se salta la comprobación)"
+echo "4) cerrar el panel de la prueba"
+ensure_panel
+noctalia msg panel-close "$PANEL" >/dev/null 2>&1 || true
+# El cierre se confirma en el estado del host, no en el log (que va con
+# retraso). Otro panel puede quedar activo, pero el nuestro no.
+deadline=$((SECONDS + 5))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  [ "$(active_panel)" != "$PANEL" ] && break
+  sleep 0.15
+done
+if [ "$(active_panel)" = "$PANEL" ]; then
+  fail "el panel no se cerró (sigue activo)"
+fi
+# onClose se ejecuta con el cierre; se fuerza el volcado antes de revisar.
+if ! flush_log; then
+  fail "no se pudo forzar el volcado del log; la revisión no sería completa"
+fi
+stop_follower
+# Con la copia volcada, el último evento de nuestro panel debe ser el cierre
+# (el estado solo dice cuál está activo, no si el nuestro quedó abierto).
+last_event=$(grep -E "panel manager: (opened|closing) \"$PANEL\"" "$tmp/run.log" | tail -1)
+if ! printf '%s\n' "$last_event" | grep -Fq "closing \"$PANEL\""; then
+  fail "el panel no se cerró (último evento: ${last_event:-ninguno})"
 fi
 
-noctalia msg panel-close "$PANEL" >/dev/null 2>&1 || true
+echo "5) avisos y errores nuevos en el log durante toda la prueba"
+LOG_CHECKED=1
+review_log || fail "el log recibió avisos o errores durante la prueba"
 
 echo "OK: la prueba de humo pasó"

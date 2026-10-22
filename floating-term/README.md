@@ -167,8 +167,16 @@ the removed ones), opens them all and waits until **exactly** that many windows
 exist (a fixed sleep is not enough: `open-all` launches them one by one). It
 then rotates and checks that the positions are a permutation of the previous
 ones (every window still there, at least one moved), closes everything and
-waits for zero. Finally it reads every new log line written during the run and
-fails on **any** `[WRN]` or `[ERR]`, whether it names the plugin or not.
+waits for zero. Before each IPC it looks up the real active panel in
+`noctalia msg status` (another plugin can steal the focus) and retries the
+event if it is lost. Finally it closes the panel, confirms the close in the
+host state and in the log, and only then reads every new log line written since
+the first step (the closing included), reports how many lines it checked and
+fails on **any** `[WRN]` or `[ERR]`, whether it names the plugin or not. The
+host rotates `noctalia.log` and buffers the script-runtime lines, so the smoke
+follows the log with `tail -F` into a private copy and forces a flush with a
+no-op `log-level-set` before reviewing it. If a step fails early, the new log
+lines are still reviewed before exiting.
 
 ## Notes
 

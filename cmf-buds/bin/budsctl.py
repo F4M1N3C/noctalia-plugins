@@ -670,6 +670,21 @@ class BudsDaemon:
             self.state["model"] = model
             return True
 
+    @staticmethod
+    def _cerrar_enlace_anterior(anterior):
+        """Cierra el enlace anterior al sustituirlo.
+
+        Si su socket se queda abierto, el descriptor se fuga en cada
+        reconexion y el canal RFCOMM puede quedar ocupado, que es lo que
+        impide volver a conectarse.
+        """
+        if anterior is None:
+            return
+        try:
+            anterior.close()
+        except Exception:
+            pass
+
     def connect(self, force_bt=False):
         now = time.time()
         if self.link and self.link.connected:
@@ -722,13 +737,7 @@ class BudsDaemon:
             link.open()
             anterior = self.link
             self.link = link
-            if anterior is not None:
-                # El enlace anterior se cierra: su socket se quedaria abierto
-                # y podria dejar el canal ocupado.
-                try:
-                    anterior.close()
-                except Exception:
-                    pass
+            self._cerrar_enlace_anterior(anterior)
             with self.lock:
                 self.state["connected"] = True
                 self.state["error"] = ""

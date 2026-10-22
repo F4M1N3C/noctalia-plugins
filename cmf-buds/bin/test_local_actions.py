@@ -684,6 +684,25 @@ def test_lector_cierra_el_socket():
     return r.failures
 
 
+def test_reconectar_cierra_el_enlace_anterior():
+    print("23) al reconectar se cierra el enlace anterior (su socket no queda vivo)")
+    import socket as _socket
+
+    import budsctl
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    a, b = _socket.socketpair()
+    anterior = budsctl.BudsLink("00:00:00:00:00:00")
+    anterior.sock = a
+    anterior.connected = True
+    budsctl.BudsDaemon._cerrar_enlace_anterior(anterior)
+    r.check("el socket del enlace anterior queda cerrado", a.fileno() == -1, a.fileno())
+    r.check("el enlace anterior queda desconectado", not anterior.connected)
+    r.check("no se conecta con un enlace nulo", budsctl.BudsDaemon._cerrar_enlace_anterior(None) is None)
+    b.close()
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -731,6 +750,7 @@ def main():
         test_no_se_pisan_las_reglas_del_fichero,
         test_gesto_no_se_pierde,
         test_lector_cierra_el_socket,
+        test_reconectar_cierra_el_enlace_anterior,
     ):
         total += test()
     print("")

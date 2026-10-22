@@ -131,7 +131,7 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (50 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (53 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
 especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
 separados disparen acciones distintas, que un gesto tras restaurar el volumen
@@ -146,7 +146,7 @@ suscripción que se cierra antes de tiempo cuente como fallo**, **que el watcher
 sobreviva a un resolutor que falla**, **que un restore fallido quede en el
 log**, **que al guardar no se pisen las reglas del fichero** y **que el cierre
 del gesto no se pierda en silencio** y **que el lector cierre su socket al
-morir**.
+morir** y **que al reconectar se cierre el enlace anterior**.
 
 Las pruebas **esperan a la condición que comprueban**, no a un tiempo fijo: si
 la máquina va cargada, no falla "por el motivo equivocado", y una comprobación

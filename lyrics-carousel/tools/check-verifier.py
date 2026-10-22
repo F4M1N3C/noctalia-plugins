@@ -40,7 +40,7 @@ def run(root, env=None, ui=False):
     fallos = [
         line.strip() for line in result.stdout.split("\n") if "fallo de" in line
     ]
-    return result.returncode, fallos
+    return result.returncode, fallos, result.stdout
 
 
 def copia(root, con_tools=True):
@@ -75,7 +75,7 @@ def main(argv):
     resultados = []
 
     print("1) estado normal -> rc 0")
-    rc, fallos = run(root)
+    rc, fallos, salida = run(root)
     resultados.append(escenario("estado normal", rc, fallos, 0))
 
     print("2) .luau con error de sintaxis en mi plugin -> rc 1 y attributed a mi")
@@ -83,7 +83,7 @@ def main(argv):
     with open(probe, "w", encoding="utf-8") as handle:
         handle.write('local x = 1\nif x == 1 then\n  print("sin cerrar"\n')
     try:
-        rc, fallos = run(root)
+        rc, fallos, salida = run(root)
         resultados.append(
             escenario("error de sintaxis propio", rc, fallos, 1, "fallo de luac")
         )
@@ -106,7 +106,7 @@ def main(argv):
     with open(probe, "w", encoding="utf-8") as handle:
         handle.write("local x: number = 1\nprint(x)\n")
     try:
-        rc, fallos = run(root)
+        rc, fallos, salida = run(root)
         # El fichero es valido: la comprobacion de sintaxis no debe
         # llamarlo error. Lo que si falla es la invariante del plugin (sus
         # .luau tienen que compilar tal cual), y eso es lo que mantiene
@@ -137,7 +137,7 @@ def main(argv):
     with open(probe, "w", encoding="utf-8") as handle:
         handle.write("local x: Array<number> = {}\nprint(x)\n")
     try:
-        rc, fallos = run(root)
+        rc, fallos, salida = run(root)
         resultados.append(
             escenario(
                 "Luau con genericos: sin falso positivo",
@@ -161,7 +161,7 @@ def main(argv):
             )
         )
     try:
-        rc, fallos = run(root)
+        rc, fallos, salida = run(root)
         resultados.append(
             escenario(
                 "autotest sin nombrar",
@@ -180,7 +180,7 @@ def main(argv):
     with open(os.path.join(raiz, "tools", "check-luau-globals.py"), "w") as handle:
         handle.write("import sys\nsys.exit(3)\n")
     try:
-        rc, fallos = run(raiz)
+        rc, fallos, salida = run(raiz)
         resultados.append(
             escenario("validador que revienta", rc, fallos, 1, "fallo de check-luau-globals")
         )
@@ -192,7 +192,7 @@ def main(argv):
     os.makedirs(EMPTY_BIN, exist_ok=True)
     env = {**os.environ, "PATH": EMPTY_BIN}
     try:
-        rc, fallos = run(raiz, env=env)
+        rc, fallos, salida = run(raiz, env=env)
         resultados.append(escenario("sin compilador", rc, fallos, 1))
     finally:
         shutil.rmtree(raiz, ignore_errors=True)
@@ -202,7 +202,7 @@ def main(argv):
     os.makedirs(EMPTY_BIN, exist_ok=True)
     env = {**os.environ, "PATH": EMPTY_BIN}
     try:
-        rc, fallos = run(raiz, env=env, ui=True)
+        rc, fallos, salida = run(raiz, env=env, ui=True)
         resultados.append(
             escenario("sin noctalia", rc, fallos, 1, "fallo de ejercicio")
         )
@@ -226,17 +226,26 @@ def main(argv):
     with open(probe, "wb") as handle:
         handle.write(b"local x = '\xff\xfe'\nif x == 1 then\n  print(\"sin cerrar\"\n")
     try:
-        rc, fallos = run(root)
+        rc, fallos, salida = run(root)
         resultados.append(
             escenario("bytes no UTF-8", rc, fallos, 1, "fallo de luac")
         )
     finally:
         os.remove(probe)
 
-    print("10) sin validadores compartidos -> rc 1 (infraestructura)")
+    print("10) el ejercicio se hace de verdad (el IPC llega al panel)")
+    rc, fallos, salida = run(root, ui=True)
+    resultados.append(escenario("el ejercicio se hace", rc, fallos, 0))
+    resultados.append(
+        escenario("el verificador dice que el ejercicio fue ok", 0, [], 0)
+        if "ejercicio propio: ok" in salida
+        else escenario("el verificador dice que el ejercicio fue ok", 1, [], 0)
+    )
+
+    print("11) sin validadores compartidos -> rc 1 (infraestructura)")
     raiz = copia(root, con_tools=False)
     try:
-        rc, fallos = run(raiz)
+        rc, fallos, salida = run(raiz)
         resultados.append(
             escenario("sin validadores compartidos", rc, fallos, 1)
         )

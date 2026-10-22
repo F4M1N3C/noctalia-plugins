@@ -143,6 +143,12 @@ responding). A file that cannot be read (invalid UTF-8) is reported, not
 skipped, and the verifier never dies with a traceback: if something
 escapes, it says so and exits with an error.
 
+The runtime part is checked too: the panel is opened and an event is sent
+to it, and the verifier checks that the event was actually delivered
+(`dispatched 1`). The panel entry only exists while the panel is open and
+takes a few seconds to be ready, so sending the event too early loses it
+without a trace — which is why the check is there.
+
 ```sh
 python3 ~/.local/share/noctalia/plugins/lyrics-carousel/tools/check-verifier.py
 ```

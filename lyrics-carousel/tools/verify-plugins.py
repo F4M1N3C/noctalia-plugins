@@ -73,10 +73,17 @@ def run(cmd, timeout=20):
         return None
 
 
-def msg(*args) -> bool:
-    """Envia un comando a Noctalia. Devuelve si ha funcionado."""
+def msg(*args):
+    """Envia un comando a Noctalia.
+
+    Devuelve (ha_funcionado, salida). La salida importa: "ok: dispatched 1"
+    dice que el evento ha llegado a la entrada, mientras que "error: ..."
+    dice que no (por ejemplo, si el panel todavia no esta listo).
+    """
     result = run(["noctalia", "msg", *args])
-    return result is not None and result.returncode == 0
+    if result is None or result.returncode != 0:
+        return False, ""
+    return True, (result.stdout or "").strip()
 
 
 def panel_of(plugin: str) -> str:
@@ -160,38 +167,47 @@ def plugin_id(plugin: str) -> str:
         return plugin
 
 
-def exercise(plugin: str) -> bool:
+def exercise(plugin: str):
     """Ejercita un plugin (abrir/cerrar su panel y tocar un ajuste).
 
-    Devuelve si alguno de los comandos ha funcionado: si Noctalia no
-    responde, la fase de ejercicio no se ha hecho y la revision del log
-    no demuestra nada.
+    Devuelve (ok, problemas). Se comprueba que el IPC llega de verdad: la
+    entrada del panel solo existe con el panel abierto, y tarda unos
+    segundos en estar lista. Sin comprobarlo, el ejercicio podria no
+    ejercitar nada y no decir nada.
     """
     ok = False
+    problems = []
     panel = panel_of(plugin)
     if panel:
-        ok = msg("panel-toggle", panel) or ok
-        time.sleep(1.2)
-        ok = msg("panel-toggle", panel) or ok
-        time.sleep(0.7)
-        # Se prueba tambien la escritura de un ajuste: se reescribe el MISMO
-        # valor, asi la configuracion no cambia pero se ejercitan la
-        # escritura y la recarga de la configuracion.
+        abierto, _ = msg("panel-toggle", panel)
+        ok = abierto or ok
+        # La entrada del panel tarda en estar lista: si se manda el IPC
+        # antes, Noctalia responde "not ready" y el evento se pierde.
+        time.sleep(3.5)
         keys = bool_settings(plugin)
         if keys:
             value = current_bool(plugin, keys[0])
-            ok = msg(
+            enviado, salida = msg(
                 "plugin", panel, "all", "set",
                 "%s=%s bool" % (keys[0], "true" if value else "false"),
-            ) or ok
-            time.sleep(2.0)
+            )
+            ok = enviado or ok
+            if not enviado or "dispatched" not in salida:
+                problems.append(
+                    "el panel de %s no atendio el IPC 'set' (%s)"
+                    % (plugin, salida or "sin salida")
+                )
+            time.sleep(1.5)
+        cerrado, _ = msg("panel-toggle", panel)
+        ok = cerrado or ok
+        time.sleep(0.7)
     widget = widget_of(plugin)
     if widget:
-        ok = msg("panel-toggle", widget) or ok
+        ok = msg("panel-toggle", widget)[0] or ok
         time.sleep(1.0)
-        ok = msg("panel-toggle", widget) or ok
+        ok = msg("panel-toggle", widget)[0] or ok
         time.sleep(0.5)
-    return ok
+    return ok, problems
 
 
 def classify(text: str):
@@ -526,6 +542,22 @@ def static_checks(root: str):
 
 
 def main(argv):
+    """Punto de entrada de la verificacion.
+
+    Nunca muere con un traceback: si algo se escapa, lo dice y devuelve
+    error, para que no pueda parecer que todo esta bien.
+    """
+    try:
+        return _main(argv)
+    except Exception as error:  # noqa: BLE001
+        import traceback
+
+        print("--- la verificacion ha fallado inesperadamente: %r ---" % (error,))
+        traceback.print_exc()
+        return 1
+
+
+def _main(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-ui", action="store_true", help="no tocar la interfaz")
     parser.add_argument("--root", default=os.path.join(HOME, "noctalia-plugins"))
@@ -543,9 +575,13 @@ def main(argv):
 
     offset = log_size()
     exercised = False
+    exercise_problems = []
     if not args.no_ui:
         for plugin in plugins:
-            exercised = exercise(plugin) or exercised
+            funciona, problemas = exercise(plugin)
+            exercised = funciona or exercised
+            for problema in problemas:
+                exercise_problems.append((plugin, problema))
         time.sleep(2)
     text = read_since(offset)
     if not os.path.isfile(LOG):
@@ -566,7 +602,16 @@ def main(argv):
     # pueden bloquear la verificacion de este.
     problems = [(label, line, log_owner(line)) for label, line in problems]
 
-    print("plugins ejercitados: %d" % len(plugins))
+    propios = [p for p in exercise_problems if p[0] == OWNER]
+    if args.no_ui:
+        estado = "sin hacer"
+    elif not exercised:
+        estado = "no se ha ejercitado nada"
+    elif propios:
+        estado = "con problemas"
+    else:
+        estado = "ok"
+    print("plugins ejercitados: %d (ejercicio propio: %s)" % (len(plugins), estado))
     print("líneas de log revisadas: %d" % len(text.split("\n")))
     print("avisos esperados (ajustes de plugins no instalados): %d" % expected)
     my_problems = [item for item in problems if item[2] == OWNER]
@@ -647,6 +692,13 @@ def main(argv):
             others.append((script, detail))
     for _kind, _owner, label, detail in infra_problems:
         mine.append((label, detail))
+    for plugin, problema in exercise_problems:
+        # Si el plugin propio no atendio el IPC, no se ha podido
+        # ejercitar: no se puede decir que funciona.
+        if plugin == OWNER:
+            mine.append(("ejercicio", problema))
+        else:
+            others.append(("ejercicio", "[%s] %s" % (plugin, problema)))
     for script, detail in others:
         print(
             "--- pendiente de otra sesion (%s) ---\n%s"
@@ -661,16 +713,4 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main(sys.argv))
-    except SystemExit:
-        raise
-    except Exception as error:  # noqa: BLE001
-        # La verificacion nunca debe morir con un traceback: si algo se
-        # escapa, se dice y se sale con error, para que no parezca que
-        # todo esta bien.
-        import traceback
-
-        print("--- la verificacion ha fallado inesperadamente: %r ---" % (error,))
-        traceback.print_exc()
-        raise SystemExit(1)
+    raise SystemExit(main(sys.argv))

@@ -111,11 +111,16 @@ end
 -- Borra las miniaturas que ya no usa ninguna tarjeta y los archivos de lote
 -- que se hayan quedado por el camino.
 --
--- Se borra por *uso* y no por widget: si dos capturas se cruzan (la ventana se
--- movió mientras se capturaba), la limpieza anterior podía borrar justo el
--- fichero que el árbol de la UI tenía referenciado y el host se quejaba con
--- "image failed to load". Con esta lista, lo que se usa nunca se borra.
-function M.pruneUnused(currentPaths)
+-- Se borra por *uso* y no por widget, y solo si además son antiguas: el host
+-- puede volver a aplicar un árbol guardado (por ejemplo, al reabrir el panel)
+-- y pedir una imagen que se borró hace un momento. Con la antigüedad mínima
+-- ese fichero sigue ahí durante un rato y el aviso "image failed to load" no
+-- aparece; los ficheros viejos se van yendo solos.
+--
+-- `currentPaths` = rutas que usan las tarjetas ahora mismo.
+-- `maxAgeSeconds` = antigüedad a partir de la cual un fichero no usado se
+-- considera caducable.
+function M.pruneUnused(currentPaths, maxAgeSeconds)
   local dir = M.cacheDir()
   if dir == nil then
     return
@@ -124,11 +129,20 @@ function M.pruneUnused(currentPaths)
   if files == nil then
     return
   end
+
+  maxAgeSeconds = tonumber(maxAgeSeconds) or 1800
+  local now = os.time()
+
   for _, file in ipairs(files) do
     if file:sub(1, 6) == "batch-" or file == "batch.json" then
       pcall(noctalia.removeFile, dir .. "/" .. file)
     elseif file:sub(-4) == ".png" and not currentPaths[dir .. "/" .. file] then
-      pcall(noctalia.removeFile, dir .. "/" .. file)
+      local path = dir .. "/" .. file
+      local info = noctalia.fileInfo(path)
+      local mtime = type(info) == "table" and tonumber(info.mtime) or nil
+      if mtime == nil or (now - mtime) >= maxAgeSeconds then
+        pcall(noctalia.removeFile, path)
+      end
     end
   end
 end

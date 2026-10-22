@@ -415,7 +415,9 @@ captureThumbs = function()
     for path in pairs(state.thumbUsed or {}) do
       used[path] = true
     end
-    preview.pruneUnused(used)
+    -- La antigüedad mínima (30 min) deja margen por si el host vuelve a
+    -- aplicar un árbol guardado con imágenes que ya no están en uso.
+    preview.pruneUnused(used, 1800)
     if state.open then
       render()
     end

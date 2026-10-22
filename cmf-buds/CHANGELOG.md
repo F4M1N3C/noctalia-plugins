@@ -129,9 +129,10 @@ Ademas se anade una prueba para el temporizador que cierra el gesto: si
 falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
 motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
 
-Suite: 44 -> 61 comprobaciones (nuevas: el cierre del gesto protegido, que el
-lector cierre su socket, que al reconectar se cierre el enlace anterior, y
-el protocolo de tramas: construccion, CRC, parseo, basura y trama incompleta).
+Suite: 44 -> 72 comprobaciones (nuevas: el cierre del gesto protegido, que el
+lector cierre su socket, que al reconectar se cierre el enlace anterior, el
+protocolo de tramas (construccion, CRC, parseo, basura y trama incompleta) y el
+codec de floats del ecualizador con la deteccion de modelo del dispositivo).
 
 Ademas, el buffer de recepcion se acota: si una trama llega con la longitud
 corrupta, el parser se quedaba esperando para siempre y el buffer crecia sin

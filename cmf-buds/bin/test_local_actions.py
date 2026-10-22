@@ -746,6 +746,49 @@ def test_tramas_rfcmm():
     return r.failures
 
 
+def test_ecodec_y_modelo():
+    print("25) el codec de floats del ecualizador y la deteccion de modelo")
+    import budsctl
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    for valor in (0.0, 1.0, -1.0, 0.5, 12.0, -7.25):
+        codificado = budsctl.eq_float_encode(valor)
+        recuperado = budsctl.eq_float_decode(codificado)
+        r.check(
+            "el float %s hace ida y vuelta" % valor,
+            abs(recuperado - valor) < 1e-6,
+            (valor, recuperado),
+        )
+    r.check(
+        "el preamp tiene su codificacion propia",
+        budsctl.eq_float_encode(0.0, preamp=True) == bytes([0x00, 0x00, 0x00, 0x80]),
+    )
+    r.check(
+        "decodificar basura no revienta",
+        budsctl.eq_float_decode(b"") == 0.0 and budsctl.eq_float_decode(b"x") == 0.0,
+    )
+    r.check(
+        "el modelo se detecta por el nombre",
+        budsctl.model_from_name("CMF Buds Pro 2") == "B172"
+        and budsctl.model_from_name("cmf buds 2 plus") == "B171"
+        and budsctl.model_from_name("CMF Buds 2") == "B168"
+        and budsctl.model_from_name("CMF Buds") == "B168",
+    )
+    r.check(
+        "un nombre desconocido no da modelo",
+        budsctl.model_from_name("otra cosa") is None
+        and budsctl.model_from_name(None) is None
+        and budsctl.model_from_name("") is None,
+    )
+    r.check(
+        "el modelo se detecta por el numero de serie",
+        budsctl.model_from_serial("1234769999") == "B172"
+        and budsctl.model_from_serial("1234") is None
+        and budsctl.model_from_serial(None) is None,
+    )
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -795,6 +838,7 @@ def main():
         test_lector_cierra_el_socket,
         test_reconectar_cierra_el_enlace_anterior,
         test_tramas_rfcmm,
+        test_ecodec_y_modelo,
     ):
         total += test()
     print("")

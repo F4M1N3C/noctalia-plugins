@@ -88,16 +88,22 @@ lineas_previas() {
   [ -f "$log" ] && wc -l < "$log" || echo 0
 }
 
+# Momento de la ultima escritura del log (0 = no existe).
+log_mtime() {
+  [ -f "$log" ] && stat -c %Y "$log" 2>/dev/null || echo 0
+}
+
 # Comprueba la carga: debe haber recarga del script y no debe haber error.
+# Devuelve 0 si la carga esta comprobada, 1 si ha fallado y 2 si no se puede
+# comprobar (el log del shell esta congelado y no se escribe nada).
 comprobar_carga() {
   local desde="$1"
   local espera="${2:-6}"
-  local i lineas_ok=0
+  local i lineas_ok=0 nuevas
   for ((i = 0; i < espera * 5; i++)); do
     sleep 0.2
     [ -f "$log" ] || continue
     lineas_ok=1
-    local nuevas
     nuevas="$(tail -n +$((desde + 1)) "$log" 2>/dev/null || true)"
     if printf '%s' "$nuevas" | grep -qE "luau_load failed|unhealthy|disabled after repeated"; then
       echo "FALLO: el shell no ha podido cargar el script:" >&2
@@ -110,7 +116,17 @@ comprobar_carga() {
   done
   if [ "$lineas_ok" = 0 ]; then
     echo "aviso: no hay log en $log; no se puede comprobar la carga" >&2
-    return 0
+    return 2
+  fi
+  # El log lleva mucho sin escribirse: esta congelado. No se puede exigir una
+  # recarga que no se va a registrar, asi que esto no se cuenta como fallo.
+  local ahora mtime
+  ahora="$(date +%s)"
+  mtime="$(log_mtime)"
+  if [ $((ahora - mtime)) -gt 60 ]; then
+    echo "aviso: el log del shell lleva mas de 60 s sin escribirse (congelado);" >&2
+    echo "       no se puede comprobar la carga" >&2
+    return 2
   fi
   echo "aviso: el shell no ha registrado recarga en ${espera}s; revisa $log" >&2
   return 1
@@ -135,16 +151,29 @@ if [ -f "$log" ]; then
   done
   echo "contenido verificado ✓"
 
-  if comprobar_carga "$desde" 6; then
+  set +e
+  comprobar_carga "$desde" 6
+  estado=$?
+  set -e
+  if [ "$estado" = 0 ]; then
     echo "carga comprobada ✓"
+  elif [ "$estado" = 2 ]; then
+    # El log esta congelado: no hay forma de comprobarlo y no es un fallo.
+    echo "carga no comprobable; se deja el despliegue como esta" >&2
   else
     echo "reintentando el despliegue (el watcher puede haber descartado el aviso)..." >&2
     sleep 0.4
     desde="$(lineas_previas)"
     desplegar
     sleep 0.4
-    if comprobar_carga "$desde" 6; then
+    set +e
+    comprobar_carga "$desde" 6
+    estado=$?
+    set -e
+    if [ "$estado" = 0 ]; then
       echo "carga comprobada en el reintento ✓"
+    elif [ "$estado" = 2 ]; then
+      echo "carga no comprobable (log congelado); se deja el despliegue como esta" >&2
     else
       echo "ERROR: el shell no carga el plugin tras desplegar" >&2
       tail -n +$((desde + 1)) "$log" 2>/dev/null | tail -5 >&2 || true

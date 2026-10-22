@@ -73,8 +73,10 @@ def run(cmd, timeout=20):
         return None
 
 
-def msg(*args) -> None:
-    run(["noctalia", "msg", *args])
+def msg(*args) -> bool:
+    """Envia un comando a Noctalia. Devuelve si ha funcionado."""
+    result = run(["noctalia", "msg", *args])
+    return result is not None and result.returncode == 0
 
 
 def panel_of(plugin: str) -> str:
@@ -158,12 +160,19 @@ def plugin_id(plugin: str) -> str:
         return plugin
 
 
-def exercise(plugin: str) -> None:
+def exercise(plugin: str) -> bool:
+    """Ejercita un plugin (abrir/cerrar su panel y tocar un ajuste).
+
+    Devuelve si alguno de los comandos ha funcionado: si Noctalia no
+    responde, la fase de ejercicio no se ha hecho y la revision del log
+    no demuestra nada.
+    """
+    ok = False
     panel = panel_of(plugin)
     if panel:
-        msg("panel-toggle", panel)
+        ok = msg("panel-toggle", panel) or ok
         time.sleep(1.2)
-        msg("panel-toggle", panel)
+        ok = msg("panel-toggle", panel) or ok
         time.sleep(0.7)
         # Se prueba tambien la escritura de un ajuste: se reescribe el MISMO
         # valor, asi la configuracion no cambia pero se ejercitan la
@@ -171,17 +180,18 @@ def exercise(plugin: str) -> None:
         keys = bool_settings(plugin)
         if keys:
             value = current_bool(plugin, keys[0])
-            msg(
+            ok = msg(
                 "plugin", panel, "all", "set",
                 "%s=%s bool" % (keys[0], "true" if value else "false"),
-            )
+            ) or ok
             time.sleep(2.0)
     widget = widget_of(plugin)
     if widget:
-        msg("panel-toggle", widget)
+        ok = msg("panel-toggle", widget) or ok
         time.sleep(1.0)
-        msg("panel-toggle", widget)
+        ok = msg("panel-toggle", widget) or ok
         time.sleep(0.5)
+    return ok
 
 
 def classify(text: str):
@@ -351,9 +361,10 @@ def main(argv):
         )
 
     offset = log_size()
+    exercised = False
     if not args.no_ui:
         for plugin in plugins:
-            exercise(plugin)
+            exercised = exercise(plugin) or exercised
         time.sleep(2)
     text = read_since(offset)
     if not os.path.isfile(LOG):
@@ -362,6 +373,13 @@ def main(argv):
         infra_problems = [infra("log de Noctalia", "no existe: " + LOG)]
     else:
         infra_problems = []
+    if not args.no_ui and not exercised:
+        infra_problems.append(
+            infra(
+                "ejercicio de los plugins",
+                "ningún comando a Noctalia ha funcionado: no se ha ejercitado nada",
+            )
+        )
     problems, expected = classify(text)
     # Cada problema del log se atribuye a su plugin: los de otro plugin no
     # pueden bloquear la verificacion de este.
@@ -397,6 +415,15 @@ def main(argv):
     ]
     for selftest in selftests:
         if not os.path.isfile(selftest):
+            if selftest.startswith(args.root):
+                # El autotest del repositorio es parte del plugin: si no
+                # esta, la verificacion no comprueba lo que debe.
+                failures.append(
+                    infra(
+                        "selftest (repo)",
+                        "no existe: " + selftest,
+                    )
+                )
             continue
         result = run([sys.executable, selftest], timeout=90)
         where = "repo" if selftest.startswith(args.root) else "despliegue"

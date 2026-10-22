@@ -1519,12 +1519,19 @@ class LyricsCarousel:
             except Exception as error:  # noqa: BLE001
                 self.image = None
                 self.image_error = repr(error)
-        if self.cfg["render_mode"] == "image" and self.image is None:
+        if self.cfg["render_mode"] == "image":
             # Degradar en silencio deja al usuario creyendo que esta viendo
-            # el modo imagen cuando en realidad es el de texto: se avisa.
-            reason = self.image_error or IMAGE_ERROR or "motivo desconocido"
-            self.warn(f"modo imagen no disponible: {reason}")
-            self.status_message = "modo imagen no disponible"
+            # el modo imagen cuando en realidad es el de texto: se avisa, en
+            # el log y tambien en la propia ventana.
+            if self.image is None:
+                reason = self.image_error or IMAGE_ERROR or "motivo desconocido"
+            elif not getattr(getattr(self.image, "gfx", None), "supported", False):
+                reason = "el terminal no admite el protocolo de gráficos"
+            else:
+                reason = ""
+            if reason:
+                self.warn(f"modo imagen no disponible: {reason}")
+                self.status_message = f"modo imagen no disponible: {reason}"
         self.last_mode = ""
         self._demo_start = time.monotonic() - max(0.0, args.demo_offset)
         if self.demo:
@@ -2020,6 +2027,19 @@ class LyricsCarousel:
             bottom = bottom - 1
             self._hints(rows)
 
+        if self.status_message:
+            # Fila propia para el aviso: el contenido se queda por debajo,
+            # asi no pisa ni la letra ni el pie.
+            notice_row = top if top > 0 else 1
+            notice = truncate(self.status_message, self.width - 4)
+            rows[notice_row] = (
+                " " * max(0, (self.width - cell_width(notice)) // 2)
+                + fg(self.theme.faint)
+                + notice
+                + RESET
+            )
+            top = notice_row + 1
+
         if self.state == "idle":
             self._idle_block(
                 rows, t, "nada sonando",
@@ -2082,6 +2102,7 @@ class LyricsCarousel:
                 self.log("modo imagen desactivado tras varios fallos")
                 self.image_disabled = True
                 self.cfg["render_mode"] = "text"
+                self.status_message = "modo imagen desactivado tras varios fallos"
                 self.need_clear = True
                 self.last_mode = ""
                 self._draw_text_frame()

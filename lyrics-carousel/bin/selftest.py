@@ -65,10 +65,13 @@ def check_diagnostics(label: str, path: str):
     except Exception as error:  # noqa: BLE001
         check(f"diagnóstico ({label})", False, repr(error)[:160])
         return None
+    # Lo que tiene que resolver es el directorio real de ese script (el
+    # enlace simbólico apunta al despliegue, no al repo).
+    esperado = os.path.dirname(os.path.realpath(path))
     check(
         f"diagnóstico ({label})",
-        info.get("bin_dir") == HERE,
-        f"bin_dir={info.get('bin_dir')}",
+        info.get("bin_dir") == esperado,
+        f"bin_dir={info.get('bin_dir')} esperado={esperado}",
     )
     check(
         f"módulos hermanos ({label})",
@@ -152,7 +155,9 @@ def main(argv):
     if os.path.exists(LAUNCHER):
         check_diagnostics("enlace simbólico", LAUNCHER)
     else:
-        check("enlace simbólico disponible", False, LAUNCHER)
+        # El enlace del PATH es una comodidad, no un requisito: el panel
+        # lanza el script por ruta absoluta. Si no esta, no es un fallo.
+        print("  (no hay enlace simbólico en %s: el panel usa la ruta absoluta)" % LAUNCHER)
 
     # 8) el autotest no debe dejar bytecode en el directorio desde el que se
     #    lanza el script.

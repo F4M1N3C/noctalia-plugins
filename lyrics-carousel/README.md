@@ -122,6 +122,8 @@ Both are used by `tools/verify-plugins.py`.
 
 - The window is opened with `hl.dsp.exec_cmd(...)` and the class
   `noctalia-lyrics-carousel`; the script can also be run by hand as `lyrics-carousel`.
+- The panel starts the script by its absolute path (`python3 <plugin>/bin/lyrics-carousel`),
+  so it does not depend on the `PATH` nor on the executable bit.
 - Outside kitty (or without Pillow) the script falls back to text mode on its own,
   and it says so in `~/.cache/lyrics-carousel/debug.log` instead of doing it silently.
 - The accent colour is read from the theme Noctalia generates for kitty, so it follows

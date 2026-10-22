@@ -262,22 +262,34 @@ def main(argv):
     else:
         print("--- sin errores ni avisos inesperados ---")
 
-    # Autotest del plugin: comprueba las suposiciones del entorno (helper,
-    # directorio de datos, herramientas externas).
-    selftest = os.path.join(
-        os.path.expanduser("~"),
-        ".local/share/noctalia/plugins/lyrics-carousel/bin/selftest.py",
-    )
-    if os.path.isfile(selftest):
-        result = run([sys.executable, selftest], timeout=90)
-        if result is None:
-            failures.append(("selftest", "no se pudo ejecutar"))
-        elif result.returncode != 0:
-            failures.append(("selftest", result.stdout.strip()[-600:]))
-        else:
-            print("autotest: " + result.stdout.strip().splitlines()[-1])
-
     failures, compiled, skipped = static_checks(args.root)
+
+    # Autotest del plugin: comprueba las suposiciones del entorno (helper,
+    # directorio de datos, herramientas externas, modulos hermanos). Se usa
+    # el del repositorio (fuente de verdad) y, si esta desplegado, tambien
+    # el de la copia instalada.
+    selftests = [
+        os.path.join(args.root, "lyrics-carousel", "bin", "selftest.py"),
+        os.path.expanduser(
+            "~/.local/share/noctalia/plugins/lyrics-carousel/bin/selftest.py"
+        ),
+    ]
+    for selftest in selftests:
+        if not os.path.isfile(selftest):
+            continue
+        result = run([sys.executable, selftest], timeout=90)
+        where = "repo" if selftest.startswith(args.root) else "despliegue"
+        if result is None:
+            failures.append(("selftest (%s)" % where, "no se pudo ejecutar"))
+        elif result.returncode != 0:
+            failures.append(
+                ("selftest (%s)" % where, result.stdout.strip()[-600:])
+            )
+        else:
+            print(
+                "autotest (%s): %s" % (where, result.stdout.strip().splitlines()[-1])
+            )
+
     print("ficheros .luau compilados: %d (con sintaxis Luau, omitidos: %d)" % (compiled, skipped))
     mine = []
     others = []

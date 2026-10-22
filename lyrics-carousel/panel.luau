@@ -340,11 +340,19 @@ launch = function()
   local screenWidth, screenHeight = outputGeometry()
   local x, y = anchorPosition(anchor, width, height, screenWidth, screenHeight)
 
+  -- Se lanza el script por ruta absoluta (y con python3): depender del
+  -- PATH exigiria un enlace simbolico en ~/.local/bin que el plugin no
+  -- crea, y asi tampoco hace falta el bit de ejecucion.
+  local script = "lyrics-carousel"
+  local pluginDir = noctalia.pluginDir()
+  if pluginDir ~= nil and pluginDir ~= "" then
+    script = "python3 " .. pluginDir .. "/bin/lyrics-carousel"
+  end
   local command = string.format(
     "kitty -o confirm_os_window_close=0 -o font_family=%s -o font_size=%d --class noctalia-lyrics-carousel --title lyrics -e sh -lc %s",
     shellQuote(family),
     size,
-    shellQuote("lyrics-carousel")
+    shellQuote(script)
   )
   local rules = string.format(
     "{ float = true, move = { %d, %d }, size = { %d, %d } }",

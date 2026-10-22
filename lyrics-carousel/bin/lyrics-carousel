@@ -1243,8 +1243,14 @@ FLOAT_KEYS = ("active_scale",)
 SETTINGS_PATH = os.path.expanduser("~/.local/state/noctalia/settings.toml")
 
 
+# La ruta del fichero de overrides puede redirigirse con la variable de
+# entorno LYRICS_CAROUSEL_OVERRIDES: asi las pruebas no tocan el estado
+# real (y no compiten con las escrituras asincronas del script).
 OVERRIDES_PATH = os.path.expanduser(
-    "~/.local/state/noctalia/plugins/data/faminec/lyrics-carousel/overrides.json"
+    os.environ.get(
+        "LYRICS_CAROUSEL_OVERRIDES",
+        "~/.local/state/noctalia/plugins/data/faminec/lyrics-carousel/overrides.json",
+    )
 )
 
 

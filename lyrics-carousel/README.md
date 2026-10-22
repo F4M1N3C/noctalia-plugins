@@ -121,6 +121,13 @@ as they were). It also checks that the demo mode does not ask any lyrics
 provider for anything — and that the script's debug log is actually being
 written, so that check is not vacuous.
 
+The self-test never touches the real state: the overrides file can be
+redirected with the `LYRICS_CAROUSEL_OVERRIDES` environment variable (the
+script and the helper both honour it), and the test uses a temporary one.
+That also avoids a race: the script writes asynchronously, so a write
+could land after the test had finished and end up applied to the real
+settings the next time the panel is closed.
+
 `--diagnostics` prints the same information for the running script as JSON.
 Both are used by `tools/verify-plugins.py`.
 

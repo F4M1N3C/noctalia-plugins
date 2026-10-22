@@ -140,8 +140,15 @@ def karaoke_actual() -> bool:
 
 
 def check_atajos():
-    """Los atajos 'd' y 'k' alternan sus ajustes y los guardan."""
-    overrides = os.path.join(DATA_DIR, "overrides.json")
+    """Los atajos 'd' y 'k' alternan sus ajustes y los guardan.
+
+    La escritura se hace en un fichero temporal (variable de entorno
+    LYRICS_CAROUSEL_OVERRIDES): asi la prueba no toca el estado real y
+    no compite con la escritura asincrona del script, que puede llegar
+    despues de que la prueba haya terminado.
+    """
+    temporal = tempfile.mkdtemp(prefix="lyrics-carousel-selftest-")
+    overrides = os.path.join(temporal, "overrides.json")
     previo = None
     if os.path.isfile(overrides):
         try:
@@ -164,6 +171,7 @@ def check_atajos():
         import termios
         import time
 
+        os.environ["LYRICS_CAROUSEL_OVERRIDES"] = overrides
         pid, fd = pty.fork()
         if pid == 0:
             os.chdir("/")
@@ -255,6 +263,7 @@ def check_atajos():
         check("el atajo 'k' alterna el karaoke", False, str(error)[:120])
     finally:
         restaurar_overrides(overrides, previo)
+        shutil.rmtree(temporal, ignore_errors=True)
 
 
 def restaurar_overrides(path, previo):

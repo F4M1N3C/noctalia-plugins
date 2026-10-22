@@ -27,8 +27,14 @@ PLUGIN_ID = "faminec/lyrics-carousel"
 SECTION = f'[plugin_settings."{PLUGIN_ID}"]'
 SETTINGS = os.path.expanduser("~/.local/state/noctalia/settings.toml")
 
+# La ruta del fichero de overrides puede redirigirse con la variable de
+# entorno LYRICS_CAROUSEL_OVERRIDES (la usa el autotest para no tocar el
+# estado real).
 OVERRIDES = os.path.expanduser(
-    "~/.local/state/noctalia/plugins/data/faminec/lyrics-carousel/overrides.json"
+    os.environ.get(
+        "LYRICS_CAROUSEL_OVERRIDES",
+        "~/.local/state/noctalia/plugins/data/faminec/lyrics-carousel/overrides.json",
+    )
 )
 
 ALLOWED = {

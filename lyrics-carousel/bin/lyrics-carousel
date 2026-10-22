@@ -1309,77 +1309,6 @@ def load_settings() -> dict:
     return cfg
 
 
-def write_setting(key: str, value) -> bool:
-    """Guarda un ajuste en el settings.toml de Noctalia (para los atajos)."""
-    if key not in DEFAULTS:
-        return False
-    if isinstance(value, bool):
-        raw = "true" if value else "false"
-    elif isinstance(value, int):
-        raw = str(value)
-    elif isinstance(value, float):
-        raw = str(value)
-    else:
-        raw = '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-    # El script y el panel pueden escribir a la vez: el lock serializa la
-    # lectura-modificacion-escritura para que no se pisen.
-    lock_path = SETTINGS_PATH + ".lock"
-    try:
-        lock = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
-    except OSError:
-        return False
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        try:
-            with open(SETTINGS_PATH, encoding="utf-8") as handle:
-                text = handle.read()
-        except OSError:
-            return False
-        updated = patch_settings(text, key, raw)
-        if updated == text:
-            return False
-        temporary = ""
-        try:
-            directory = os.path.dirname(SETTINGS_PATH)
-            handle = tempfile.NamedTemporaryFile(
-                "w", encoding="utf-8", dir=directory, delete=False, suffix=".tmp"
-            )
-            temporary = handle.name
-            with handle:
-                handle.write(updated)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, SETTINGS_PATH)
-            temporary = ""
-        except OSError as error:
-            if temporary:
-                try:
-                    os.unlink(temporary)
-                except OSError:
-                    pass
-            print(f"no se pudo guardar {key}: {error}", file=sys.stderr)
-            return False
-        # Comprobacion: el ajuste tiene que estar en el fichero de verdad.
-        try:
-            with open(SETTINGS_PATH, "rb") as handle:
-                check = tomllib.load(handle)
-        except (OSError, tomllib.TOMLDecodeError) as error:
-            print(f"el settings.toml quedo ilegible: {error}", file=sys.stderr)
-            return False
-        section = (check.get("plugin_settings") or {}).get(PLUGIN_ID) or {}
-        if key not in section:
-            print(f"no se pudo guardar {key}", file=sys.stderr)
-            return False
-        return True
-    finally:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_UN)
-        except OSError:
-            pass
-        os.close(lock)
-
-
 def patch_settings(text: str, key: str, raw_value: str) -> str:
     """Inserta o reemplaza una clave dentro de la sección del plugin."""
     section = f'[plugin_settings."{PLUGIN_ID}"]'
@@ -2203,7 +2132,11 @@ class LyricsCarousel:
             subprocess.Popen(
                 [
                     "python3",
-                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "set-setting.py"),
+                    # realpath: el script suele lanzarse por el enlace
+                    # simbolico de ~/.local/bin, y el helper vive en bin/.
+                    os.path.join(
+                        os.path.dirname(os.path.realpath(__file__)), "set-setting.py"
+                    ),
                     "override",
                     key,
                     str(value),

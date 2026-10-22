@@ -177,6 +177,7 @@ def set_override(key: str, value: str, kind: str) -> int:
     """
     lock_path = OVERRIDES + ".lock"
     try:
+        os.makedirs(os.path.dirname(OVERRIDES), exist_ok=True)
         lock = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
     except OSError as error:
         print(f"no se pudo abrir el lock: {error}", file=sys.stderr)

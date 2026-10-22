@@ -10,7 +10,7 @@ plugin_api = 34
 author = "faminec"
 license = "MIT"
 dependencies = ["python3", "bluetoothctl", "pactl"]
-tags = ["audio", "bluetooth", "cmf", "nothing", "utility"]
+tags = ["audio", "utility", "bar", "panel", "hardware"]
 icon = "headphones"
 description = "Control completo de los CMF Buds Pro 2: ANC, EQ, Ultra Bass, gestos del estuche, audio espacial y más."
 

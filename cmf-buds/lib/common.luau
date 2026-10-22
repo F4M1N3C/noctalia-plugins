@@ -54,8 +54,25 @@ function M.set_last_tab(tab)
   end
 end
 
+-- Las traducciones del plugin estan anidadas (como exige la tienda) y las
+-- llamadas usan rutas con puntos ("button.refresh"), asi que se resuelve la
+-- ruta dentro de la tabla.
+local function _resolver(tabla, ruta)
+  local actual = tabla
+  for parte in string.gmatch(ruta, "[^%.]+") do
+    if type(actual) ~= "table" then
+      return nil
+    end
+    actual = actual[parte]
+    if actual == nil then
+      return nil
+    end
+  end
+  return actual
+end
+
 function M.tr(key, args)
-  local out = M.t and M.t[key]
+  local out = _resolver(M.t, key)
   if out == nil then
     out = noctalia.tr(key, args)
   end

@@ -1276,6 +1276,68 @@ def test_contrato_del_estado():
     return r.failures
 
 
+def test_traducciones():
+    print("37) las traducciones son consistentes y validas para la tienda")
+    import json
+    import re
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def aplanar(tabla, prefijo=""):
+        salida = {}
+        for clave, valor in tabla.items():
+            ruta = prefijo + clave
+            if isinstance(valor, dict):
+                salida.update(aplanar(valor, ruta + "."))
+            else:
+                salida[ruta] = valor
+        return salida
+
+    tablas = {}
+    for lang in ("es", "en"):
+        with open(
+            os.path.join(raiz, "translations", "%s.json" % lang), encoding="utf-8"
+        ) as fh:
+            tablas[lang] = json.load(fh)
+    planas = {lang: aplanar(t) for lang, t in tablas.items()}
+
+    r.check(
+        "es.json y en.json tienen las mismas claves",
+        set(planas["es"]) == set(planas["en"]),
+        sorted(set(planas["es"]) ^ set(planas["en"])),
+    )
+    r.check("no hay claves vacias", all(v != "" for v in planas["es"].values()))
+
+    # La tienda exige que cada clave sea un segmento simple en minusculas
+    # (a-z, 0-9, guiones y guiones bajos sin ir delante) y que el anidamiento
+    # se exprese con objetos, no con puntos.
+    segmento = re.compile(r"^[a-z0-9-][a-z0-9_-]*$")
+    malas = []
+    for lang, tabla in tablas.items():
+        for clave in tabla:
+            if not segmento.match(clave):
+                malas.append("%s: %s" % (lang, clave))
+    r.check("las claves de primer nivel son validas", not malas, malas)
+    r.check(
+        "las claves no llevan puntos (el anidamiento es con objetos)",
+        not any("." in k for k in tablas["es"]),
+        [k for k in tablas["es"] if "." in k],
+    )
+
+    # Y todas las claves que usa el codigo existen en las traducciones.
+    usadas = set()
+    for nombre in os.listdir(raiz):
+        ruta = os.path.join(raiz, nombre)
+        if not os.path.isfile(ruta) or not nombre.endswith(".luau"):
+            continue
+        with open(ruta, encoding="utf-8") as fh:
+            usadas |= set(re.findall(r'tr\("([^"]+)"', fh.read()))
+    faltan = sorted(k for k in usadas if k not in planas["en"])
+    r.check("todas las claves que usa el codigo existen", not faltan, faltan)
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -1337,6 +1399,7 @@ def main():
         test_modificador_prohibido,
         test_restaurar_volumen,
         test_contrato_del_estado,
+        test_traducciones,
     ):
         total += test()
     print("")

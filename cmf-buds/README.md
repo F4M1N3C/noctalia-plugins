@@ -9,7 +9,21 @@ cancelación de ruido, volumen, ecualizador, Ultra Bass, gestos del dial del
 estuche, audio espacial, detección in-ear, modo de baja latencia, multipunto,
 batería, "ring my buds" y test de ajuste.
 
-## Requisitos
+## Plugin
+
+- **ID del manifiesto**: `faminec/cmf-buds`
+- **Widget de barra**: `widget` (icono de auriculares; clic abre el panel, rueda
+  ajusta el volumen, clic derecho cicla el ANC)
+- **Paneles** (uno por pestaña, para que la ventana se ajuste al contenido):
+  - `panel-sound`: ANC, volumen y ecualizador
+  - `panel-controls`: gestos de toque y "ring my buds"
+  - `panel-actions`: atajos locales ejecutados al mover el dial del estuche
+  - `panel-system`: audio espacial, detección in-ear, baja latencia, conexión
+    dual, test de ajuste e información del dispositivo
+- **Servicio**: `service` (arranca y mantiene vivo el demonio que habla
+  RFCOMM con los auriculares)
+
+## Requirements
 
 | Dependencia | Para qué |
 |---|---|
@@ -23,6 +37,21 @@ El plugin se instala en `~/.local/share/noctalia/plugins/cmf-buds` y se activa c
 ```bash
 noctalia msg plugins enable faminec/cmf-buds
 ```
+
+## Usage
+
+Con el plugin habilitado, el widget aparece en la barra y el panel se puede
+abrir desde el icono o desde la línea de órdenes:
+
+```bash
+noctalia msg panel-toggle faminec/cmf-buds:panel-sound
+noctalia msg panel-toggle faminec/cmf-buds:panel-controls
+noctalia msg panel-toggle faminec/cmf-buds:panel-actions
+noctalia msg panel-toggle faminec/cmf-buds:panel-system
+```
+
+Los paneles se abren arriba y centrados, y la ventana cambia de alto según la
+pestaña.
 
 ## Widget de barra
 
@@ -58,7 +87,7 @@ se ajuste al tamaño del contenido de la sección (sin barras de desplazamiento)
 Al cambiar de pestaña, el panel cierra y se abre el de la sección nueva, así que
 la ventana cambia de alto.
 
-## Ajustes
+## Settings
 
 En *Ajustes → Plugins → CMF Buds*:
 

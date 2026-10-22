@@ -1592,6 +1592,9 @@ class LyricsCarousel:
         ]
         self.lines = [LyricLine(start, 4.6, text) for start, text in sample]
         self.source = "demo"
+        # Sin busqueda: el modo demo es autonomo (ni al arrancar ni al
+        # recargar se pide letra a internet).
+        self.log("demo: letra de muestra, sin busqueda")
         self.synced = True
         self.state = "lyrics"
         self.track = Track("Eternamente", "Stranger Beats, Inexistente y BabyG", "Extraños Clika II", 96.0, "demo", "Playing")

@@ -214,21 +214,37 @@ def check_atajos():
         # El modo demo es autonomo: ni al arrancar ni al recargar ('r')
         # debe pedir letra a internet.
         peticiones = []
+        escrito = ""
         if os.path.isfile(log):
             try:
                 with open(log, encoding="utf-8", errors="replace") as handle:
                     handle.seek(log_pos)
-                    texto = handle.read()
+                    escrito = handle.read()
                 peticiones = [
                     linea
-                    for linea in texto.split("\n")
+                    for linea in escrito.split("\n")
                     if any(
                         marca in linea.lower()
                         for marca in ("http", "kugou", "splayer", "netease", "lrclib")
                     )
                 ]
             except OSError:
-                peticiones = []
+                escrito = ""
+        # El guardia solo sirve si el script escribio su registro de
+        # depuracion: las peticiones a los proveedores solo se anotan con
+        # --debug, asi que sin el el log pareceria limpio siempre.
+        # Se busca una linea que solo sale con depuracion.
+        depuracion = any(
+            marca in escrito
+            for marca in ("demo: ", "modo: ", "ajustes: ", "resultado: ")
+        )
+        check(
+            "el log del script permite comprobarlo",
+            depuracion,
+            ""
+            if depuracion
+            else "el script no escribio su registro de depuracion",
+        )
         check(
             "el modo demo no pide letra a internet",
             not peticiones,

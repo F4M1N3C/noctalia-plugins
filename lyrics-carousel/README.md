@@ -117,7 +117,9 @@ in `~/.local/bin` (which is how the panel starts it). It also checks that
 every `.luau` of the plugin compiles as it is (so a syntax error is never
 mistaken for Luau-only syntax) and that the `d` and `k` shortcuts really
 toggle the direction and the karaoke and save them (the overrides are left
-as they were).
+as they were). It also checks that the demo mode does not ask any lyrics
+provider for anything — and that the script's debug log is actually being
+written, so that check is not vacuous.
 
 `--diagnostics` prints the same information for the running script as JSON.
 Both are used by `tools/verify-plugins.py`.

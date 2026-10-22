@@ -110,6 +110,13 @@ que el compositor lo abra.
 
 Suite: 37 → 44 comprobaciones.
 
+### Comprobaciones finales — una prueba era intermitente
+
+La prueba 18 comprobaba que el hilo del watcher **ya habia terminado**
+justo despues de pararlo: el hilo puede estar a medio salir, asi que
+fallaba de vez en cuando (1 de cada 10 veces). Ahora espera a que termine
+y despues lo comprueba. Diez pasadas seguidas sin fallos.
+
 ### Comprobaciones finales — el estado del plugin no lo borra el demonio
 
 El plugin recuerda la ultima pestana abierta con `noctalia.state`, que

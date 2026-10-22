@@ -544,9 +544,12 @@ def test_watcher_resolutor_falla():
     watcher._stop = FakeStop(stop_after=3)
     watcher.start()
     esperar(lambda: len(watcher._stop.waits) >= 3)
-    alive = watcher._thread.is_alive()
     waits = list(watcher._stop.waits)
     watcher.stop()
+    # El hilo debe terminar: se espera a que pase, que comprobarlo en el
+    # instante es una carrera y falla de vez en cuando.
+    esperar(lambda: not watcher._thread.is_alive(), timeout=5.0)
+    alive = watcher._thread.is_alive()
     r.check(
         "se registra el error",
         any("error inesperado" in m for m in logs),

@@ -72,6 +72,29 @@ local fileInfoCache = {}
 local thumbReady = {}
 local thumbRequested = {}
 
+-- Carga inicial troceada. El panel tiene que abrirse al instante: el shell
+-- aborta un callback que se pasa de su presupuesto de CPU (25 ms) y el panel
+-- se queda a medias. Asi que onOpen no hace trabajo pesado: el escaneo del
+-- directorio, la localizacion del fondo actual y el calculo de las miniaturas
+-- se hacen en el frame tick, en trozos con presupuesto de tiempo.
+local pendingInit = false
+local initStage = 0
+local scanNames = nil
+local scanCursor = 0
+local scanFound = {}
+local scanTotal = 0
+local pendingThumbs = false
+-- Fondo a conservar cuando la recarga viene de un cambio de ajustes.
+local keepSelectionPath = nil
+-- Por donde va el calculo de miniaturas: sin cursor, cada troceo empezaria
+-- por el mismo sitio y la carga no se acabaria nunca.
+local thumbCursor = nil
+-- Presupuesto por trozo: una cuarta parte del presupuesto del shell, para
+-- dejar margen a lo demas que hace el tick.
+local CHUNK_SECONDS = 0.006
+local SCAN_CHUNK_FILES = 150
+local THUMB_CHUNK_WALLPAPERS = 4
+
 -- Rueda del ratón (capturada por el ui.scroll)
 local scrollOffset = 0.0
 local scrollAccum = 0.0
@@ -276,13 +299,20 @@ local function loadConfig()
   cfg.wheel = noctalia.getConfig("wheel") ~= false
 end
 
-local function scanWallpapers()
+-- Prepara el escaneo: resuelve el directorio y saca la lista de nombres. El
+-- filtrado de esa lista se hace en trozos (scanChunk) porque recorrer 800
+-- archivos de golpe se pasa del presupuesto del callback.
+local function scanBegin()
   wallpapers = {}
   fileInfoCache = {}
   thumbReady = {}
   thumbRequested = {}
   thumbPathCache = {}
   scanError = nil
+  scanNames = nil
+  scanCursor = 0
+  scanFound = {}
+  scanTotal = 0
 
   local configured = cfg.directory
   if configured ~= "" then
@@ -301,27 +331,55 @@ local function scanWallpapers()
     scanError = tostring(listError or "list failed")
     return
   end
+  scanNames = names
+end
 
-  -- El filtrado va con sub() y tablas en vez de patrones: el VM de Noctalia
-  -- mide el presupuesto con un reloj por instruccion, asi que un `match` por
-  -- archivo (821 archivos) se comia 18 ms del presupuesto de 25 ms.
-  local found = {}
-  local count = 0
-  for index = 1, #names do
-    local name = names[index]
+-- Un trozo del filtrado del listado. Devuelve true si queda trabajo.
+--
+-- El filtrado va con sub() y tablas en vez de patrones: el VM de Noctalia
+-- mide el presupuesto con un reloj por instruccion, asi que un `match` por
+-- archivo (821 archivos) se comia 18 ms del presupuesto de 25 ms.
+local function scanChunk()
+  if scanNames == nil then
+    return false
+  end
+  local total = #scanNames
+  local deadline = os.clock() + CHUNK_SECONDS
+  local processed = 0
+  while scanCursor < total do
+    scanCursor = scanCursor + 1
+    processed = processed + 1
+    local name = scanNames[scanCursor]
     if type(name) == "string" then
       local tail = name:sub(-5):lower()
       if IMAGE_EXTENSIONS[tail:sub(-4)] or IMAGE_EXTENSIONS[tail] then
         if name:sub(1, 1) ~= "." then
-          count = count + 1
-          found[count] = joinPath(currentDir, name)
+          scanTotal = scanTotal + 1
+          scanFound[scanTotal] = joinPath(currentDir, name)
         end
       end
     end
+    if processed >= SCAN_CHUNK_FILES or os.clock() >= deadline then
+      return true
+    end
   end
 
-  table.sort(found)
-  wallpapers = found
+  -- Fin del listado: se ordena y la lista queda lista.
+  table.sort(scanFound)
+  wallpapers = scanFound
+  scanNames = nil
+  scanFound = {}
+  return false
+end
+
+-- Elige el fondo actual como seleccion y deja el scroll a cero.
+local function selectCurrentWallpaper()
+  selected = indexOfPath(currentWallpaperPath()) or 1
+  viewPos = selected
+  animating = false
+  scrollOffset = 0
+  scrollAccum = 0
+  scrollResetting = false
 end
 
 local function focusedConnector()
@@ -425,13 +483,16 @@ local function metrics()
   }
 end
 
+-- Calcula las miniaturas del entorno de la seleccionada. Cada miniatura
+-- cuesta una consulta al disco (y el disco puede ir lento), asi que se
+-- calcula en trozos: devuelve true si queda trabajo pendiente.
 local function ensureThumbs()
   if #wallpapers == 0 then
-    return
+    return false
   end
   local cacheDir = cacheDirectory()
   if not cacheDir then
-    return
+    return false
   end
 
   -- Se encolan las miniaturas de un rango amplio alrededor de la seleccionada
@@ -442,15 +503,25 @@ local function ensureThumbs()
   local last = selected + half
   local items = {}
   local seen = {}
+  local deadline = os.clock() + CHUNK_SECONDS
+  local processed = 0
+  local truncated = false
+  -- Se continua por donde se dejo. El cursor puede quedar pasado el ultimo
+  -- (el rango ya esta cubierto): entonces el bucle no se ejecuta y el trabajo
+  -- se da por terminado. Si la seleccion cambia, el cursor se reinicia (lo
+  -- hace selectIndex), porque el rango es otro.
+  local start = first
+  if thumbCursor and thumbCursor > first then
+    start = thumbCursor
+  end
 
-  for index = first, last do
+  for index = start, last do
     local source = wallpapers[index]
     if source then
       for _, bucket in ipairs({ -1, 0, 1 }) do
         local output = thumbPath(source, bucket)
         if not seen[output] and not thumbRequested[output] then
           seen[output] = true
-          thumbRequested[output] = true
           table.insert(items, {
             source = source,
             output = output,
@@ -463,30 +534,51 @@ local function ensureThumbs()
         end
       end
     end
+    processed = processed + 1
+    thumbCursor = index + 1
+    if processed >= THUMB_CHUNK_WALLPAPERS or os.clock() >= deadline then
+      truncated = index < last
+      break
+    end
   end
 
+  if truncated then
+    pendingThumbs = true
+  else
+    -- El rango esta cubierto: se limpia el cursor y la marca de trabajo
+    -- pendiente (si no, el troceo se repetiria para siempre).
+    thumbCursor = nil
+    pendingThumbs = false
+  end
   if #items == 0 then
-    return
+    return pendingThumbs
   end
   if generating then
+    -- El generador esta ocupado: los items se descartan, pero no se marcan
+    -- como pedidos (si se marcaran, no se volverian a pedir nunca y las
+    -- tarjetas se quedarian sin imagen).
     pendingEnsure = true
-    return
+    return pendingThumbs
   end
 
   local dataDir = noctalia.pluginDataDir()
   local pluginDir = noctalia.pluginDir()
   if not dataDir or not pluginDir then
-    return
+    return pendingThumbs
   end
   local batchPath = dataDir .. "/batch.json"
   local ok, encoded = pcall(function()
     return noctalia.json.encode(items)
   end)
   if not ok or not encoded then
-    return
+    return pendingThumbs
   end
   if not noctalia.writeFile(batchPath, encoded) then
-    return
+    return pendingThumbs
+  end
+  -- Ahora si quedan pedidos: se marcan para no volver a generarlos.
+  for _, item in ipairs(items) do
+    thumbRequested[item.output] = true
   end
 
   generating = true
@@ -517,12 +609,15 @@ local function ensureThumbs()
     end
     if pendingEnsure then
       pendingEnsure = false
-      ensureThumbs()
+      if ensureThumbs() then
+        pendingThumbs = true
+      end
     end
   end)
   if not started then
     generating = false
   end
+  return pendingThumbs
 end
 
 local function renderEmpty()
@@ -575,6 +670,7 @@ function onCardHover(state, key)
   if index == nil then
     return
   end
+  local hoverStarted = os.clock()
   local nextHovered = nil
   if state == "true" then
     nextHovered = index
@@ -583,6 +679,7 @@ function onCardHover(state, key)
     hovered = nextHovered
     render()
   end
+  noctalia.log(string.format("wc-budget onCardHover end cost=%.2f ms", (os.clock() - hoverStarted) * 1000))
 end
 
 function onCardClick(key)
@@ -802,6 +899,9 @@ selectIndex = function(index)
     return
   end
   selected = index
+  -- Cambia la seleccion, y con ella el rango de miniaturas: el cursor del
+  -- troceo se reinicia para no dejar huecos.
+  thumbCursor = nil
   -- Un salto largo (dar la vuelta, ir al primero o al último) coloca la
   -- cinta directamente: si no, recorrería los cientos de fondos de golpe. Un
   -- avance de pocos pasos, en cambio, sí se desliza.
@@ -816,8 +916,11 @@ selectIndex = function(index)
   -- Las miniaturas del entorno se piden en cada cambio de seleccion: si solo
   -- se pidieran al final de la animacion, un salto al principio o al final de
   -- la lista (Home, End, aleatorio o la vuelta de la cinta) dejaria las
-  -- tarjetas sin imagen.
-  ensureThumbs()
+  -- tarjetas sin imagen. El calculo va troceado: si queda trabajo, lo
+  -- continua el frame tick.
+  if ensureThumbs() then
+    pendingThumbs = true
+  end
 end
 
 move = function(delta)
@@ -878,33 +981,22 @@ end
 reload = function(keepSelection)
   local previous = keepSelection and wallpapers[selected] or currentWallpaperPath()
   loadConfig()
-  scanWallpapers()
-  if #wallpapers == 0 then
-    selected = 1
-    viewPos = 1.0
-    animating = false
-    panel.setNeedsFrameTick(true)
-    render()
-    return
-  end
-  selected = indexOfPath(previous) or indexOfPath(currentWallpaperPath()) or 1
-  viewPos = selected
+  -- Una recarga por cambio de ajustes hace el mismo trabajo pesado que la
+  -- carga inicial, asi que va por el mismo camino troceado.
+  pendingInit = true
+  initStage = 0
+  pendingThumbs = false
+  keepSelectionPath = previous
+  wallpapers = {}
+  selected = 1
+  viewPos = 1.0
   animating = false
   hovered = nil
   scrollOffset = 0
   scrollAccum = 0
-  -- El frame tick no se apaga: lo NeedsFrameTick alimenta la animacion de la
-  -- cinta y la repeticion de las teclas, asi que tiene que seguir vivo aunque
-  -- el panel se recargue por un cambio de ajustes.
+  -- El frame tick no se apaga: lo NeedsFrameTick alimenta la carga troceada,
+  -- la animacion de la cinta y la repeticion de las teclas.
   wakeUp()
-  -- El scroll puede quedar desplazado de antes: se recentra para que la
-  -- compensacion siga siendo exacta.
-  if #wallpapers > 0 and cfg.wheel then
-    recenterScroll()
-  else
-    render()
-  end
-  ensureThumbs()
 end
 
 -- Recentra el scroll: el ancla está tan abajo que al revelarla el scroll
@@ -937,9 +1029,22 @@ function onOpen(_context)
   noctalia.state.set("carousel.open", true)
   math.randomseed(os.time())
   loadConfig()
-  scanWallpapers()
-  selected = indexOfPath(currentWallpaperPath()) or 1
-  viewPos = selected
+  -- Marcadores de presupuesto: el shell anota cada linea con su hora, asi que
+  -- la diferencia entre los dos es lo que tardo el callback (lo comprueba
+  -- bin/check-callback-budget.py).
+  local onOpenStarted = os.clock()
+  noctalia.log("wc-budget onOpen begin")
+  -- Aqui no se hace trabajo pesado. El shell aborta un callback que se pasa
+  -- de su presupuesto de CPU (25 ms) y el panel se queda a medias: escanear
+  -- el directorio, localizar el fondo actual y calcular las miniaturas van al
+  -- frame tick, en trozos.
+  pendingInit = true
+  initStage = 0
+  pendingThumbs = false
+  keepSelectionPath = nil
+  wallpapers = {}
+  selected = 1
+  viewPos = 1.0
   animating = false
   hovered = nil
   heldKey = nil
@@ -947,22 +1052,10 @@ function onOpen(_context)
   scrollAccum = 0
   scrollResetting = false
   thumbErrorShown = false
-  -- El frame tick sirve para la animación de la cinta y para la repeticion de
-  -- las teclas.
+  -- El frame tick sirve para la carga inicial troceada, para la animacion de
+  -- la cinta y para la repeticion de las teclas.
   wakeUp()
-  if #wallpapers == 0 then
-    render()
-  elseif cfg.wheel then
-    -- El scroll arranca en cero, sin recorrido hacia arriba: se recentra para
-    -- que la rueda pueda ir en ambos sentidos.
-    recenterScroll()
-  else
-    render()
-  end
-  -- Las miniaturas se piden aqui y no en el frame tick: el shell solo pide
-  -- frames cuando el flag pasa de false a true, asi que el tick puede no
-  -- llegar a correr y las tarjetas se quedarian sin imagen.
-  ensureThumbs()
+  noctalia.log(string.format("wc-budget onOpen end cost=%.2f ms", (os.clock() - onOpenStarted) * 1000))
 end
 
 function onClose()
@@ -990,6 +1083,7 @@ end
 -- que la cinta no se mueva de sitio) y el salto accumulated mueve el carrusel.
 function onScroll(offset, _maxOffset)
   local newOffset = tonumber(offset) or 0
+  local scrollStarted = os.clock()
   wakeUp()
 
   -- El recentro: el shell acaba de saltar al ancla. Ese salto es nuestro, no
@@ -1070,10 +1164,58 @@ function onScroll(offset, _maxOffset)
       render()
     end
   end
+  noctalia.log(string.format("wc-budget onScroll end cost=%.2f ms", (os.clock() - scrollStarted) * 1000))
 end
 
 function onFrameTick(deltaMs)
   local dt = tonumber(deltaMs) or 16
+
+  -- 0. Carga inicial troceada: escaneo del directorio, eleccion del fondo
+  -- actual y miniaturas. Cada etapa va en un trozo, para que ni este callback
+  -- ni el de onOpen se passen del presupuesto de CPU del shell.
+  if pendingInit then
+    local stageStarted = os.clock()
+    if initStage == 0 then
+      scanBegin()
+      initStage = 1
+    elseif initStage == 1 then
+      if not scanChunk() then
+        initStage = 2
+      end
+    elseif initStage == 2 then
+      local path = keepSelectionPath or currentWallpaperPath()
+      keepSelectionPath = nil
+      selected = indexOfPath(path) or indexOfPath(currentWallpaperPath()) or 1
+      viewPos = selected
+      animating = false
+      scrollOffset = 0
+      scrollAccum = 0
+      scrollResetting = false
+      initStage = 3
+    elseif initStage == 3 then
+      if not ensureThumbs() then
+        initStage = 4
+      end
+    else
+      -- Etapa 4: la cinta ya esta montada. El scroll arranca en cero, sin
+      -- recorrido hacia arriba: se recentra para que la rueda pueda ir en
+      -- ambos sentidos.
+      if #wallpapers > 0 and cfg.wheel then
+        recenterScroll()
+      else
+        render()
+      end
+      initStage = 5
+      pendingInit = false
+    end
+    noctalia.log(string.format("wc-budget init stage %d cost=%.2f ms cursor=%s", initStage, (os.clock() - stageStarted) * 1000, tostring(thumbCursor)))
+  elseif pendingThumbs then
+    local thumbsStarted = os.clock()
+    if not ensureThumbs() then
+      pendingThumbs = false
+    end
+    noctalia.log(string.format("wc-budget thumbs cost=%.2f ms", (os.clock() - thumbsStarted) * 1000))
+  end
 
   -- 1. Autorepeat de las flechas: la pulsación repetida del teclado no llega
   --    al script, así que se reproduce aquí con el frame tick.
@@ -1095,7 +1237,9 @@ function onFrameTick(deltaMs)
       viewPos = selected
       animating = false
       render()
-      ensureThumbs()
+      if ensureThumbs() then
+        pendingThumbs = true
+      end
     end
   else
     local timeConstant = 120 + math.min(380, math.abs(difference) * 12)
@@ -1106,7 +1250,7 @@ function onFrameTick(deltaMs)
 
   -- 3. Si no queda nada que mover, se apaga el frame tick (ver wakeUp): el
   --    host solo vuelve a pedir frames cuando el flag pasa de falso a true.
-  local busy = animating or heldKey ~= nil
+  local busy = animating or heldKey ~= nil or pendingInit or pendingThumbs
   if not busy then
     panel.setNeedsFrameTick(false)
   end

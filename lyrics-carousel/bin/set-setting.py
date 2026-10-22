@@ -134,6 +134,24 @@ def parse_args(argv):
     return pairs
 
 
+def ensure_dir(path: str) -> bool:
+    """Garantiza que el directorio exista.
+
+    El directorio de datos del plugin lo crea Noctalia, pero puede no existir
+    (si se borra a mano o si el plugin nunca ha guardado nada) y entonces ni
+    el lock ni la escritura podrian crearse.
+    """
+    directory = os.path.dirname(path)
+    if not directory:
+        return True
+    try:
+        os.makedirs(directory, exist_ok=True)
+        return True
+    except OSError as error:
+        print(f"no se pudo crear {directory}: {error}", file=sys.stderr)
+        return False
+
+
 def overrides_path() -> str:
     return OVERRIDES
 
@@ -148,9 +166,10 @@ def read_overrides():
 
 
 def write_overrides(data) -> bool:
+    if not ensure_dir(OVERRIDES):
+        return False
     directory = os.path.dirname(OVERRIDES)
     try:
-        os.makedirs(directory, exist_ok=True)
         temporary = ""
         handle = tempfile.NamedTemporaryFile(
             "w", encoding="utf-8", dir=directory, delete=False, suffix=".tmp"
@@ -176,8 +195,9 @@ def set_override(key: str, value: str, kind: str) -> int:
     primera.
     """
     lock_path = OVERRIDES + ".lock"
+    if not ensure_dir(lock_path):
+        return 1
     try:
-        os.makedirs(os.path.dirname(OVERRIDES), exist_ok=True)
         lock = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
     except OSError as error:
         print(f"no se pudo abrir el lock: {error}", file=sys.stderr)
@@ -267,6 +287,8 @@ def main(argv):
     # El script y el panel pueden escribir a la vez: con un fichero de lock
     # la lectura-modificacion-escritura se serializa y no se pisan.
     lock_path = SETTINGS + ".lock"
+    if not ensure_dir(lock_path):
+        return 1
     try:
         lock = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
     except OSError as error:
@@ -296,6 +318,8 @@ def _write(text, pairs):
     if updated == text:
         return 0
 
+    if not ensure_dir(SETTINGS):
+        return 1
     directory = os.path.dirname(SETTINGS)
     temporary = ""
     try:

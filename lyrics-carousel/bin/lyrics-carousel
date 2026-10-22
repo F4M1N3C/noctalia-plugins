@@ -2128,15 +2128,19 @@ class LyricsCarousel:
         No se toca el settings.toml a proposito: escribirlo hace que Noctalia
         recargue la configuracion y cierre el panel que este abierto.
         """
+        # realpath: el script suele lanzarse por el enlace simbolico de
+        # ~/.local/bin, y el helper vive en bin/.
+        helper = os.path.join(
+            os.path.dirname(os.path.realpath(__file__)), "set-setting.py"
+        )
+        if not os.path.isfile(helper):
+            self.log(f"no se encuentra el helper: {helper}")
+            return
         try:
             subprocess.Popen(
                 [
                     "python3",
-                    # realpath: el script suele lanzarse por el enlace
-                    # simbolico de ~/.local/bin, y el helper vive en bin/.
-                    os.path.join(
-                        os.path.dirname(os.path.realpath(__file__)), "set-setting.py"
-                    ),
+                    helper,
                     "override",
                     key,
                     str(value),
@@ -2145,8 +2149,8 @@ class LyricsCarousel:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-        except OSError:
-            pass
+        except OSError as error:
+            self.log(f"no se pudo guardar {key}: {error}")
 
     def handle_key(self, key: str) -> bool:
         if key in ("q", "Q", "\x03"):

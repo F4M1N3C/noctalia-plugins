@@ -139,6 +139,32 @@ echo "widgets esperados: $expected ($names)"
 # tardar en volcarse. `tail -F` sigue el fichero (aunque lo renombren o lo
 # vacíen) y deja una copia privada con todas las líneas nuevas; el smoke
 # revisa esa copia, no el fichero volátil.
+#
+# Antes de capturar nada se espera a que el host esté inactivo (10 s sin
+# crecimiento del log): si no, la prueba arrastra ruido de otras sesiones y
+# puede provocar avisos de rendimiento del propio host.
+echo "esperando a que el host esté inactivo (hasta 60 s)..."
+last=0; stable=0; iters=0
+if [ -f "$LOG" ]; then
+  last=$(wc -l <"$LOG")
+fi
+while [ "$stable" -lt 50 ] && [ "$iters" -lt 300 ]; do
+  sleep 0.2
+  iters=$((iters + 1))
+  if [ -f "$LOG" ]; then
+    cur=$(wc -l <"$LOG")
+  else
+    cur=0
+  fi
+  if [ "$cur" -eq "$last" ]; then
+    stable=$((stable + 1))
+  else
+    stable=0
+    last=$cur
+  fi
+done
+echo "host inactivo; iniciando la prueba."
+
 tmp=$(mktemp -d /tmp/opencode/floating-term-smoke.XXXXXX) || {
   echo "no se pudo crear el directorio temporal" >&2
   exit 2
@@ -180,7 +206,7 @@ while True:
                         f.write(data)
                 except Exception:
                     pass
-                time.sleep(0.3)
+                time.sleep(0.2)
             try:
                 fh.close()
             except Exception:
@@ -234,9 +260,9 @@ wait_log_quiet() {
   return 0
 }
 
-# Punto de partida estable: se espera a que el log deje de crecer dos segundos,
+# Punto de partida estable: se espera a que el log deje de crecer un segundo,
 # para que la revisión no arrastre ruido de la pasada anterior ni del arranque.
-wait_log_quiet 10 50
+wait_log_quiet 5 25
 LOG_READY=1
 
 # Revisa todas las líneas nuevas del log (la copia), sin excluir ningún
@@ -521,7 +547,7 @@ if ! flush_log; then
 fi
 # Capturar las líneas que lleguen tarde (ruido ajeno o volcado diferido) antes
 # de congelar la copia.
-wait_log_quiet 5 25
+wait_log_quiet 3 15
 stop_follower
 # Con la copia volcada se comprueba que el cierre quedó registrado. El seguidor
 # drena el fichero viejo antes de cambiar, así que la línea debe estar.

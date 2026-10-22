@@ -37,6 +37,9 @@ OWNER = "lyrics-carousel"
 EMPTY_BIN = os.path.join(tempfile.gettempdir(), "lyrics-carousel-emptybin")
 
 
+CODIGO_INCOHERENTE = []
+
+
 def run(root, env=None, ui=False, deploy=None, state=None):
     """Ejecuta el verificador y devuelve (codigo, resultado en JSON)."""
     cmd = [sys.executable, VERIFIER, "--root", root, "--json"]
@@ -53,6 +56,15 @@ def run(root, env=None, ui=False, deploy=None, state=None):
         datos = json.loads(result.stdout)
     except ValueError:
         datos = {}
+    # El codigo de salida y el del JSON tienen que coincidir: si no, el
+    # resultado estructurado miente.
+    declarado = datos.get("codigo")
+    if declarado is not None and declarado != result.returncode:
+        print(
+            "  FALLO el codigo de salida (%d) no coincide con el del JSON (%s)"
+            % (result.returncode, declarado)
+        )
+        CODIGO_INCOHERENTE.append(True)
     return result.returncode, datos
 
 
@@ -243,7 +255,13 @@ def main(argv):
     env = {**os.environ, "PATH": EMPTY_BIN}
     try:
         rc, datos = run(raiz, env=env)
-        resultados.append(escenario("sin compilador", rc == 1))
+        resultados.append(
+            escenario(
+                "sin compilador",
+                rc == 1 and hay_etiqueta(fallos_infra(datos), "luac"),
+                "infra=%s" % [f["etiqueta"] for f in fallos_infra(datos)],
+            )
+        )
     finally:
         shutil.rmtree(raiz, ignore_errors=True)
 
@@ -271,9 +289,20 @@ def main(argv):
     spec.loader.exec_module(modulo)
     modulo.LOG = os.path.join(tempfile.gettempdir(), "no-existe-noctalia.log")
     try:
-        with contextlib.redirect_stdout(io.StringIO()):
-            rc = modulo.main(["--no-ui"])
-        resultados.append(escenario("log inexistente", rc == 1))
+        salida = io.StringIO()
+        with contextlib.redirect_stdout(salida):
+            rc = modulo.main(["--no-ui", "--json"])
+        try:
+            datos = json.loads(salida.getvalue())
+        except ValueError:
+            datos = {}
+        resultados.append(
+            escenario(
+                "log inexistente",
+                rc == 1 and hay_etiqueta(fallos_infra(datos), "log de Noctalia"),
+                "infra=%s" % [f["etiqueta"] for f in fallos_infra(datos)],
+            )
+        )
     except SystemExit:
         resultados.append(escenario("log inexistente", False))
 
@@ -372,10 +401,7 @@ def main(argv):
             escenario(
                 "despliegue sin autotest: se avisa",
                 rc == 0
-                and any(
-                    "desactualizada" in a.get("detalle", "")
-                    for a in avisos_propios(datos)
-                ),
+                and hay_etiqueta(avisos_propios(datos), "selftest (despliegue)"),
                 "%s" % [a.get("etiqueta") for a in avisos_propios(datos)],
             )
         )
@@ -417,8 +443,11 @@ def main(argv):
         shutil.rmtree(raiz, ignore_errors=True)
 
     fallos = resultados.count(False)
-    print("%d escenario(s), %d fallo(s)" % (len(resultados), fallos))
-    return 1 if fallos else 0
+    print(
+        "%d escenario(s), %d fallo(s), %d incoherencia(s) de codigo"
+        % (len(resultados), fallos, len(CODIGO_INCOHERENTE))
+    )
+    return 1 if (fallos or CODIGO_INCOHERENTE) else 0
 
 
 if __name__ == "__main__":

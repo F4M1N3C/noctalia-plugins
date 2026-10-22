@@ -131,7 +131,8 @@ state, so it never touches the real installation.
 
 The battery reads the verifier's result in JSON (`--json`), so it checks
 the behaviour (which failures, of which plugin, blocking or not) and not
-the wording of the messages:
+the wording of the messages. It also checks that the exit code and the
+code reported in the JSON always agree:
 
 A `.luau` that only uses Luau syntax is not an error: type annotations are
 stripped first (the shared normaliser mangles them) and the rest is

@@ -31,6 +31,7 @@ HOME = os.path.expanduser("~")
 LOG = os.path.join(HOME, ".cache/noctalia/noctalia.log")
 PLUGIN_DIR = os.path.join(HOME, ".local/share/noctalia/plugins")
 REPO_DIR = os.path.join(HOME, "noctalia-plugins")
+STATE_DIR = os.path.join(HOME, ".local/state/noctalia")
 
 # Avisos que no dependen de los plugins: el settings.toml guarda ajustes de
 # plugins que no están instalados. Se listan aparte, nunca se ocultan.
@@ -101,8 +102,8 @@ def plugin_id(plugin: str) -> str:
 
 def overrides_path(plugin: str) -> str:
     """Fichero de overrides de un plugin (el del panel, con lo pendiente)."""
-    return os.path.expanduser(
-        "~/.local/state/noctalia/plugins/data/%s/overrides.json" % plugin_id(plugin)
+    return os.path.join(
+        STATE_DIR, "plugins", "data", plugin_id(plugin), "overrides.json"
     )
 
 
@@ -612,11 +613,28 @@ def main(argv):
 
 
 def _main(argv):
+    global PLUGIN_DIR, STATE_DIR
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-ui", action="store_true", help="no tocar la interfaz")
     parser.add_argument("--root", default=os.path.join(HOME, "noctalia-plugins"))
+    parser.add_argument(
+        "--deploy",
+        default=PLUGIN_DIR,
+        help="carpeta con los plugins desplegados (por defecto, la de Noctalia)",
+    )
+    parser.add_argument(
+        "--state",
+        default=STATE_DIR,
+        help="carpeta de estado de Noctalia (por defecto, la de verdad)",
+    )
     parser.add_argument("plugins", nargs="*")
     args = parser.parse_args(argv[1:])
+
+    # Las rutas se pueden apuntar a otro sitio: asi las pruebas pueden
+    # trabajar sobre copias y no tocar la instalacion de verdad.
+    PLUGIN_DIR = args.deploy
+    STATE_DIR = args.state
 
     plugins = args.plugins
     if not plugins:
@@ -689,9 +707,7 @@ def _main(argv):
     # el de la copia instalada.
     selftests = [
         os.path.join(args.root, "lyrics-carousel", "bin", "selftest.py"),
-        os.path.expanduser(
-            "~/.local/share/noctalia/plugins/lyrics-carousel/bin/selftest.py"
-        ),
+        os.path.join(args.deploy, "lyrics-carousel", "bin", "selftest.py"),
     ]
     for selftest in selftests:
         if not os.path.isfile(selftest):

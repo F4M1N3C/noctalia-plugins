@@ -4,7 +4,10 @@
 El verificador decide qué fallos bloquean la pasada y cuáles se informan.
 Esa lógica se ha roto varias veces (un fallo sin atribuir se perdía y la
 pasada terminaba con "todo bien"), así que aquí se comprueba con fallos
-simulados, sin tocar el código de los plugins.
+simulados.
+
+Nada de esto toca la instalación real: todo se hace sobre copias
+temporales del repositorio, del despliegue y del estado.
 
 Uso:  python3 lyrics-carousel/tools/check-verifier.py [--root RAIZ]
 Devuelve 1 si algún escenario no se comporta como debe.
@@ -25,17 +28,21 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 VERIFIER = os.path.join(HERE, "verify-plugins.py")
 DEPLOYED = os.path.expanduser(
-    "~/.local/share/noctalia/plugins/lyrics-carousel/bin/selftest.py"
+    "~/.local/share/noctalia/plugins/lyrics-carousel"
 )
 EMPTY_BIN = os.path.join(tempfile.gettempdir(), "lyrics-carousel-emptybin")
 
 
-def run(root, env=None, ui=False):
+def run(root, env=None, ui=False, deploy=None, state=None):
     cmd = [sys.executable, VERIFIER, "--root", root]
+    if deploy:
+        cmd += ["--deploy", deploy]
+    if state:
+        cmd += ["--state", state]
     if not ui:
         cmd.append("--no-ui")
     result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=1200, env=env
+        cmd, capture_output=True, text=True, timeout=1800, env=env
     )
     fallos = [
         line.strip() for line in result.stdout.split("\n") if "fallo de" in line
@@ -43,18 +50,30 @@ def run(root, env=None, ui=False):
     return result.returncode, fallos, result.stdout
 
 
-def copia(root, con_tools=True):
-    raiz = tempfile.mkdtemp(prefix="verifier-check-")
+def copia_repo(root, con_tools=True):
+    """Copia del repositorio: los ficheros de prueba no tocan el original."""
+    raiz = tempfile.mkdtemp(prefix="verifier-repo-")
     shutil.copytree(
         os.path.join(root, "lyrics-carousel"), os.path.join(raiz, "lyrics-carousel")
     )
     if con_tools:
-        shutil.copytree(
-            os.path.join(root, "tools"), os.path.join(raiz, "tools")
-        )
+        shutil.copytree(os.path.join(root, "tools"), os.path.join(raiz, "tools"))
     else:
         os.makedirs(os.path.join(raiz, "tools"), exist_ok=True)
     return raiz
+
+
+def copia_despliegue():
+    """Copia del plugin desplegado: las pruebas no tocan la instalación."""
+    raiz = tempfile.mkdtemp(prefix="verifier-deploy-")
+    destino = os.path.join(raiz, "lyrics-carousel")
+    shutil.copytree(DEPLOYED, destino)
+    return raiz, destino
+
+
+def estado_temporal():
+    """Carpeta de estado vacía: los overrides pendientes van ahí."""
+    return tempfile.mkdtemp(prefix="verifier-state-")
 
 
 def escenario(nombre, rc, fallos, esperado_rc, esperado=None, no_esperado=None):
@@ -78,12 +97,13 @@ def main(argv):
     rc, fallos, salida = run(root)
     resultados.append(escenario("estado normal", rc, fallos, 0))
 
-    print("2) .luau con error de sintaxis en mi plugin -> rc 1 y attributed a mi")
-    probe = os.path.join(root, "lyrics-carousel", "tmp_sintaxis.luau")
+    print("2) .luau con error de sintaxis en mi plugin -> rc 1, dos detecciones")
+    raiz = copia_repo(root)
+    probe = os.path.join(raiz, "lyrics-carousel", "tmp_sintaxis.luau")
     with open(probe, "w", encoding="utf-8") as handle:
         handle.write('local x = 1\nif x == 1 then\n  print("sin cerrar"\n')
     try:
-        rc, fallos, salida = run(root)
+        rc, fallos, salida = run(raiz)
         resultados.append(
             escenario("error de sintaxis propio", rc, fallos, 1, "fallo de luac")
         )
@@ -99,14 +119,15 @@ def main(argv):
             )
         )
     finally:
-        os.remove(probe)
+        shutil.rmtree(raiz, ignore_errors=True)
 
     print("3) .luau solo-Luau valido -> sin falsos positivos de sintaxis")
-    probe = os.path.join(root, "lyrics-carousel", "tmp_luau.luau")
+    raiz = copia_repo(root)
+    probe = os.path.join(raiz, "lyrics-carousel", "tmp_luau.luau")
     with open(probe, "w", encoding="utf-8") as handle:
         handle.write("local x: number = 1\nprint(x)\n")
     try:
-        rc, fallos, salida = run(root)
+        rc, fallos, salida = run(raiz)
         # El fichero es valido: la comprobacion de sintaxis no debe
         # llamarlo error. Lo que si falla es la invariante del plugin (sus
         # .luau tienen que compilar tal cual), y eso es lo que mantiene
@@ -130,14 +151,15 @@ def main(argv):
             )
         )
     finally:
-        os.remove(probe)
+        shutil.rmtree(raiz, ignore_errors=True)
 
     print("3b) .luau con Luau que ningun normalizador cubre -> sin error")
-    probe = os.path.join(root, "lyrics-carousel", "tmp_generico.luau")
+    raiz = copia_repo(root)
+    probe = os.path.join(raiz, "lyrics-carousel", "tmp_generico.luau")
     with open(probe, "w", encoding="utf-8") as handle:
         handle.write("local x: Array<number> = {}\nprint(x)\n")
     try:
-        rc, fallos, salida = run(root)
+        rc, fallos, salida = run(raiz)
         resultados.append(
             escenario(
                 "Luau con genericos: sin falso positivo",
@@ -148,12 +170,14 @@ def main(argv):
             )
         )
     finally:
-        os.remove(probe)
+        shutil.rmtree(raiz, ignore_errors=True)
 
-    print("4) autotest que falla sin nombrar al plugin -> rc 1 y attributed a mi")
-    with open(DEPLOYED, encoding="utf-8") as handle:
+    print("4) autotest que falla sin nombrar al plugin -> rc 1")
+    deploy, destino = copia_despliegue()
+    selftest = os.path.join(destino, "bin", "selftest.py")
+    with open(selftest, encoding="utf-8") as handle:
         original = handle.read()
-    with open(DEPLOYED, "w", encoding="utf-8") as handle:
+    with open(selftest, "w", encoding="utf-8") as handle:
         handle.write(
             original.replace(
                 "    failed = 0\n",
@@ -161,7 +185,7 @@ def main(argv):
             )
         )
     try:
-        rc, fallos, salida = run(root)
+        rc, fallos, salida = run(root, deploy=deploy)
         resultados.append(
             escenario(
                 "autotest sin nombrar",
@@ -172,11 +196,10 @@ def main(argv):
             )
         )
     finally:
-        with open(DEPLOYED, "w", encoding="utf-8") as handle:
-            handle.write(original)
+        shutil.rmtree(deploy, ignore_errors=True)
 
-    print("5) validador compartido que reventa -> rc 1 (infraestructura)")
-    raiz = copia(root)
+    print("5) validador compartido que revienta -> rc 1 (infraestructura)")
+    raiz = copia_repo(root)
     with open(os.path.join(raiz, "tools", "check-luau-globals.py"), "w") as handle:
         handle.write("import sys\nsys.exit(3)\n")
     try:
@@ -188,7 +211,7 @@ def main(argv):
         shutil.rmtree(raiz, ignore_errors=True)
 
     print("6) sin compilador -> rc 1 (infraestructura)")
-    raiz = copia(root)
+    raiz = copia_repo(root)
     os.makedirs(EMPTY_BIN, exist_ok=True)
     env = {**os.environ, "PATH": EMPTY_BIN}
     try:
@@ -198,8 +221,7 @@ def main(argv):
         shutil.rmtree(raiz, ignore_errors=True)
 
     print("7) sin noctalia no se ejercita nada -> rc 1 (infraestructura)")
-    raiz = copia(root)
-    os.makedirs(EMPTY_BIN, exist_ok=True)
+    raiz = copia_repo(root)
     env = {**os.environ, "PATH": EMPTY_BIN}
     try:
         rc, fallos, salida = run(raiz, env=env, ui=True)
@@ -222,18 +244,19 @@ def main(argv):
         resultados.append(escenario("log inexistente", 0, [], 1))
 
     print("9) .luau con bytes que no son UTF-8 -> la verificacion no revienta")
-    probe = os.path.join(root, "lyrics-carousel", "tmp_bytes.luau")
+    raiz = copia_repo(root)
+    probe = os.path.join(raiz, "lyrics-carousel", "tmp_bytes.luau")
     with open(probe, "wb") as handle:
         handle.write(b"local x = '\xff\xfe'\nif x == 1 then\n  print(\"sin cerrar\"\n")
     try:
-        rc, fallos, salida = run(root)
+        rc, fallos, salida = run(raiz)
         resultados.append(
             escenario("bytes no UTF-8", rc, fallos, 1, "fallo de luac")
         )
     finally:
-        os.remove(probe)
+        shutil.rmtree(raiz, ignore_errors=True)
 
-    print("10) el ejercicio se hace de verdad (el IPC llega al panel)")
+    print("10) el ejercicio se hace de verdad (el IPC llega al widget)")
     rc, fallos, salida = run(root, ui=True)
     resultados.append(escenario("el ejercicio se hace", rc, fallos, 0))
     resultados.append(
@@ -243,30 +266,23 @@ def main(argv):
     )
 
     print("11) con ajustes pendientes -> se avisa y no se pisa nada")
-    pendientes = os.path.expanduser(
-        "~/.local/state/noctalia/plugins/data/faminec/lyrics-carousel/overrides.json"
-    )
-    helper = os.path.expanduser(
-        "~/.local/share/noctalia/plugins/lyrics-carousel/bin/set-setting.py"
-    )
+    state = estado_temporal()
     try:
+        pendientes = os.path.join(
+            state, "plugins", "data", "faminec", "lyrics-carousel", "overrides.json"
+        )
+        os.makedirs(os.path.dirname(pendientes), exist_ok=True)
         with open(pendientes, "w", encoding="utf-8") as handle:
             handle.write('{"marker": true}')
-        rc, fallos, salida = run(root, ui=True)
+        rc, fallos, salida = run(root, ui=True, state=state)
         resultados.append(
             escenario("ajustes pendientes: se avisa", rc, fallos, 1, "fallo de ejercicio")
         )
     finally:
-        if os.path.isfile(pendientes):
-            os.remove(pendientes)
-        subprocess.run(
-            [sys.executable, helper, "marker", "false", "bool"],
-            capture_output=True,
-            timeout=30,
-        )
+        shutil.rmtree(state, ignore_errors=True)
 
     print("12) sin validadores compartidos -> rc 1 (infraestructura)")
-    raiz = copia(root, con_tools=False)
+    raiz = copia_repo(root, con_tools=False)
     try:
         rc, fallos, salida = run(raiz)
         resultados.append(

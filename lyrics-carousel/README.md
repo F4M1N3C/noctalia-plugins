@@ -121,7 +121,9 @@ Both are used by `tools/verify-plugins.py`.
 The verifier itself has a regression battery, which simulates failures
 (a broken `.luau`, a self-test that fails without naming the plugin, a
 validator that crashes, a missing compiler, a missing log, no shared
-validators) and checks that each one is reported and blocks the pass:
+validators) and checks that each one is reported and blocks the pass.
+It works on temporary copies of the repository, the deployment and the
+state, so it never touches the real installation:
 
 A `.luau` that only uses Luau syntax is not an error: type annotations are
 stripped first (the shared normaliser mangles them) and the rest is

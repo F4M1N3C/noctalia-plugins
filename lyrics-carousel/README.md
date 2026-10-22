@@ -118,6 +118,15 @@ in `~/.local/bin` (which is how the panel starts it).
 `--diagnostics` prints the same information for the running script as JSON.
 Both are used by `tools/verify-plugins.py`.
 
+The verifier itself has a regression battery, which simulates failures
+(a broken `.luau`, a self-test that fails without naming the plugin, a
+validator that crashes, a missing compiler, a missing log) and checks that
+each one is reported and blocks the pass:
+
+```sh
+python3 ~/.local/share/noctalia/plugins/lyrics-carousel/tools/check-verifier.py
+```
+
 ## Notes
 
 - The window is opened with `hl.dsp.exec_cmd(...)` and the class

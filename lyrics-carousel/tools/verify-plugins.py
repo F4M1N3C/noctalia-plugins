@@ -289,6 +289,56 @@ def infra(label: str, detail: str = ""):
     return (KIND_INFRA, "", label, detail)
 
 
+def load_api(root: str):
+    """Modulo compartido de la sesion de inventario (solo lectura).
+
+    Aporta la normalizacion de la sintaxis solo-Luau, que luac no
+    entiende. Sin el no se puede distinguir "sintaxis de Luau" de "error
+    de verdad".
+    """
+    tools = os.path.join(root, "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    try:
+        import noctalia_api
+
+        return noctalia_api
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def syntax_state(api, path: str):
+    """Estado de la sintaxis de un .luau.
+
+    "ok"    compila tal cual.
+    "luau"  solo usa sintaxis de Luau (luac no la entiende): se
+            normaliza y compila, asi que no es un error.
+    "error" error de sintaxis de verdad: hay que avisar.
+    """
+    result = run(["luac", "-p", path], timeout=20)
+    if result is not None and result.returncode == 0:
+        return "ok", ""
+    if api is not None:
+        try:
+            with open(path, encoding="utf-8") as handle:
+                source = handle.read()
+            if api.compile_ok(api.normalize(source)):
+                return "luau", ""
+        except Exception:  # noqa: BLE001
+            pass
+    motivo = ""
+    if result is not None:
+        lineas = [
+            l.strip()
+            for l in (result.stderr or result.stdout or "").split("\n")
+            if l.strip()
+        ]
+        # luac imprime una sola linea con el fichero y el error: se queda
+        # con la ultima para no repetir la ruta.
+        motivo = lineas[-1] if lineas else ""
+    return "error", motivo or "no se pudo compilar"
+
+
 def static_checks(root: str):
     """Fallos de los validadores y de la sintaxis.
 
@@ -322,25 +372,48 @@ def static_checks(root: str):
     # se saltan: luac no las entiende).
     skipped = 0
     compiled = 0
-    if shutil.which("luac") is None:
-        # Sin luac no se comprueba la sintaxis: es un fallo de la
+    api = load_api(root)
+    compiler = api.luac() if api is not None else shutil.which("luac")
+    if not compiler:
+        # Sin compilador no se comprueba la sintaxis: es un fallo de la
         # verificacion, no un "todo bien" silencioso.
-        failures.append(infra("luac", "no está instalado: no se comprueba la sintaxis"))
+        failures.append(
+            infra("luac", "no hay compilador: no se comprueba la sintaxis")
+        )
         return failures, compiled, skipped
+    if api is None:
+        failures.append(
+            infra(
+                "noctalia_api",
+                "no se encuentra el modulo compartido: no se puede distinguir "
+                "la sintaxis solo-Luau de un error de verdad",
+            )
+        )
     for current, dirs, names in os.walk(root):
         dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", "node_modules")]
         for name in names:
             if not name.endswith(".luau"):
                 continue
             path = os.path.join(current, name)
-            result = run(["luac", "-p", path], timeout=20)
-            if result is None:
-                failures.append(infra("luac", "no se pudo comprobar " + path))
-                continue
-            if result.returncode != 0:
+            state, motivo = syntax_state(api, path)
+            if state == "ok":
+                compiled += 1
+            elif state == "luau":
+                skipped += 1
+            elif api is None:
+                # Sin poder distinguirlo se cuenta como omitido (el fallo de
+                # infraestructura ya esta avisado mas arriba).
                 skipped += 1
             else:
-                compiled += 1
+                owner = plugin_from_path(path) or ""
+                failures.append(
+                    (
+                        KIND_PLUGIN if owner else KIND_UNKNOWN,
+                        owner,
+                        "luac",
+                        motivo or ("%s: no se pudo compilar" % path),
+                    )
+                )
     return failures, compiled, skipped
 
 

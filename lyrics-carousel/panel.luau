@@ -13,8 +13,7 @@
 -- ellas falla (permisos, disco lleno, API que no existe) el panel avisa en
 -- lugar de reventar el script.
 
-local PLUGIN_ID = "faminec/lyrics-carousel"
-local SECTION = '[plugin_settings."faminec/lyrics-carousel"]'
+local settingsLib = require("./lib/settings.luau")
 
 local DEFAULTS = {
   font_family = "Departure Mono",
@@ -76,8 +75,6 @@ local closePanel
 local flush
 
 local settings = {}
-local pending = {}
-local generation = 0
 local trackTitle = ""
 local trackArtist = ""
 local launching = false
@@ -157,14 +154,13 @@ local function refreshSettings()
 end
 
 local function valueOf(key)
+  -- Lo que el panel acaba de cambiar tiene prioridad; si no, el valor
+  -- efectivo (overrides + configuracion de Noctalia).
   local value = settings[key]
-  if value == nil then
-    value = safe("getConfig", noctalia.getConfig, key)
+  if value ~= nil then
+    return value
   end
-  if value == nil then
-    return DEFAULTS[key]
-  end
-  return value
+  return settingsLib.value(key)
 end
 
 local function boolOf(key)
@@ -175,72 +171,42 @@ local function numberOf(key)
   return tonumber(valueOf(key)) or DEFAULTS[key]
 end
 
--- Escribe los cambios pendientes y recarga la configuración de Noctalia.
-local function flush()
-  if next(pending) == nil then
+-- Escribe un ajuste en la capa de overrides del plugin.
+--
+-- No se escribe en el settings.toml con el panel abierto: Noctalia vigila ese
+-- fichero y al cambiarlo recarga la configuracion, lo quecierra el panel que
+-- el usuario tiene delante y descarta los clics siguientes. Los overrides se
+-- vuelcan al settings.toml al cerrar el panel (ver onClose).
+local pendingWrites = 0
+
+local function writeSetting(key, value)
+  pendingWrites = pendingWrites + 1
+  local ok = settingsLib.write(key, value)
+  if not ok then
+    pendingWrites = pendingWrites - 1
+    reportError(tr("write_failed"))
     return
   end
-  local pluginDir = safe("pluginDir", noctalia.pluginDir) or ""
-  local argv = { "python3", pluginDir .. "/bin/set-setting.py" }
-  local keys = {}
-  for key in pairs(pending) do
-    keys[#keys + 1] = key
-  end
-  table.sort(keys)
-  for _, key in ipairs(keys) do
-    local item = pending[key]
-    local kind = "string"
-    if BOOL_KEYS[key] then
-      kind = "bool"
-    elseif INT_KEYS[key] then
-      kind = "int"
-    elseif FLOAT_KEYS[key] then
-      kind = "float"
+  -- La escritura es asincrona: se descuenta al terminar.
+  runAsync({ "sleep", "0.4" }, function()
+    if pendingWrites > 0 then
+      pendingWrites = pendingWrites - 1
     end
-    argv[#argv + 1] = key
-    argv[#argv + 1] = tostring(item.value)
-    argv[#argv + 1] = kind
-  end
-  pending = {}
-  runAsync(argv, function(result)
-    if result == nil or result.exitCode ~= 0 then
-      local detail = ""
-      if type(result) == "table" then
-        detail = tostring(result.stderr or "")
-      end
-      reportError(detail ~= "" and detail or tr("write_failed"))
-      render()
-      return
-    end
-    lastError = ""
-    runAsync({ "noctalia", "msg", "config-reload" }, function()
-      -- Noctalia ya tiene el valor en memoria: se limpia la caché local.
-      settings = {}
-      render()
-    end)
   end)
 end
 
 local function setSetting(key, value, options)
   options = options or {}
-  pending[key] = { value = value }
   settings[key] = value
-  generation = generation + 1
-  local current = generation
-  -- Margen para agrupar varios cambios seguidos en una sola recarga de la
-  -- configuración (recargar re-crea todos los plugins).
-  runAsync({ "sleep", "1.2" }, function()
-    if current ~= generation then
-      return
-    end
-    flush()
-    if options.relaunch then
-      launch()
-    end
-    if options.geometry then
-      applyGeometry()
-    end
-  end)
+  -- Se escribe al instante: el widget lo aplica en el acto (lee los
+  -- overrides cada 1,2 s) y el panel sigue abierto para más cambios.
+  writeSetting(key, value)
+  if options.relaunch then
+    launch()
+  end
+  if options.geometry then
+    applyGeometry()
+  end
   render()
 end
 
@@ -834,8 +800,23 @@ function onOpen()
   render()
 end
 
+-- Vuelca los overrides al settings.toml: asi la pagina de ajustes del plugin
+-- y el panel muestran lo mismo. Espera a que terminen las escrituras que
+-- estaban en vuelo para no perder el ultimo cambio.
+local function mergeOverrides(attempts)
+  if pendingWrites > 0 and (attempts or 0) < 20 then
+    runAsync({ "sleep", "0.1" }, function()
+      mergeOverrides((attempts or 0) + 1)
+    end)
+    return
+  end
+  settingsLib.merge()
+  settings = {}
+end
+
 function onClose()
-  flush()
+  -- La recarga que dispara Noctalia ya no molesta: el panel se esta cerrando.
+  mergeOverrides(0)
 end
 
 function onConfigChanged()
@@ -852,40 +833,11 @@ function onIpc(event, payload)
       toggleKey(payload)
     end
   elseif event == "set" then
-    -- Fija un ajuste: set font_size=26 int
-    if type(payload) == "string" then
-      -- "clave=valor [tipo]"
-      local head, tail = payload:match("^%s*([^=%s]+)%s*=%s*(.-)%s*$")
-      local kind = "string"
-      if tail ~= nil then
-        -- El tipo va al final; el valor es todo lo de en medio (puede
-        -- llevar espacios: "font_family=Nothing Font (5x7) string").
-        local pieces = {}
-        for piece in tail:gmatch("%S+") do
-          pieces[#pieces + 1] = piece
-        end
-        local last = pieces[#pieces]
-        if last == "bool" or last == "int" or last == "float" or last == "string" then
-          kind = last
-          table.remove(pieces)
-        end
-        tail = table.concat(pieces, " ")
-      end
-      local key = head
-      local value = tail
-      if key ~= nil and value ~= nil and DEFAULTS[key] ~= nil then
-        local parsed = value
-        if kind == "bool" then
-          parsed = value == "true" or value == "1"
-        elseif kind == "int" then
-          parsed = tonumber(value) or value
-        elseif kind == "float" then
-          parsed = tonumber(value) or value
-        end
-        local mode = tostring(valueOf("render_mode"))
-        local relaunch = (key == "font_family" or key == "font_size") and mode == "text"
-        setSetting(key, parsed, { relaunch = relaunch })
-      end
+    -- Fija un ajuste: "set font_size=26 int" o "set font_size 26 int"
+    local key, value = settingsLib.parse(payload)
+    if key ~= nil then
+      settings[key] = value
+      setSetting(key, value)
     end
   elseif event == "refresh" then
     settings = {}

@@ -13,6 +13,7 @@ configuración.
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import sys
 import tempfile
@@ -25,6 +26,10 @@ except ImportError:  # pragma: no cover - python < 3.11
 PLUGIN_ID = "faminec/lyrics-carousel"
 SECTION = f'[plugin_settings."{PLUGIN_ID}"]'
 SETTINGS = os.path.expanduser("~/.local/state/noctalia/settings.toml")
+
+OVERRIDES = os.path.expanduser(
+    "~/.local/state/noctalia/plugins/data/faminec/lyrics-carousel/overrides.json"
+)
 
 ALLOWED = {
     "font_family", "font_size", "render_mode", "direction", "marker",
@@ -129,7 +134,121 @@ def parse_args(argv):
     return pairs
 
 
+def overrides_path() -> str:
+    return OVERRIDES
+
+
+def read_overrides():
+    try:
+        with open(OVERRIDES, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_overrides(data) -> bool:
+    directory = os.path.dirname(OVERRIDES)
+    try:
+        os.makedirs(directory, exist_ok=True)
+        temporary = ""
+        handle = tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=directory, delete=False, suffix=".tmp"
+        )
+        temporary = handle.name
+        with handle:
+            json.dump(data, handle, ensure_ascii=False, indent=1, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, OVERRIDES)
+        temporary = ""
+    except OSError as error:
+        print(f"no se pudo escribir los overrides: {error}", file=sys.stderr)
+        return False
+    return True
+
+
+def set_override(key: str, value: str, kind: str) -> int:
+    """Guarda un ajuste en el fichero de overrides (no lo vigila Noctalia).
+
+    Varias escrituras pueden solaparse (el panel escribe sin esperar), asi que
+    la lectura-modificacion-escritura va con lock: si no, la segunda pisa a la
+    primera.
+    """
+    lock_path = OVERRIDES + ".lock"
+    try:
+        lock = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError as error:
+        print(f"no se pudo abrir el lock: {error}", file=sys.stderr)
+        return 1
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        data = read_overrides()
+        data[key] = parse_value(value, kind)
+        if not write_overrides(data):
+            return 1
+        return 0
+    finally:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(lock)
+
+
+def parse_value(value: str, kind: str):
+    if kind == "bool":
+        return str(value).lower() in ("1", "true", "yes", "on")
+    if kind == "int":
+        return int(float(value))
+    if kind == "float":
+        return float(value)
+    return value
+
+
+def merge_overrides() -> int:
+    """Vuelca los overrides al settings.toml y borra el fichero."""
+    data = read_overrides()
+    if not data:
+        return 0
+    pairs = []
+    for key, value in data.items():
+        if key not in ALLOWED:
+            continue
+        if isinstance(value, bool):
+            pairs.append((key, "true" if value else "false", "bool"))
+        elif isinstance(value, int):
+            pairs.append((key, str(value), "int"))
+        elif isinstance(value, float):
+            pairs.append((key, str(value), "float"))
+        else:
+            pairs.append((key, str(value), "string"))
+    if not pairs:
+        try:
+            os.remove(OVERRIDES)
+        except OSError:
+            pass
+        return 0
+    code = main(["set-setting.py"] + [item for pair in pairs for item in pair])
+    if code == 0:
+        try:
+            os.remove(OVERRIDES)
+        except OSError:
+            pass
+    return code
+
+
 def main(argv):
+    if len(argv) >= 2 and argv[1] == "override":
+        if len(argv) < 5:
+            print("uso: set-setting.py override <clave> <valor> <tipo>", file=sys.stderr)
+            return 2
+        if argv[2] not in ALLOWED:
+            print(f"clave desconocida: {argv[2]}", file=sys.stderr)
+            return 2
+        return set_override(argv[2], argv[3], argv[4])
+    if len(argv) >= 2 and argv[1] == "merge":
+        return merge_overrides()
     if len(argv) < 3:
         print("uso: set-setting.py <clave> <valor> [tipo] ...", file=sys.stderr)
         return 2

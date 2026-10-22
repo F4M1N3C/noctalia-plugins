@@ -1237,8 +1237,23 @@ FLOAT_KEYS = ("active_scale",)
 SETTINGS_PATH = os.path.expanduser("~/.local/state/noctalia/settings.toml")
 
 
+OVERRIDES_PATH = os.path.expanduser(
+    "~/.local/state/noctalia/plugins/data/faminec/lyrics-carousel/overrides.json"
+)
+
+
+def read_overrides() -> dict:
+    """Ajustes cambiados desde el panel (capa temporal, se vuelca al cerrar)."""
+    try:
+        with open(OVERRIDES_PATH, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def load_settings() -> dict:
-    """Ajustes del plugin: valores por defecto + settings.toml de Noctalia."""
+    """Ajustes del plugin: valores por defecto + settings.toml + overrides."""
     cfg = dict(DEFAULTS)
 
     if os.path.isfile(SETTINGS_PATH) and tomllib is not None:
@@ -1251,6 +1266,12 @@ def load_settings() -> dict:
                     cfg[key] = value
         except Exception:  # noqa: BLE001
             pass
+
+    # Los overrides del panel tienen prioridad: son cambios explicitos
+    # todavia no volcados al settings.toml.
+    for key, value in read_overrides().items():
+        if key in cfg:
+            cfg[key] = value
 
     for key in BOOL_KEYS:
         value = cfg[key]
@@ -2172,11 +2193,22 @@ class LyricsCarousel:
 
     # ---- teclado ------------------------------------------------------
 
-    def _reload_noctalia(self):
-        """Pide a Noctalia que vuelva a leer el settings.toml."""
+    def _save_override(self, key, value, kind="string"):
+        """Guarda un ajuste en la capa de overrides del panel.
+
+        No se toca el settings.toml a proposito: escribirlo hace que Noctalia
+        recargue la configuracion y cierre el panel que este abierto.
+        """
         try:
             subprocess.Popen(
-                ["noctalia", "msg", "config-reload"],
+                [
+                    "python3",
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "set-setting.py"),
+                    "override",
+                    key,
+                    str(value),
+                    kind,
+                ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -2201,15 +2233,13 @@ class LyricsCarousel:
         if key in ("d", "D"):
             self.direction *= -1
             self.cfg["direction"] = "down" if self.direction > 0 else "up"
-            write_setting("direction", self.cfg["direction"])
-            self._reload_noctalia()
+            self._save_override("direction", self.cfg["direction"], "string")
             self.dirty = True
             return True
         if key in ("k", "K"):
             self.karaoke = not self.karaoke
             self.cfg["karaoke"] = self.karaoke
-            write_setting("karaoke", self.karaoke)
-            self._reload_noctalia()
+            self._save_override("karaoke", self.karaoke, "bool")
             self.dirty = True
             return True
         if key in ("r", "R"):

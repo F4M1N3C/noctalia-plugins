@@ -403,21 +403,27 @@ captureThumbs = function()
     end
   end
 
-  if #entries == 0 then
-    return
-  end
-
-  preview.capture(entries, function()
-    -- Se limpian las miniaturas que ya no usa ninguna tarjeta. Se conservan
-    -- también las de la vista anterior: al reabrir el panel, el host vuelve
-    -- a aplicar el árbol que tenía guardado e intenta cargar esas imágenes.
+  -- Limpia las miniaturas que ya no usa ninguna tarjeta. Se conservan
+  -- también las de la vista anterior: al reabrir el panel, el host vuelve
+  -- a aplicar el árbol que tenía guardado e intenta cargar esas imágenes.
+  -- La antigüedad mínima (30 min) deja margen por si el host pide una
+  -- imagen que ya no está en uso.
+  local function cleanup()
     local used = preview.currentPaths(state.windows)
     for path in pairs(state.thumbUsed or {}) do
       used[path] = true
     end
-    -- La antigüedad mínima (30 min) deja margen por si el host vuelve a
-    -- aplicar un árbol guardado con imágenes que ya no están en uso.
     preview.pruneUnused(used, 1800)
+  end
+
+  if #entries == 0 then
+    -- Aun sin capturas nuevas hay que retirar las miniaturas caducadas.
+    cleanup()
+    return
+  end
+
+  preview.capture(entries, function()
+    cleanup()
     if state.open then
       render()
     end

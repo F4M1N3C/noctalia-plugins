@@ -23,7 +23,7 @@ key = "commands"
 type = "string_map"
 label_key = "settings.commands.label"
 description_key = "settings.commands.description"
-default = { cava = "cava", cbonsai = "cbonsai -l -p", unimatrix = "unimatrix -s 96 -l o", pipes = "pipes.sh", lavat = "lavat -k green -c black", btop = "btop" }
+default = { cava = "cava", cbonsai = "cbonsai -l -i", unimatrix = "unimatrix -s 96 -l o", pipes = "pipes.sh", lavat = "lavat -k green -c black", btop = "btop" }
 
 [[setting]]
 key = "layouts"

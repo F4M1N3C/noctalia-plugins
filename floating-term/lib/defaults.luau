@@ -17,7 +17,7 @@ local M = {}
 
 local FALLBACK_COMMANDS = {
   cava = "cava",
-  cbonsai = "cbonsai -l -p",
+  cbonsai = "cbonsai -l -i",
   unimatrix = "unimatrix -s 96 -l o",
   pipes = "pipes.sh",
   lavat = "lavat -k green -c black",

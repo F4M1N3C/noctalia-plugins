@@ -161,9 +161,14 @@ grid, the edit mode and every IPC handler work (this is what catches the
 "attempt to call a nil value" from a `local` used before its declaration).
 It exits with a non-zero code if a case fails.
 
-`test-smoke.sh` needs Hyprland and Noctalia with the plugin enabled: it opens
-every widget, rotates them, closes them and then checks that the Noctalia log
-has no warning or error from the plugin.
+`test-smoke.sh` needs Hyprland and Noctalia with the plugin enabled. It works
+out how many widgets should be open (manifest ⊕ settings ⊕ panel store, minus
+the removed ones), opens them all and waits until **exactly** that many windows
+exist (a fixed sleep is not enough: `open-all` launches them one by one). It
+then rotates and checks that the positions are a permutation of the previous
+ones (every window still there, at least one moved), closes everything and
+waits for zero. Finally it reads every new log line written during the run and
+fails on **any** `[WRN]` or `[ERR]`, whether it names the plugin or not.
 
 ## Notes
 

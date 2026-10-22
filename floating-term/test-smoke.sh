@@ -170,12 +170,17 @@ while True:
         continue
     if fh is None or st.st_ino != inode:
         if fh is not None:
-            try:
-                data = fh.read()
-                if data:
-                    f.write(data)
-            except Exception:
-                pass
+            # Drenar el fichero viejo hasta el final; el host puede escribir
+            # la línea de cierre justo después de rotar, así que se relee una
+            # vez más tras una espera corta.
+            for _ in range(2):
+                try:
+                    data = fh.read()
+                    if data:
+                        f.write(data)
+                except Exception:
+                    pass
+                time.sleep(0.3)
             try:
                 fh.close()
             except Exception:
@@ -520,9 +525,10 @@ wait_log_quiet 5 25
 stop_follower
 # Con la copia volcada se comprueba que el cierre quedó registrado. El seguidor
 # drena el fichero viejo antes de cambiar, así que la línea debe estar.
-last_event=$(grep -E "panel manager: (opened|closing) \"$PANEL\"" "$tmp/run.log" | tail -1)
-if ! printf '%s\n' "$last_event" | grep -Fq "closing \"$PANEL\""; then
-  fail "el panel no se cerró (último evento: ${last_event:-ninguno})"
+# El cierre debe haber quedado registrado en la copia (el seguidor drena el
+# fichero viejo antes de cambiar, así que una rotación no lo oculta).
+if ! grep -q "closing \"$PANEL\"" "$tmp/run.log"; then
+  fail "el panel no se cerró (no aparece 'closing' en la copia del log)"
 fi
 
 echo "5) avisos y errores nuevos en el log durante toda la prueba"

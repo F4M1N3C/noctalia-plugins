@@ -131,7 +131,7 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (90 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (97 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
 especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
 separados disparen acciones distintas, que un gesto tras restaurar el volumen
@@ -155,7 +155,8 @@ reglas que lo exigen no se dispararían nunca y no habría ningún error) y
 **que el aviso del atajo se lance y no se pierda en silencio si falla** y
 **que la UI y el motor usen los mismos nombres** (modificadores, disparadores
 y paneles: si se desincronizasen, las reglas de la UI no se dispararían nunca
-y no habría ningún error).
+y no habría ningún error) y **que las acciones permitidas para cada gesto sean
+las mismas en la UI y en el demonio**.
 
 Las pruebas **esperan a la condición que comprueban**, no a un tiempo fijo: si
 la máquina va cargada, no falla "por el motivo equivocado", y una comprobación
@@ -257,6 +258,10 @@ anteriores que resultaron inexactas) está en [`CHANGELOG.md`](CHANGELOG.md).
   corrupta, el parser se quedaría esperando para siempre y el buffer crecería
   sin límite (el enlace dejaría de leerse). Ahora, si el buffer se pasa de
   8 KB, se descarta y se vuelve a buscar el inicio de la siguiente trama.
+- **Los gestos validan la acción.** El demando comprueba que la acción que
+  se asigna a un gesto esté entre las permitidas para ese gesto: si no, el
+  dispositivo la ignoraba y no pasaba nada. Y la lista de permitidas se
+  comprueba contra la copia de la UI, para que no se desincronicen.
 - **El socket del enlace se cierra siempre.** Cuando el lector RFCOMM muere
   (o el monitor reconecta), su socket se cierra: si se deja abierto, el
   descriptor se fuga en cada reconexión y el canal puede quedar ocupado, que

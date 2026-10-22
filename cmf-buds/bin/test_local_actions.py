@@ -18,6 +18,7 @@ Uso: python3 bin/test_local_actions.py
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 
@@ -931,6 +932,89 @@ def test_contrato_luau_motor():
     return r.failures
 
 
+def _acciones_permitidas_luau(texto):
+    """Extrae del Luau {grupo: {gesto: [acciones]}}."""
+    bloque = re.search(r"local ACTION_ALLOWED = \{(.*?)\n\}", texto, re.S)
+    if bloque is None:
+        return None
+    salida = {}
+    grupo = None
+    for linea in bloque.group(1).splitlines():
+        m = re.match(r"\s*(\w+) = \{(.*)$", linea)
+        if m is None:
+            continue
+        nombre, resto = m.group(1), m.group(2)
+        if resto.strip() in ("", "}"):
+            # Linea de grupo: abre una tabla de gestos.
+            grupo = nombre
+            salida[grupo] = {}
+        elif grupo is not None:
+            salida[grupo][nombre] = re.findall(r'"([^"]+)"', resto)
+    return salida
+
+
+def test_gestos_permitidos():
+    print("29) la lista de acciones permitidas es la misma en la UI y en el demonio")
+    import budsctl
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(raiz, "lib", "common.luau"), encoding="utf-8") as fh:
+        comun = fh.read()
+    ui = _acciones_permitidas_luau(comun)
+    r.check("se pudo leer la lista de la UI", ui is not None and len(ui) > 0, ui)
+    # El demonio indexa por (grupo, gesto); se reagrupa para comparar.
+    demonio = {}
+    for (grupo, gesto), acciones in budsctl.GESTURE_ALLOWED.items():
+        demonio.setdefault(grupo, {})[gesto] = set(acciones)
+    r.check(
+        "los grupos son los mismos",
+        set(ui or {}) == set(demonio),
+        (sorted((ui or {}).keys()), sorted(demonio.keys())),
+    )
+    diferencias = []
+    for grupo, gestos in (ui or {}).items():
+        for gesto, acciones in gestos.items():
+            otras = set(demonio.get(grupo, {}).get(gesto, []))
+            if set(acciones) != otras:
+                diferencias.append((grupo, gesto, sorted(set(acciones) ^ otras)))
+    r.check(
+        "las acciones permitidas son las mismas en los dos sitios",
+        not diferencias,
+        diferencias,
+    )
+    # Y el demonio no acepta una accion no permitida para ese gesto.
+    permitidas = budsctl.GESTURE_ALLOWED[("left", "double")]
+    no_permitida = next(
+        (a for a in budsctl.GESTURE_ACTIONS if a not in permitidas),
+        None,
+    )
+    r.check(
+        "el demonio rechaza una accion no permitida para ese gesto",
+        no_permitida is not None,
+        permitidas,
+    )
+    error = None
+    try:
+        budsctl.BudsDaemon._comprobar_gesture("left", "double", no_permitida)
+    except ValueError as exc:
+        error = str(exc)
+    r.check("y avisa del motivo", error is not None and "no est" in error, error)
+    error2 = None
+    try:
+        budsctl.BudsDaemon._comprobar_gesture("left", "double", "play_pause")
+    except ValueError as exc:
+        error2 = str(exc)
+    r.check("una accion permitida pasa", error2 is None, error2)
+    error3 = None
+    try:
+        budsctl.BudsDaemon._comprobar_gesture("left", "inventado", "play_pause")
+    except ValueError as exc:
+        error3 = str(exc)
+    r.check("un gesto inexistente se rechaza", error3 is not None, error3)
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -984,6 +1068,7 @@ def main():
         test_codigos_de_modificadores,
         test_aviso_del_atajo,
         test_contrato_luau_motor,
+        test_gestos_permitidos,
     ):
         total += test()
     print("")

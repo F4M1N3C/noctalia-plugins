@@ -1058,13 +1058,30 @@ class BudsDaemon:
         self.save()
         return self.state
 
-    def set_gesture(self, group: str, gesture_type: str, action: str):
-        self._require_link()
+    @staticmethod
+    def _comprobar_gesture(group: str, gesture_type: str, action: str):
+        """Comprueba que el gesto exista y que la accion le quede permitida.
+
+        Sin esta comprobacion, una accion no admitida por ese gesto se
+        enviaba igual y el dispositivo la ignoraba en silencio.
+        """
         key = (group, gesture_type)
         if key not in GESTURE_BY_KEY:
             raise ValueError("gesto inválido")
         if action not in GESTURE_ACTIONS:
             raise ValueError("acción inválida")
+        permitidas = GESTURE_ALLOWED.get(key)
+        if permitidas is None:
+            raise ValueError("gesto inválido")
+        if action not in permitidas:
+            raise ValueError("esa acción no está disponible para ese gesto")
+
+    def set_gesture(self, group: str, gesture_type: str, action: str):
+        # La combinacion se comprueba antes que el enlace: si no, el error
+        # seria "no hay enlace" en vez de "esa accion no vale para ese gesto".
+        self._comprobar_gesture(group, gesture_type, action)
+        self._require_link()
+        key = (group, gesture_type)
         device, typ = GESTURE_BY_KEY[key]
         self.link.send(CMD_GESTURES_SET, bytes([0x01, device, 0x01, typ, GESTURE_ACTIONS[action]]), 1.2)
         with self.lock:

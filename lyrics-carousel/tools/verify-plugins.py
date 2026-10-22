@@ -364,14 +364,16 @@ def syntax_state(api, path: str, compiler: str = "luac"):
         return "ok", ""
     solo_luau = False
     try:
-        with open(path, encoding="utf-8") as handle:
+        # errors="replace": un fichero con bytes que no son UTF-8 no puede
+        # hacer que la verificacion reviente.
+        with open(path, encoding="utf-8", errors="replace") as handle:
             if ANOTACION.search(handle.read()):
                 solo_luau = True
     except OSError:
         pass
     if api is not None:
         try:
-            with open(path, encoding="utf-8") as handle:
+            with open(path, encoding="utf-8", errors="replace") as handle:
                 source = handle.read()
             # Primero el nuestro (las anotaciones de tipo: el compartido
             # las rompe) y despues el compartido (el resto de Luau).
@@ -447,6 +449,7 @@ def static_checks(root: str):
         )
     skipped = 0
     compiled = 0
+    doubtful = 0
     api = load_api(root)
     compiler = api.luac() if api is not None else find_compiler()
     if not compiler:
@@ -455,7 +458,7 @@ def static_checks(root: str):
         failures.append(
             infra("luac", "no hay compilador: no se comprueba la sintaxis")
         )
-        return failures, compiled, skipped
+        return failures, compiled, skipped, doubtful
     if api is None:
         failures.append(
             infra(
@@ -470,13 +473,28 @@ def static_checks(root: str):
             if not name.endswith(".luau"):
                 continue
             path = os.path.join(current, name)
-            state, motivo = syntax_state(api, path, compiler)
+            try:
+                state, motivo = syntax_state(api, path, compiler)
+            except Exception as error:  # noqa: BLE001
+                # Revisar un fichero no puede hacer fallar la verificacion
+                # entera: se informa del fichero y se sigue.
+                owner = plugin_from_path(path) or ""
+                failures.append(
+                    (
+                        KIND_PLUGIN if owner else KIND_UNKNOWN,
+                        owner,
+                        "luac",
+                        "%s: no se pudo revisar (%r)" % (path, error),
+                    )
+                )
+                continue
             owner = plugin_from_path(path) or ""
             if state == "ok":
                 compiled += 1
             elif state == "luau":
                 skipped += 1
             elif state == "dudoso":
+                doubtful += 1
                 # Aviso, no fallo: puede ser sintaxis de Luau. Si ademas
                 # fuese un error real, el plugin no cargaria y el log lo
                 # diria; la revision del log lo cubre si el fichero se
@@ -504,7 +522,7 @@ def static_checks(root: str):
                         motivo or ("%s: no se pudo compilar" % path),
                     )
                 )
-    return failures, compiled, skipped
+    return failures, compiled, skipped, doubtful
 
 
 def main(argv):
@@ -564,7 +582,7 @@ def main(argv):
     else:
         print("--- log de Noctalia: sin errores ni avisos inesperados ---")
 
-    failures, compiled, skipped = static_checks(args.root)
+    failures, compiled, skipped, doubtful = static_checks(args.root)
 
     # Autotest del plugin: comprueba las suposiciones del entorno (helper,
     # directorio de datos, herramientas externas, modulos hermanos). Se usa
@@ -608,7 +626,10 @@ def main(argv):
                 "autotest (%s): %s" % (where, result.stdout.strip().splitlines()[-1])
             )
 
-    print("ficheros .luau compilados: %d (con sintaxis Luau, omitidos: %d)" % (compiled, skipped))
+    print(
+        "ficheros .luau: %d compilados, %d con sintaxis de Luau (omitidos), "
+        "%d dudosos (no concluyentes)" % (compiled, skipped, doubtful)
+    )
     mine = []
     others = []
     notes = []
@@ -640,4 +661,16 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv))
+    try:
+        raise SystemExit(main(sys.argv))
+    except SystemExit:
+        raise
+    except Exception as error:  # noqa: BLE001
+        # La verificacion nunca debe morir con un traceback: si algo se
+        # escapa, se dice y se sale con error, para que no parezca que
+        # todo esta bien.
+        import traceback
+
+        print("--- la verificacion ha fallado inesperadamente: %r ---" % (error,))
+        traceback.print_exc()
+        raise SystemExit(1)

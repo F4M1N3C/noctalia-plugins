@@ -135,6 +135,14 @@ every `.luau` compiles as it is, so a syntax error is always unambiguous
 and is caught statically (and by the self-test too, so there are two
 independent ways of noticing it).
 
+The verifier always states what it could and could not check: how many
+`.luau` compiled, how many only use Luau syntax, how many are inconclusive,
+and it fails (instead of passing) when a check could not be run at all
+(missing validator, missing compiler, missing log, Noctalia not
+responding). A file that cannot be read (invalid UTF-8) is reported, not
+skipped, and the verifier never dies with a traceback: if something
+escapes, it says so and exits with an error.
+
 ```sh
 python3 ~/.local/share/noctalia/plugins/lyrics-carousel/tools/check-verifier.py
 ```

@@ -91,7 +91,11 @@ def main(argv):
         # independientes, para que no dependa solo de la estatica.
         resultados.append(
             escenario(
-                "error de sintaxis en el autotest", rc, fallos, 1, "fallo de selftest"
+                "error de sintaxis en el autotest",
+                rc,
+                fallos,
+                1,
+                "fallo de selftest (repo)",
             )
         )
     finally:
@@ -122,7 +126,7 @@ def main(argv):
                 rc,
                 fallos,
                 1,
-                esperado="fallo de selftest",
+                esperado="fallo de selftest (repo)",
             )
         )
     finally:
@@ -160,7 +164,11 @@ def main(argv):
         rc, fallos = run(root)
         resultados.append(
             escenario(
-                "autotest sin nombrar", rc, fallos, 1, "fallo de selftest"
+                "autotest sin nombrar",
+                rc,
+                fallos,
+                1,
+                "fallo de selftest (despliegue)",
             )
         )
     finally:
@@ -213,7 +221,19 @@ def main(argv):
     except SystemExit:
         resultados.append(escenario("log inexistente", 0, [], 1))
 
-    print("9) sin validadores compartidos -> rc 1 (infraestructura)")
+    print("9) .luau con bytes que no son UTF-8 -> la verificacion no revienta")
+    probe = os.path.join(root, "lyrics-carousel", "tmp_bytes.luau")
+    with open(probe, "wb") as handle:
+        handle.write(b"local x = '\xff\xfe'\nif x == 1 then\n  print(\"sin cerrar\"\n")
+    try:
+        rc, fallos = run(root)
+        resultados.append(
+            escenario("bytes no UTF-8", rc, fallos, 1, "fallo de luac")
+        )
+    finally:
+        os.remove(probe)
+
+    print("10) sin validadores compartidos -> rc 1 (infraestructura)")
     raiz = copia(root, con_tools=False)
     try:
         rc, fallos = run(raiz)

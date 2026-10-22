@@ -439,9 +439,9 @@ check("el test detecta el fallo si se rompe el panel", true, detecta and true or
 print()
 print(string.format("Resultado: %d correctos, %d fallos", PASADOS, FALLOS))
 
--- Si todo ha ido bien, se borra la carpeta de esta ejecucion (si falla, se
--- deja para poder depurar).
-if FALLOS == 0 then
+-- La carpeta de esta ejecucion se borra siempre (si se quiere verla para
+-- depurar, con KEEP_TEST_DIR=1 se deja).
+if os.getenv("KEEP_TEST_DIR") ~= "1" then
   os.execute("rm -rf " .. DIR)
 end
 os.exit(FALLOS == 0 and 0 or 1)

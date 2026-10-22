@@ -645,11 +645,13 @@ local ok2, err2 = pcall(function()
 end)
 
 print("")
+-- La carpeta de esta ejecucion se borra siempre (si se quiere verla para
+-- depurar, con KEEP_TEST_DIR=1 se deja).
+if os.getenv("KEEP_TEST_DIR") ~= "1" then
+  os.execute("rm -rf " .. TMP)
+end
 if FAILED == 0 then
   print("Resultado: " .. PASSED .. " correctos, 0 fallos")
-  -- Si todo ha ido bien, se borra la carpeta de esta ejecucion (si falla, se
-  -- deja para poder depurar).
-  os.execute("rm -rf " .. TMP)
   os.exit(0)
 end
 print("Resultado: " .. PASSED .. " correctos, " .. FAILED .. " fallos")

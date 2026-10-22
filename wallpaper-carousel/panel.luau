@@ -372,16 +372,6 @@ local function scanChunk()
   return false
 end
 
--- Elige el fondo actual como seleccion y deja el scroll a cero.
-local function selectCurrentWallpaper()
-  selected = indexOfPath(currentWallpaperPath()) or 1
-  viewPos = selected
-  animating = false
-  scrollOffset = 0
-  scrollAccum = 0
-  scrollResetting = false
-end
-
 local function focusedConnector()
   return noctalia.focusedOutputName()
 end

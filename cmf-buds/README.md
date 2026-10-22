@@ -243,10 +243,12 @@ anteriores que resultaron inexactas) está en [`CHANGELOG.md`](CHANGELOG.md).
   reconoce por el **valor** que ponemos, no por una ventana de tiempo. La
   identidad de un evento la da **siempre el valor** (el volumen), nunca el
   reloj: un evento es "el mismo" que otro si el volumen no ha cambiado, y es
-  nuestro si su valor es el que pusimos. Las únicas ventanas de tiempo que
-  quedan son la definición de gesto (GROUP_WINDOW, 0,7 s) y una red
-  anti-duplicados de 30 ms, que no puede tragarse un pinchazo real (el dial
-  separa las muescas más de 30 ms).
+  nuestro si su valor es el que pusimos. Las ventanas de tiempo que quedan
+  son la definición de gesto (GROUP_WINDOW, 0,7 s), una red anti-duplicados de
+  30 ms (que no puede tragarse un pinchazo real: el dial separa las muescas
+  más de 30 ms) y la caducidad de la marca de "cambio hecho por nosotros"
+  (2 s), que solo existe para que la marca absorba el eco del dispositivo y no
+  se trague un giro posterior del dial.
 - **Nada se descarta en silencio:** si un gesto no encaja con ninguna regla, si
   una regla de N pulsaciones hace esperar a la de "cualquiera", si un gesto se
   omite por venir demasiado cerca del anterior o si se pierde la referencia

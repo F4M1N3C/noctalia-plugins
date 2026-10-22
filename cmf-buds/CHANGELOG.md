@@ -129,11 +129,12 @@ Ademas se anade una prueba para el temporizador que cierra el gesto: si
 falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
 motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
 
-Suite: 44 -> 83 comprobaciones (nuevas: el cierre del gesto protegido, que el
+Suite: 44 -> 86 comprobaciones (nuevas: el cierre del gesto protegido, que el
 lector cierre su socket, que al reconectar se cierre el enlace anterior, el
 protocolo de tramas (construccion, CRC, parseo, basura y trama incompleta), el
 codec de floats del ecualizador con la deteccion de modelo del dispositivo, y
-la traduccion de codigos de tecla a modificadores).
+la traduccion de codigos de tecla a modificadores, y el aviso del atajo:
+que se lance con notify-send y que, si falla, quede anotado en el log).
 
 La ultima es importante: la tabla de codigos (125 = SUPER) no tenia ninguna
 prueba, y si un codigo se equivocara las reglas que exigen SUPER dejarian de

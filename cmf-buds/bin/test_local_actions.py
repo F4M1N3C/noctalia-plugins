@@ -828,6 +828,58 @@ def test_codigos_de_modificadores():
     return r.failures
 
 
+def test_aviso_del_atajo():
+    print("27) el aviso del atajo se lanza y, si falla, queda en el log")
+    import local_actions
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    r.engine.rules[0]["notify"] = True
+    logs = []
+    r.engine.log = logs.append
+    llamadas = []
+    original = local_actions.subprocess.Popen
+
+    def fake_popen(cmd, *args, **kwargs):
+        llamadas.append(cmd)
+        return None
+
+    local_actions.subprocess.Popen = fake_popen
+    try:
+        r.evento(60, ["super"])
+        time.sleep(0.3)
+    finally:
+        local_actions.subprocess.Popen = original
+    r.check(
+        "se avisa con notify-send",
+        any(isinstance(c, list) and c and c[0] == "notify-send" for c in llamadas),
+        llamadas,
+    )
+    r.check("el atajo se ejecuto", r.engine.fired == ["UNO"], r.engine.fired)
+
+    # Y si el aviso falla, no se pierde en silencio. Antes hay que dejar
+    # pasar la ventana del gesto, si no el segundo pinchazo forma parte del
+    # primero y no vuelve a dispararse.
+    r.calmarse()
+    logs.clear()
+    r.engine.log = logs.append
+
+    def falla(*args, **kwargs):
+        raise OSError("sin notify-send")
+
+    local_actions.subprocess.Popen = falla
+    try:
+        r.evento(70, ["super"])
+        time.sleep(0.3)
+    finally:
+        local_actions.subprocess.Popen = original
+    r.check(
+        "el fallo del aviso queda anotado",
+        any("No se pudo mostrar el aviso" in m for m in logs),
+        logs,
+    )
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -879,6 +931,7 @@ def main():
         test_tramas_rfcmm,
         test_ecodec_y_modelo,
         test_codigos_de_modificadores,
+        test_aviso_del_atajo,
     ):
         total += test()
     print("")

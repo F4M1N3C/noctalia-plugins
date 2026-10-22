@@ -131,12 +131,13 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (18 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (19 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
-especificidad, el comando vacío, las ráfagas, que un gesto tras restaurar el
-volumen no se pierda, que los pinchazos muy juntos (50 ms) se cuenten como
-varios, que nuestro propio cambio se reconozca por el valor y que las reglas
-editadas fuera del panel se recargan.
+especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
+separados disparen acciones distintas, que un gesto tras restaurar el volumen
+no se pierda, que los pinchazos muy juntos (50 ms) se cuenten como varios,
+que nuestro propio cambio se reconozca por el valor y que las reglas editadas
+fuera del panel se recargan.
 
 ## Cómo funciona
 
@@ -177,7 +178,8 @@ Datos persistentes:
 ## Detalles de comportamiento
 
 - **Un giro = una acción.** Varias muescas seguidas se agrupan en un solo
-  gesto (ventana de 0,5 s).
+  gesto (ventana de 0,7 s) y solo se dispara una vez: lo decide el estado
+  del gesto, no un antirrebote por reloj.
 - **Precedencia:** si un gesto tiene una regla con N pulsaciones (2, 3...), esa
   manda y la de "Cualquiera" queda de respaldo: se ejecuta al final del gesto
   si las pulsaciones no llegan al número. Las reglas se evalúan en cada evento
@@ -185,8 +187,12 @@ Datos persistentes:
   ganan.
 - **Nuestro propio cambio de volumen no se confunde con un gesto:** se
   reconoce por el **valor** que ponemos, no por una ventana de tiempo. La
-  identidad de un evento la da siempre el valor (el volumen), nunca el reloj:
-  las ventanas de tiempo se comían gestos reales del usuario.
+  identidad de un evento la da **siempre el valor** (el volumen), nunca el
+  reloj: un evento es "el mismo" que otro si el volumen no ha cambiado, y es
+  nuestro si su valor es el que pusimos. Las únicas ventanas de tiempo que
+  quedan son la definición de gesto (GROUP_WINDOW, 0,7 s) y una red
+  anti-duplicados de 30 ms, que no puede tragarse un pinchazo real (el dial
+  separa las muescas más de 30 ms).
 - **Nada se descarta en silencio:** si un gesto no encaja con ninguna regla, si
   una regla de N pulsaciones hace esperar a la de "cualquiera", si un gesto se
   omite por venir demasiado cerca del anterior o si se pierde la referencia

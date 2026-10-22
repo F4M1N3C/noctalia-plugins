@@ -41,16 +41,9 @@ REPEAT_GAP = 0.12
 # pinchazos reales (100-250 ms): con 200 ms un triple rapido se contaba como
 # un solo gesto; con 60 ms todavia se perdian pinchazos muy juntos.
 EVENT_GAP = 0.03
-# Dos eventos del mismo tipo dentro de esta ventana son el mismo gesto.
-GESTURE_WINDOW = 0.5
 # Tras disparar un atajo se ignoran los eventos hasta que el volumen se
 # estabiliza: al restaurar el volumen, los auriculares devuelven el suyo y
 # generan un eco que dispararia el atajo otra vez (workspace +1 y -1).
-# Ventana en la que se ignoran los eventos que son la cola de nuestra propia
-# escritura. Corta a proposito: una ventana larga se comia los gestos del
-# usuario que venian justo despues.
-QUIET_STABLE = 0.4
-QUIET_MAX = 3.0
 # Margen (%%) para el ajuste final del volumen: si el usuario ha cambiado el
 # volumen a proposito durante la ventana de calma, no se toca.
 SETTLE_TOLERANCE = 8
@@ -347,13 +340,8 @@ class LocalActionEngine:
         self._pending = None
         self._timer = None
         self._lock = threading.RLock()
-        self._self_change_at = 0.0
         self._self_set_volume = None
         self._last_event = {}
-        self._last_fire = {}
-        self._quiet_until = 0.0
-        self._quiet_last_event = 0.0
-        self._quiet_started = 0.0
         self._restore_target = None
         self.modifiers = ModifierTracker(self.log)
         self.watcher = None
@@ -466,7 +454,6 @@ class LocalActionEngine:
         gesto real se calcularia contra una base obsoleta y se dispararia el
         atajo equivocado (o ninguno) sin decir nada.
         """
-        self._self_change_at = time.time()
         if value is not None:
             try:
                 self._self_set_volume = int(value)
@@ -516,57 +503,12 @@ class LocalActionEngine:
             return
         # Es un cambio de verdad: nuestra marca deja de ser valida.
         self._self_set_volume = None
-        with self._lock:
-            # Eco del restore: el auricular devuelve su volumen y genera otro
-            # cambio. Mientras siga OSCILANDO se ignoran los eventos; cuando el
-            # volumen se calma, los atajos vuelven a armarse.
-            if self._quiet_started:
-                if (
-                    now - self._quiet_last_event >= QUIET_STABLE
-                    or now - self._quiet_started >= QUIET_MAX
-                ):
-                    self._quiet_started = 0.0
-                    self._settle_volume()
-                else:
-                    self._quiet_last_event = now
-                    return
         self._register("volume_up" if delta > 0 else "volume_down", sink, previous)
-
-    def _settle_volume(self):
-        """Tras el eco, deja el volumen donde estaba antes del gesto."""
-        target = self._restore_target
-        self._restore_target = None
-        if target is None or not self._sink_provider:
-            return
-        try:
-            sink = self._sink_provider()
-            if not sink:
-                return
-            current = self._read_volume(sink)
-            if current is None or current == int(target):
-                return
-            if abs(current - int(target)) > SETTLE_TOLERANCE:
-                # Cambio grande: probablemente el usuario, no el eco.
-                self.log(
-                    "Volumen cambiado por el usuario (%s%% -> %s%%): no se restaura"
-                    % (target, current)
-                )
-                return
-            self._restore_volume_delayed(int(target))
-        except Exception as exc:
-            self.log("No se pudo ajustar el volumen: %s" % exc)
 
     # -- agrupacion de pulsaciones -----------------------------------------
     def _register(self, trigger, sink=None, previous_volume=None):
         now = time.time()
         with self._lock:
-            # Si el eco se ha calmado, volver a armar los atajos.
-            if self._quiet_started and (
-                now - self._quiet_last_event >= QUIET_STABLE
-                or now - self._quiet_started >= QUIET_MAX
-            ):
-                self._quiet_started = 0.0
-                self._settle_volume()
             # Una misma tecla puede generar varios eventos: ignorar repetidos.
             if now - self._last_event.get(trigger, 0.0) < EVENT_GAP:
                 return
@@ -574,7 +516,9 @@ class LocalActionEngine:
             self.reload_rules_if_changed()
             modifiers = self.modifiers.modifiers()
 
-            # Conteo de pulsaciones del gesto en curso.
+            # Conteo de pulsaciones del gesto en curso. Un gesto nuevo (han
+            # pasado GROUP_WINDOW desde la ultima pulsacion) empieza de cero,
+            # incluida la marca de "ya disparo".
             pending = self._pending
             if (
                 pending
@@ -582,15 +526,20 @@ class LocalActionEngine:
                 and now - pending["last"] <= GROUP_WINDOW
             ):
                 count = pending["count"] + 1
+                first = pending["first"]
+                already_fired = pending.get("fired", False)
             else:
                 count = 1
+                first = now
+                already_fired = False
             pending = {
                 "trigger": trigger,
                 "count": count,
-                "first": now if pending is None else pending["first"],
+                "first": first,
                 "last": now,
                 "modifiers": modifiers,
                 "volume": self._read_volume(sink) if sink else None,
+                "fired": already_fired,
             }
             self._pending = pending
 
@@ -604,33 +553,28 @@ class LocalActionEngine:
             blocking = [item for item in rules if item[0] > count]
 
             chosen = None
+            chosen_presses = 0
             if exact:
                 chosen = exact[0][2]
+                chosen_presses = exact[0][0]
             elif fallback and not blocking:
                 chosen = fallback[0][2]
+                chosen_presses = 0
 
             if chosen is not None:
-                if now - self._last_fire.get(trigger, 0.0) < GESTURE_WINDOW:
-                    # El gesto anterior acabo de dispararse: se ignora este
-                    # (giro continuo). Se avisa una vez para que se entienda
-                    # por que solo se ejecuto una accion.
-                    if not getattr(self, "_repeat_logged", None) == trigger:
-                        self._repeat_logged = trigger
-                        self.log(
-                            "El gesto %s se ha omitido: la accion anterior "
-                            "ainda no ha terminado" % trigger
-                        )
+                # Un gesto = una accion. La regla "cualquiera" dispara al
+                # empezar el gesto y el resto de muescas del mismo gesto ya no
+                # repiten la accion, sin necesidad de ninguna ventana de
+                # tiempo: lo que lo decide es el estado del gesto.
+                if pending.get("fired"):
                     return
+                pending["fired"] = True
                 self.last_event = {
                     "trigger": trigger,
                     "presses": count,
                     "modifiers": modifiers,
                     "at": int(time.time() * 1000),
                 }
-                self._last_fire[trigger] = now
-                self._quiet_started = now
-                self._quiet_last_event = now
-                self._pending = None
                 self._run_rule(chosen, trigger, count, modifiers, previous_volume)
                 return
 
@@ -718,6 +662,9 @@ class LocalActionEngine:
             return
         # Los modificadores del principio del gesto: si el usuario los suelta
         # antes de que se cierre la ventana, la regla sigue acknowledging.
+        if pending.get("fired"):
+            # El gesto ya disparo su accion: no hay nada mas que hacer.
+            return
         modifiers = pending.get("modifiers") or self.modifiers.modifiers()
         rules = self._applicable_rules(pending["trigger"], modifiers)
         rule = self._pick_rule(rules, pending["count"])
@@ -776,10 +723,6 @@ class LocalActionEngine:
             if not sink:
                 return
             self.note_self_change(int(percent))
-            # El eco del auricular llega despues del restore: la ventana de
-            # calma se reinicia aqui para tragarselo.
-            self._quiet_started = time.time()
-            self._quiet_last_event = self._quiet_started
             _run(["pactl", "set-sink-volume", sink, "%d%%" % int(percent)], 6)
             time.sleep(0.3)
             current = self._read_volume(sink)

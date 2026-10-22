@@ -246,6 +246,16 @@ def test_cambio_propio_por_valor():
     return r.failures
 
 
+def test_gestos_separados():
+    print("11) gestos separados (mas de la ventana) = una accion cada uno")
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    r.evento(60, ["super"], 0.9)   # gesto 1
+    r.evento(65, ["super"], 0.9)   # gesto 2 (fuera de la ventana del gesto 1)
+    time.sleep(0.3)
+    r.check("dos acciones", r.engine.fired == ["UNO", "UNO"], r.engine.fired)
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -280,6 +290,7 @@ def main():
         test_gesto_despues_de_restaurar,
         test_pinchazos_muy_juntos,
         test_cambio_propio_por_valor,
+        test_gestos_separados,
         test_recarga,
     ):
         total += test()

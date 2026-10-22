@@ -143,6 +143,25 @@ The `add` payload is split on `|`, so the command itself cannot contain one.
 The panel entry is only reachable over IPC while the panel is open; the other session's
 runtime is created on demand.
 
+## Tests
+
+Two checks live with the plugin:
+
+```sh
+lua5.4 test-panel.lua                       # unit tests of the lib/ modules (no desktop needed)
+lua5.4 test-panel.lua /path/to/other/copy   # run them against another copy (e.g. the installed one)
+./test-smoke.sh                              # live check: open all → rotate → close all, and the log must be clean
+```
+
+`test-panel.lua` loads the modules with a simulated Noctalia API and checks the
+widget-list merge, the tombstones, the manifest parser, the layout parser, the
+occupied-area calculation, the thumbnail cleanup and every rotation permutation.
+It exits with a non-zero code if a case fails.
+
+`test-smoke.sh` needs Hyprland and Noctalia with the plugin enabled: it opens
+every widget, rotates them, closes them and then checks that the Noctalia log
+has no warning or error from the plugin.
+
 ## Notes
 
 - The geometry uses the Hyprland 0.56 Lua API (`hl.dsp.exec_cmd`), so no

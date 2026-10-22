@@ -140,6 +140,17 @@ echo "widgets esperados: $expected ($names)"
 # vacíen) y deja una copia privada con todas las líneas nuevas; el smoke
 # revisa esa copia, no el fichero volátil.
 #
+# Cerrar paneles de otras sesiones para reducir la carga del host durante la
+# prueba (acción de runtime, no toca código de otros plugins; sus timers los
+# reabren). Se puede desactivar con CLOSE_FOREIGN_PANELS=0.
+if [ "${CLOSE_FOREIGN_PANELS:-1}" != "0" ]; then
+  for p in faminec/wallpaper-carousel:panel faminec/lyrics-carousel:panel \
+           faminec/notes:panel faminec/notes-sync:panel \
+           faminec/cmf-buds:panel faminec/cmf-buds:panel-sound; do
+    noctalia msg panel-close "$p" >/dev/null 2>&1 || true
+  done
+fi
+
 # Antes de capturar nada se espera a que el host esté inactivo (10 s sin
 # crecimiento del log): si no, la prueba arrastra ruido de otras sesiones y
 # puede provocar avisos de rendimiento del propio host.

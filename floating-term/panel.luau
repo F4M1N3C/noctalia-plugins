@@ -1102,6 +1102,12 @@ function onConfigChanged()
   loadWidgets()
   if state.open then
     render()
+    -- Los indicadores de "abierta" y las miniaturas se refrescan también.
+    refreshWindows(function()
+      if state.open then
+        render()
+      end
+    end)
   end
 end
 

@@ -150,21 +150,30 @@ Las pruebas **esperan a la condición que comprueban**, no a un tiempo fijo: si
 la máquina va cargada, no falla "por el motivo equivocado", y una comprobación
 no puede cumplirse antes de que se haya dado el caso que dice comprobar.
 
-## Probar la rueda del ratón
+## Probar la rueda y los modificadores
 
-`tools/wheel_injector.c` inyecta una rueda virtual por `uinput` (para probar
-los sliders del panel sin tocar el ratón de verdad):
+`tools/wheel_injector.c` y `tools/key_injector.c` crean dispositivos virtuales
+por `uinput` para probar los sliders del panel y el lector de modificadores
+sin tocar el ratón ni el teclado de verdad:
 
 ```bash
 gcc -O2 -o /tmp/wheel tools/wheel_injector.c
 /tmp/wheel arriba 3      # o "abajo"
 ```
 
-Dos avisos que ya costaron tiempo, escritos en el propio código: en los
-kernels modernos `UI_DEV_CREATE` **no** recibe el `struct uinput_user_dev`
-(si no, hay que configurarlo antes con `UI_DEV_SETUP`, y si no, `EINVAL`), y
-el dispositivo tiene que vivir lo suficiente para que el compositor lo abra
-(por eso los eventos se repiten durante unos segundos).
+**En este equipo no funcionan**: el dispositivo se registra bien (se ve en
+`/proc/bus/input/devices` con sus capacidades) pero los eventos no llegan a
+los lectores; con `ydotool`, que usa otra ruta, el mismo kernel sí los
+entrega. La receta que usan (capacidades por ioctl + `write()` del
+`struct uinput_user_dev` **de la cabecera del sistema** + `UI_DEV_CREATE`) y
+el detalle de que el struct moderno da `EINVAL` están explicados en el
+propio código, para no volver a perder tiempo con ello.
+
+Para el lector de modificadores, mientras tanto, funciona `ydotool`:
+
+```bash
+ydotool key 125:1     # 125 = KEY_LEFTMETA (SUPER); 125:0 para soltarlo
+```
 
 ## Cómo funciona
 

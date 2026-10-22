@@ -110,6 +110,21 @@ que el compositor lo abra.
 
 Suite: 37 → 44 comprobaciones.
 
+### Comprobaciones finales
+
+- **El lector de modificadores se ha probado de verdad**: con un teclado
+  virtual, `SUPER` aparece en el estado del motor mientras esta pulsado y
+  desaparece al soltarlo. Antes solo se daba por bueno por la lectura del
+  codigo.
+- **Herramientas de inyeccion**: `tools/wheel_injector.c` y
+  `tools/key_injector.c` crean dispositivos virtuales por `uinput`. En este
+  equipo (kernel 7.2.11) el dispositivo se registra bien pero **los eventos
+  no llegan a los lectores**; con `ydotool`, que usa otra ruta, si llegan.
+  La receta (capacidades por ioctl + `write()` del `struct uinput_user_dev`
+  de la cabecera del sistema + `UI_DEV_CREATE`) y el detalle de que el struct
+  moderno da `EINVAL` quedan escritos en el codigo, para no volver a perder
+  tiempo. Para el lector de modificadores, mientras tanto, sirve `ydotool`.
+
 ## Correcciones de descripciones anteriores
 
 Las dos descripciones siguientes eran **inexactas**; se corrigen aquí porque no

@@ -332,6 +332,29 @@ def main(argv):
             0,
         )
     )
+    # Un fichero viejo con la clave de antes no vale: la escritura tiene
+    # que cambiar algo.
+    viejo = modulo.estado_overrides(destino)
+    resultados.append(
+        escenario(
+            "fichero viejo: no se da por buena",
+            0
+            if not modulo.escritura_realizada(destino, ["marker"], viejo)
+            else 1,
+            [],
+            0,
+        )
+    )
+    with open(destino, "w", encoding="utf-8") as handle:
+        handle.write('{"marker": false}')
+    resultados.append(
+        escenario(
+            "fichero cambiado: se reconoce",
+            0 if modulo.escritura_realizada(destino, ["marker"], viejo) else 1,
+            [],
+            0,
+        )
+    )
     os.remove(destino)
 
     print("12) despliegue sin autotest -> se avisa (copia desactualizada)")

@@ -87,6 +87,103 @@ def check_diagnostics(label: str, path: str):
     return info
 
 
+def direccion_actual() -> str:
+    """Direccion vigente (overrides si los hay, si no el settings.toml)."""
+    overrides = os.path.join(DATA_DIR, "overrides.json")
+    if os.path.isfile(overrides):
+        try:
+            with open(overrides, encoding="utf-8") as handle:
+                data = json.load(handle)
+            if isinstance(data, dict) and "direction" in data:
+                return str(data["direction"])
+        except (OSError, ValueError):
+            pass
+    try:
+        import tomllib
+
+        with open(
+            os.path.expanduser("~/.local/state/noctalia/settings.toml"), "rb"
+        ) as handle:
+            data = tomllib.load(handle)
+        section = (data.get("plugin_settings") or {}).get("faminec/lyrics-carousel")
+        if isinstance(section, dict) and "direction" in section:
+            return str(section["direction"])
+    except Exception:  # noqa: BLE001
+        pass
+    return "down"
+
+
+def check_atajo_d():
+    """El atajo 'd' alterna la direccion y se guarda en los overrides."""
+    overrides = os.path.join(DATA_DIR, "overrides.json")
+    previo = None
+    if os.path.isfile(overrides):
+        try:
+            with open(overrides, encoding="utf-8") as handle:
+                previo = handle.read()
+        except OSError:
+            previo = None
+    antes = direccion_actual()
+    esperado = "up" if antes == "down" else "down"
+    try:
+        import fcntl
+        import pty
+        import select
+        import signal
+        import struct
+        import termios
+        import time
+
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.chdir("/")
+            os.environ.pop("COLUMNS", None)
+            os.environ.pop("LINES", None)
+            os.execvp(
+                "python3",
+                ["python3", os.path.join(HERE, "lyrics-carousel"), "--demo"],
+            )
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 90, 0, 0))
+        time.sleep(2.5)
+        os.write(fd, b"d")
+        time.sleep(2.5)
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        os.close(fd)
+    except Exception as error:  # noqa: BLE001
+        check("el atajo 'd' alterna la dirección", False, repr(error)[:120])
+        restaurar_overrides(overrides, previo)
+        return
+    try:
+        with open(overrides, encoding="utf-8") as handle:
+            data = json.load(handle)
+        ok = isinstance(data, dict) and data.get("direction") == esperado
+        check(
+            "el atajo 'd' alterna la dirección",
+            ok,
+            "esperado %s, hay %s" % (esperado, data.get("direction")),
+        )
+    except (OSError, ValueError) as error:
+        check("el atajo 'd' alterna la dirección", False, str(error)[:120])
+    finally:
+        restaurar_overrides(overrides, previo)
+
+
+def restaurar_overrides(path, previo):
+    """Deja los overrides como estaban (la prueba no debe dejar nada)."""
+    try:
+        if previo is None:
+            if os.path.isfile(path):
+                os.remove(path)
+        else:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(previo)
+    except OSError:
+        pass
+
+
 def main(argv):
     verbose = "--verbose" in argv
 
@@ -167,6 +264,11 @@ def main(argv):
                     )
             except (OSError, subprocess.SubprocessError) as error:
                 check("el helper crea el directorio", False, repr(error)[:120])
+
+    # 4b) el atajo 'd' del script alterna la direccion y la guarda.
+    #     Es la prueba de que el script, el helper y el overrides
+    #     funcionan juntos de verdad.
+    check_atajo_d()
 
     # 5) herramientas externas.
     for tool in ("kitty", "fc-match", "playerctl", "hyprctl"):

@@ -58,25 +58,48 @@ def log_size() -> int:
         return 0
 
 
-def escritura_realizada(path: str, claves) -> bool:
+def estado_overrides(path: str):
+    """Contenido del fichero de overrides, o None si no esta."""
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
+def escritura_realizada(path: str, claves, antes=None) -> bool:
     """True si el fichero de overrides contiene las claves escritas.
 
     Que el evento llegue al widget no garantiza que se escriba nada: si
     el helper falla, el IPC se entrega igual y no se escribe. Esto es lo
     que lo comprueba.
+
+    Si se pasa 'antes' (el contenido previo del fichero), la escritura
+    solo cuenta si ha cambiado algo: si el fichero ya tenia la clave de
+    una escritura anterior, no se dio por buena una escritura que no
+    ocurrio.
     """
     if not os.path.isfile(path):
         return False
     try:
         import json
 
-        with open(path, encoding="utf-8") as handle:
+        with open(path, encoding="utf-8", errors="replace") as handle:
             datos = json.load(handle)
     except (OSError, ValueError):
         return False
     if not isinstance(datos, dict):
         return False
-    return all(clave in datos for clave in claves)
+    if not all(clave in datos for clave in claves):
+        return False
+    if antes is not None:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            if handle.read() == antes:
+                # No ha cambiado nada: la escritura no ha ocurrido.
+                return False
+    return True
 
 
 def log_rotated(offset: int) -> bool:
@@ -250,6 +273,7 @@ def exercise(plugin: str):
             )
         else:
             value = current_bool(plugin, keys[0])
+            antes = estado_overrides(pendientes)
             enviado, salida = msg(
                 "plugin", widget, "all", "set",
                 "%s=%s bool" % (keys[0], "true" if value else "false"),
@@ -264,7 +288,7 @@ def exercise(plugin: str):
                 # Que el evento llegue no garantiza que se escriba: se
                 # comprueba el fichero de overrides.
                 time.sleep(1.2)
-                if not escritura_realizada(pendientes, [keys[0]]):
+                if not escritura_realizada(pendientes, [keys[0]], antes):
                     problems.append(
                         "el widget de %s atendio el IPC pero no se escribio %s"
                         % (plugin, keys[0])

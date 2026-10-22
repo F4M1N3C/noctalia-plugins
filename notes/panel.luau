@@ -231,6 +231,11 @@ local function deleteNote(file)
     buffer = ""
     dirty = false
     view = "list"
+    -- La nota abierta se acaba de borrar: se publica para que el canal con
+    -- el otro plugin no mande una nota que ya no existe.
+    lastNote = ""
+    lastContent = ""
+    publishCurrent()
   end
   pendingDelete = nil
   refreshFiles()
@@ -588,7 +593,14 @@ function onRename(value)
     savePins()
   end
   current = target
+  lastNote = target
+  -- El estado publico tambien se renombra: si no, el resto de plugins leen
+  -- un nombre que ya no existe.
+  noctalia.state.set("notes_current", target)
   refreshFiles()
+  -- La nota ya no se llama igual: se vuelve a publicar para que el canal con
+  -- el otro plugin no mande un nombre que ya no existe.
+  publishCurrent()
   render()
 end
 
@@ -626,6 +638,8 @@ function onExternalChange()
   if notesDir == "" then
     return -- never opened; nothing resolved yet
   end
+  -- El estado publico se mantiene al dia (por si el nombre cambio fuera).
+  noctalia.state.set("notes_current", current or "")
   loadPins()
   refreshFiles()
   if current ~= nil then

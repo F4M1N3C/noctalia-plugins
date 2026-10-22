@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import fcntl
 import hashlib
 import json
 import math
@@ -1299,47 +1300,63 @@ def write_setting(key: str, value) -> bool:
         raw = str(value)
     else:
         raw = '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    # El script y el panel pueden escribir a la vez: el lock serializa la
+    # lectura-modificacion-escritura para que no se pisen.
+    lock_path = SETTINGS_PATH + ".lock"
     try:
-        with open(SETTINGS_PATH, encoding="utf-8") as handle:
-            text = handle.read()
+        lock = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
     except OSError:
         return False
-    updated = patch_settings(text, key, raw)
-    if updated == text:
-        return False
-    temporary = ""
     try:
-        directory = os.path.dirname(SETTINGS_PATH)
-        handle = tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", dir=directory, delete=False, suffix=".tmp"
-        )
-        temporary = handle.name
-        with handle:
-            handle.write(updated)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, SETTINGS_PATH)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            with open(SETTINGS_PATH, encoding="utf-8") as handle:
+                text = handle.read()
+        except OSError:
+            return False
+        updated = patch_settings(text, key, raw)
+        if updated == text:
+            return False
         temporary = ""
-    except OSError as error:
-        if temporary:
-            try:
-                os.unlink(temporary)
-            except OSError:
-                pass
-        print(f"no se pudo guardar {key}: {error}", file=sys.stderr)
-        return False
-    # Comprobación: el ajuste tiene que estar realmente en el fichero.
-    try:
-        with open(SETTINGS_PATH, "rb") as handle:
-            check = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError) as error:
-        print(f"el settings.toml quedó ilegible: {error}", file=sys.stderr)
-        return False
-    section = (check.get("plugin_settings") or {}).get(PLUGIN_ID) or {}
-    if key not in section:
-        print(f"no se pudo guardar {key}", file=sys.stderr)
-        return False
-    return True
+        try:
+            directory = os.path.dirname(SETTINGS_PATH)
+            handle = tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", dir=directory, delete=False, suffix=".tmp"
+            )
+            temporary = handle.name
+            with handle:
+                handle.write(updated)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, SETTINGS_PATH)
+            temporary = ""
+        except OSError as error:
+            if temporary:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
+            print(f"no se pudo guardar {key}: {error}", file=sys.stderr)
+            return False
+        # Comprobacion: el ajuste tiene que estar en el fichero de verdad.
+        try:
+            with open(SETTINGS_PATH, "rb") as handle:
+                check = tomllib.load(handle)
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            print(f"el settings.toml quedo ilegible: {error}", file=sys.stderr)
+            return False
+        section = (check.get("plugin_settings") or {}).get(PLUGIN_ID) or {}
+        if key not in section:
+            print(f"no se pudo guardar {key}", file=sys.stderr)
+            return False
+        return True
+    finally:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(lock)
 
 
 def patch_settings(text: str, key: str, raw_value: str) -> str:
@@ -1708,10 +1725,7 @@ class LyricsCarousel:
 
         fresh = self._player.poll() if self._player else None
         if fresh is not None:
-            if fresh.title or fresh.artist:
-                self._apply_track(fresh)
-            else:
-                self._apply_track(fresh)
+            self._apply_track(fresh)
 
         result = self.fetcher.take()
         if result is not None:

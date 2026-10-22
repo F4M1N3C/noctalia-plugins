@@ -12,6 +12,7 @@ configuración.
 
 from __future__ import annotations
 
+import fcntl
 import os
 import sys
 import tempfile
@@ -143,13 +144,32 @@ def main(argv):
             print(f"clave desconocida: {key}", file=sys.stderr)
             return 2
 
+    # El script y el panel pueden escribir a la vez: con un fichero de lock
+    # la lectura-modificacion-escritura se serializa y no se pisan.
+    lock_path = SETTINGS + ".lock"
     try:
-        with open(SETTINGS, encoding="utf-8") as handle:
-            text = handle.read()
+        lock = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
     except OSError as error:
-        print(f"no se pudo leer: {error}", file=sys.stderr)
+        print(f"no se pudo abrir el lock: {error}", file=sys.stderr)
         return 1
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            with open(SETTINGS, encoding="utf-8") as handle:
+                text = handle.read()
+        except OSError as error:
+            print(f"no se pudo leer: {error}", file=sys.stderr)
+            return 1
+        return _write(text, pairs)
+    finally:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(lock)
 
+
+def _write(text, pairs):
     updated = text
     for key, value, kind in pairs:
         updated = patch(updated, key, format_value(value, kind))

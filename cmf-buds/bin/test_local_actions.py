@@ -23,7 +23,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from local_actions import LocalActionEngine  # noqa: E402
+from local_actions import LocalActionEngine, VolumeWatcher  # noqa: E402
 
 
 class FakeEngine(LocalActionEngine):
@@ -256,6 +256,40 @@ def test_gestos_separados():
     return r.failures
 
 
+def test_regla_malformada():
+    print("12) una regla malformada se ignora y no tapa a las demas")
+    r = Runner([rule("ok", "volume_up", 0, "super", "BIEN")])
+    r.engine.rules.append({"id": "rota", "trigger": "volume_up", "presses": "abc", "require": 5})
+    r.evento(60, ["super"])
+    time.sleep(0.3)
+    r.check("la regla buena se ejecuta", r.engine.fired == ["BIEN"], r.engine.fired)
+    r.calmarse()
+    r.engine.fired.clear()
+    r.evento(70, ["super"])
+    time.sleep(0.3)
+    r.check("y sigue funcionando", r.engine.fired == ["BIEN"], r.engine.fired)
+    return r.failures
+
+
+def test_watcher_sobrevive():
+    print("13) el watcher sobrevive a un error puntual")
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    calls = {"n": 0}
+
+    def on_change(sink):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("fallo simulado")
+
+    watcher = VolumeWatcher(lambda: "sink-falso", on_change)
+    watcher.start()
+    time.sleep(0.6)
+    alive = watcher._thread.is_alive()
+    watcher.stop()
+    r.check("el hilo sigue vivo tras el error", alive)
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -291,6 +325,8 @@ def main():
         test_pinchazos_muy_juntos,
         test_cambio_propio_por_valor,
         test_gestos_separados,
+        test_regla_malformada,
+        test_watcher_sobrevive,
         test_recarga,
     ):
         total += test()

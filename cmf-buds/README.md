@@ -131,13 +131,14 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (19 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (22 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
 especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
 separados disparen acciones distintas, que un gesto tras restaurar el volumen
 no se pierda, que los pinchazos muy juntos (50 ms) se cuenten como varios,
-que nuestro propio cambio se reconozca por el valor y que las reglas editadas
-fuera del panel se recargan.
+que nuestro propio cambio se reconozca por el valor, que una regla malformada
+se ignore sin tapar a las demás, que el watcher sobreviva a un error puntual y
+que las reglas editadas fuera del panel se recargan.
 
 ## Cómo funciona
 

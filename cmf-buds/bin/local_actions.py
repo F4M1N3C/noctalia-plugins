@@ -85,6 +85,23 @@ def _run(cmd, timeout=6):
         return None
 
 
+def _as_int(value, default=None):
+    """Convierte a entero; None si el dato no es un numero valido."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_list(value):
+    """Devuelve una lista de modificadores aunque el dato venga raro."""
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value]
+    if isinstance(value, str):
+        return [value]
+    return []
+
+
 def _list_event_devices():
     try:
         return [
@@ -307,7 +324,12 @@ class VolumeWatcher:
                             continue
                         self.log("Watcher: el sink cambio de id a %s" % refreshed)
                         sink_id = refreshed
-                    self.on_change(sink)
+                    try:
+                        self.on_change(sink)
+                    except Exception as exc:
+                        # Un error puntual no puede dejar el watcher muerto:
+                        # sin el, los atajos dejarian de funcionar.
+                        self.log("Watcher: error al procesar un cambio: %s" % exc)
             except Exception:
                 pass
             finally:
@@ -620,17 +642,41 @@ class LocalActionEngine:
         """
         out = []
         for rule in self.rules:
-            if not rule.get("enabled", True):
+            if not isinstance(rule, dict):
                 continue
-            if rule.get("trigger") != trigger:
+            try:
+                if not rule.get("enabled", True):
+                    continue
+                if rule.get("trigger") != trigger:
+                    continue
+                require = [m for m in _as_list(rule.get("require")) if m]
+                forbid = [m for m in _as_list(rule.get("forbid")) if m]
+                presses = _as_int(rule.get("presses"))
+                if presses is None or presses < 0:
+                    # Regla malformada (editada a mano): se ignora entera, para
+                    # que no tape a las reglas bien escritas.
+                    self.log(
+                        "Regla ignorada por 'presses' invalido: %s"
+                        % rule.get("presses")
+                    )
+                    continue
+                for key in ("require", "forbid"):
+                    if key in rule and not isinstance(rule[key], (list, tuple)):
+                        self.log("Regla ignorada por '%s' invalido" % key)
+                        presses = None
+                        break
+                if presses is None:
+                    continue
+            except Exception as exc:
+                # Una regla malformada (editada a mano) no puede tumbar el
+                # motor: se avisa y se sigue con el resto.
+                self.log("Regla invalida ignorada: %s" % exc)
                 continue
-            require = [m for m in rule.get("require", []) if m]
-            forbid = [m for m in rule.get("forbid", []) if m]
             if any(m not in modifiers for m in require):
                 continue
             if any(m in modifiers for m in forbid):
                 continue
-            out.append((int(rule.get("presses", 1)), len(require), rule))
+            out.append((presses, len(require), rule))
         out.sort(key=lambda item: (0 if item[0] > 0 else 1, -item[1], item[0]))
         return out
 

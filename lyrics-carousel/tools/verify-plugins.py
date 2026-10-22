@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -28,6 +29,7 @@ import time
 HOME = os.path.expanduser("~")
 LOG = os.path.join(HOME, ".cache/noctalia/noctalia.log")
 PLUGIN_DIR = os.path.join(HOME, ".local/share/noctalia/plugins")
+REPO_DIR = os.path.join(HOME, "noctalia-plugins")
 
 # Avisos que no dependen de los plugins: el settings.toml guarda ajustes de
 # plugins que no están instalados. Se listan aparte, nunca se ocultan.
@@ -197,6 +199,67 @@ def classify(text: str):
     return problems, expected
 
 
+OWNER = "lyrics-carousel"
+
+
+def log_owner(line: str) -> str:
+    """Plugin al que pertenece una linea del log de Noctalia."""
+    match = re.search(r"faminec/([a-z0-9._-]+)", line)
+    if match:
+        return match.group(1)
+    return ""
+
+
+def plugin_from_path(line: str):
+    """Plugin al que apunta una ruta.
+
+    Los validadores imprimen rutas unas veces relativas ("notes/panel.luau")
+    y otras absolutas ("/home/.../noctalia-plugins/notes/panel.luau"): se
+    busca el primer componente que sea un plugin, tanto en el despliegue
+    como en el repositorio (no todos los plugins estan desplegados).
+    """
+    for part in re.split(r"[\\/]", line.strip()):
+        if not part:
+            continue
+        for base in (PLUGIN_DIR, REPO_DIR):
+            if os.path.isdir(os.path.join(base, part)):
+                return part
+    return None
+
+
+def split_by_plugin(detail: str):
+    """Divide la salida de un validador compartido por plugin.
+
+    Formato: "<plugin>/<fichero>" seguido de sus lineas de detalle. Asi el
+    fallo se atribuye al plugin exacto, y no a "alguien que menciona el
+    nombre de otro plugin".
+    """
+    blocks = []
+    current = None
+    for line in detail.split("\n"):
+        owner = plugin_from_path(line)
+        if owner is not None:
+            current = (owner, [line])
+            blocks.append(current)
+        elif current is not None:
+            current[1].append(line)
+    return blocks
+
+
+def owners_of(detail: str):
+    """Reparte la salida de un validador compartido por plugin.
+
+    Devuelve una lista de (dueño, detalle). Lo que no encaja en ningún
+    bloque va con dueño "" (ni mio ni de nadie: se informa y no bloquea).
+    """
+    result = []
+    for owner, lines in split_by_plugin(detail):
+        result.append((owner, "\n".join(lines).strip()))
+    if not result and detail.strip():
+        result.append(("", detail.strip()))
+    return result
+
+
 def static_checks(root: str):
     failures = []
     for script in ("check-luau-globals.py", "check-ui-resources.py", "check-locals.py"):
@@ -207,7 +270,9 @@ def static_checks(root: str):
         if result is None:
             failures.append((script, "no se pudo ejecutar"))
         elif result.returncode != 0:
-            failures.append((script, result.stdout.strip()[-600:]))
+            # Sin truncar: el reparto por plugin necesita la salida entera
+            # (si no, se pierden los bloques del principio).
+            failures.append((script, result.stdout.strip()))
     # Los ficheros .luau tienen que compilar (los que usan sintaxis Luau
     # se saltan: luac no las entiende).
     skipped = 0
@@ -251,18 +316,34 @@ def main(argv):
         time.sleep(2)
     text = read_since(offset)
     problems, expected = classify(text)
+    # Cada problema del log se atribuye a su plugin: los de otro plugin no
+    # pueden bloquear la verificacion de este.
+    problems = [(label, line, log_owner(line)) for label, line in problems]
 
     print("plugins ejercitados: %d" % len(plugins))
     print("líneas de log revisadas: %d" % len(text.split("\n")))
     print("avisos esperados (ajustes de plugins no instalados): %d" % expected)
-    if problems:
-        print("--- PROBLEMAS (%d) ---" % len(problems))
-        for label, line in problems[:40]:
+    my_problems = [item for item in problems if item[2] == OWNER]
+    other_problems = [item for item in problems if item[2] != OWNER]
+    if my_problems:
+        print("--- PROBLEMAS (%d) ---" % len(my_problems))
+        for label, line, _ in my_problems[:40]:
             print("  [%s] %s" % (label, line[-220:]))
+    elif other_problems:
+        print("--- sin errores propios; %d problema(s) de otra sesion ---" % len(other_problems))
+        for label, line, owner in other_problems[:10]:
+            print("  [%s] (%s) %s" % (label, owner or "?", line[-200:]))
     else:
         print("--- sin errores ni avisos inesperados ---")
 
     failures, compiled, skipped = static_checks(args.root)
+    # (dueño, etiqueta, detalle): el dueño se decide al guardar el fallo,
+    # no despues mirando el texto.
+    shared = []
+    for label, detail in failures:
+        for owner, block in owners_of(detail):
+            shared.append((owner, label, block))
+    failures = shared
 
     # Autotest del plugin: comprueba las suposiciones del entorno (helper,
     # directorio de datos, herramientas externas, modulos hermanos). Se usa
@@ -280,10 +361,10 @@ def main(argv):
         result = run([sys.executable, selftest], timeout=90)
         where = "repo" if selftest.startswith(args.root) else "despliegue"
         if result is None:
-            failures.append(("selftest (%s)" % where, "no se pudo ejecutar"))
+            failures.append((OWNER, "selftest (%s)" % where, "no se pudo ejecutar"))
         elif result.returncode != 0:
             failures.append(
-                ("selftest (%s)" % where, result.stdout.strip()[-600:])
+                (OWNER, "selftest (%s)" % where, result.stdout.strip()[-600:])
             )
         else:
             print(
@@ -293,19 +374,22 @@ def main(argv):
     print("ficheros .luau compilados: %d (con sintaxis Luau, omitidos: %d)" % (compiled, skipped))
     mine = []
     others = []
-    for script, detail in failures:
+    for owner, script, detail in failures:
         # Lo que falle en el plugin propio bloquea la pasada; lo de los demas
         # se informa, pero lo lleva su sesion.
-        if "lyrics-carousel" in detail:
+        if owner == OWNER:
             mine.append((script, detail))
         else:
             others.append((script, detail))
     for script, detail in others:
-        print("--- pendiente de otra sesion (%s) ---\n%s" % (script, detail))
+        print(
+            "--- pendiente de otra sesion (%s) ---\n%s"
+            % (script, detail[-600:])
+        )
     for script, detail in mine:
-        print("--- fallo de %s ---\n%s" % (script, detail))
+        print("--- fallo de %s ---\n%s" % (script, detail[-600:]))
 
-    return 1 if (problems or mine) else 0
+    return 1 if (my_problems or mine) else 0
 
 
 if __name__ == "__main__":

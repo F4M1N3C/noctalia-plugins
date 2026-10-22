@@ -734,11 +734,14 @@ render = function()
     lastComp = scrollComp
     expectedOffset = nil
   else
-    if lastComp ~= nil and compensation ~= lastComp then
-      expectedOffset = scrollOffset - (compensation - lastComp) * scale
-    else
+    if lastComp == nil then
       expectedOffset = nil
+    elseif compensation ~= lastComp then
+      expectedOffset = scrollOffset - (compensation - lastComp) * scale
     end
+    -- Si el relleno no ha cambiado se conserva la prediccion anterior: el
+    -- evento del shell puede llegar despues de un repintado por la animacion
+    -- y, si se borrara aqui, ese ajuste se contaria como rueda.
     lastComp = compensation
   end
 
@@ -991,6 +994,13 @@ function onClose()
   opened = false
   animating = false
   heldKey = nil
+  -- El scroll se queda en el estado en que estaba: si se abriera con una
+  -- prediccion o un reinicio a medias, el primer evento de la sesion nueva se
+  -- tragaria sin motivo.
+  expectedOffset = nil
+  lastComp = nil
+  scrollResetting = false
+  scrollAccum = 0
   -- Al cerrar se apaga el tick: al reabrir tiene que volver a encenderse (y
   -- el host solo pide frames en esa transicion).
   panel.setNeedsFrameTick(false)
@@ -1043,9 +1053,16 @@ function onScroll(offset, _maxOffset)
     return
   end
 
-  -- Ajuste propio del shell al cambiar el relleno: se sincroniza el offset y
-  -- no cuenta como dentado (si no, la cuenta se infla y el dentado siguiente
-  -- se pierde).
+  -- Ajuste propio del shell al cambiar el relleno: al crecer el relleno el
+  -- shell devuelve el scroll al offset anterior para que la cinta no se mueva,
+  -- y ese ajuste llega como un onScroll mas. Se sincroniza pero no cuenta como
+  -- dentado: si contara, la cuenta se inflaria y el dentado siguiente se
+  -- perderia.
+  --
+  -- La prediccion es exacta (el offset previo), asi que solo se descarta este
+  -- evento si coincide con ella. El caso residual es que la rueda del usuario
+  -- caiga justo en ese valor: ese dentado se pierde, pero el siguiente ya
+  -- vuelve a contar bien.
   if expectedOffset ~= nil and math.abs(newOffset - expectedOffset) < 1.5 then
     scrollOffset = newOffset
     expectedOffset = nil

@@ -1133,6 +1133,21 @@ class BudsDaemon:
         self.save()
         return self.state
 
+    def _apagar_anillos(self, now):
+        """Apaga los anillos que ya han cumplido su tiempo.
+
+        Si no se puede apagar uno, no se da por apagado: se reintentara en el
+        siguiente ciclo (antes se marcaba como apagado igualmente y el anillo
+        se quedaba sonando sin que nadie volviera a intentarlo).
+        """
+        for side, until in list(self.ring_until.items()):
+            if until and now >= until:
+                try:
+                    self.ring(side, False)
+                except Exception:
+                    continue
+                self.ring_until[side] = 0
+
     def _require_link(self):
         if not self.link or not self.link.connected:
             raise RuntimeError("Auriculares no conectados por RFCOMM")
@@ -1230,13 +1245,7 @@ class BudsDaemon:
                     if now - self.last_full >= self.poll:
                         self.query_all()
                 # apagar anillos automáticamente
-                for side, until in list(self.ring_until.items()):
-                    if until and now >= until:
-                        try:
-                            self.ring(side, False)
-                        except Exception:
-                            pass
-                        self.ring_until[side] = 0
+                self._apagar_anillos(now)
                 if self.link is None or not self.link.connected:
                     self.refresh_volume()
                     self.save()

@@ -129,7 +129,7 @@ Ademas se anade una prueba para el temporizador que cierra el gesto: si
 falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
 motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
 
-Suite: 44 -> 104 comprobaciones (nuevas: el cierre del gesto protegido, que el
+Suite: 44 -> 108 comprobaciones (nuevas: el cierre del gesto protegido, que el
 lector cierre su socket, que al reconectar se cierre el enlace anterior, el
 protocolo de tramas (construccion, CRC, parseo, basura y trama incompleta), el
 codec de floats del ecualizador con la deteccion de modelo del dispositivo, y
@@ -162,7 +162,13 @@ Y dos huecos mas de la misma familia: el lado del auricular no se validaba
 guardaba una clave inventada en el estado), y el volumen se marcaba como
 cambio nuestro ANTES de recortarlo (si el valor recortado no coincidia con
 el marcado, el motor creeria que el cambio era un gesto del usuario y
-dispararia un atajo solo).
+dispararia un atajo solo.
+
+Y en la revision de los "except" que se tragan errores en silencio, aparecio
+uno con consecuencias: al apagar los anillos automaticamente, si el apagado
+fallaba (por ejemplo, porque se habia caido el enlace) se marcaba igualmente
+como apagado y no se volvia a intentarlo nunca, con lo que el anillo se
+quedaba sonando. Ahora, si falla, se reintenta en el siguiente ciclo.
 
 La ultima es importante: la tabla de codigos (125 = SUPER) no tenia ninguna
 prueba, y si un codigo se equivocara las reglas que exigen SUPER dejarian de

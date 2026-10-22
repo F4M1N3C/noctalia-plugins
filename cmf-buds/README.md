@@ -131,7 +131,7 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (104 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (108 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
 especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
 separados disparen acciones distintas, que un gesto tras restaurar el volumen
@@ -259,6 +259,11 @@ anteriores que resultaron inexactas) está en [`CHANGELOG.md`](CHANGELOG.md).
   corrupta, el parser se quedaría esperando para siempre y el buffer crecería
   sin límite (el enlace dejaría de leerse). Ahora, si el buffer se pasa de
   8 KB, se descarta y se vuelve a buscar el inicio de la siguiente trama.
+- **El apagado automático del anillo reintenta.** Si no se puede apagar el
+  anillo (por ejemplo, porque se cayó el enlace), no se da por apagado: se
+  vuelve a intentar en el siguiente ciclo. Antes se marcaba como apagado
+  igualmente y el anillo se quedaba sonando sin que nadie lo intentara otra
+  vez.
 - **Los ajustes se validan antes de enviarse.** El modo y el nivel de ANC, la
   acción de cada gesto y el lado del auricular se comprueban: si no, el
   dispositivo los ignoraba en silencio y el panel acababa diciendo algo

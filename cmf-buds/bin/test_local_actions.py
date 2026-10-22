@@ -1078,6 +1078,36 @@ def test_ajustes_invalidos():
     return r.failures
 
 
+def test_apagado_de_anillos():
+    print("31) el anillo que no se puede apagar se reintenta")
+    import budsctl
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    demonio = budsctl.BudsDaemon.__new__(budsctl.BudsDaemon)
+    demonio.ring_until = {"left": 10.0, "right": 0}
+    intentos = []
+
+    def falla(side, enabled):
+        intentos.append((side, enabled))
+        raise RuntimeError("sin enlace")
+
+    demonio.ring = falla
+    demonio._apagar_anillos(100.0)
+    r.check("se intenta apagar el anillo que toca", intentos == [("left", False)], intentos)
+    r.check(
+        "si falla, no se da por apagado (se reintentara)",
+        demonio.ring_until.get("left") == 10.0,
+        demonio.ring_until,
+    )
+    r.check("el que no tocaba se queda igual", demonio.ring_until.get("right") == 0)
+    # Si funciona, se marca como apagado.
+    demonio.ring_until = {"left": 10.0}
+    demonio.ring = lambda side, enabled: intentos.append((side, enabled))
+    demonio._apagar_anillos(100.0)
+    r.check("si funciona, se marca como apagado", demonio.ring_until.get("left") == 0, demonio.ring_until)
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -1133,6 +1163,7 @@ def main():
         test_contrato_luau_motor,
         test_gestos_permitidos,
         test_ajustes_invalidos,
+        test_apagado_de_anillos,
     ):
         total += test()
     print("")

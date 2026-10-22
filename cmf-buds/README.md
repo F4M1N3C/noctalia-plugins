@@ -131,7 +131,7 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (112 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (116 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
 especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
 separados disparen acciones distintas, que un gesto tras restaurar el volumen
@@ -261,6 +261,10 @@ anteriores que resultaron inexactas) está en [`CHANGELOG.md`](CHANGELOG.md).
   corrupta, el parser se quedaría esperando para siempre y el buffer crecería
   sin límite (el enlace dejaría de leerse). Ahora, si el buffer se pasa de
   8 KB, se descarta y se vuelve a buscar el inicio de la siguiente trama.
+- **Restaurar el volumen respeta al usuario.** Cuando un atajo restituye el
+  volumen, si el usuario ha girado el dial otra vez entretanto, **su cambio
+  no se pisa**: solo se restaura si el volumen sigue siendo el que dejó el
+  gesto (con un margen de 1 para el redondeo del eco del dispositivo).
 - **La marca de "cambio hecho por nosotros" caduca.** Solo debe absorber el
   eco del dispositivo (unos cientos de milisegundos). Si viviera para siempre,
   el primer giro del dial del usuario que cayera dentro de ±1 se confundiría

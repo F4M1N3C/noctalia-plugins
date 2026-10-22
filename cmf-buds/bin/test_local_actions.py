@@ -1151,6 +1151,32 @@ def test_la_marca_caduca():
     return r.failures
 
 
+def test_restore_respeta_al_usuario():
+    print("33) el restore no pisa un cambio del usuario")
+    import local_actions
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    # El volumen es el de ahora; 'desde' es el que habia tras el gesto.
+    r.check(
+        "si el volumen no ha cambiado, se restaura",
+        local_actions._debe_restaurar(45, 45) is True,
+    )
+    r.check(
+        "una diferencia de 1 (redondeo del eco) tambien se restaura",
+        local_actions._debe_restaurar(46, 45) is True,
+    )
+    r.check(
+        "si el usuario ha girado otra vez, no se restaura",
+        local_actions._debe_restaurar(50, 45) is False,
+    )
+    r.check(
+        "si no se sabe el volumen, se restaura",
+        local_actions._debe_restaurar(None, 45) is True
+        and local_actions._debe_restaurar(45, None) is True,
+    )
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -1208,6 +1234,7 @@ def main():
         test_ajustes_invalidos,
         test_apagado_de_anillos,
         test_la_marca_caduca,
+        test_restore_respeta_al_usuario,
     ):
         total += test()
     print("")

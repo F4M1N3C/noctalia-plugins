@@ -129,7 +129,7 @@ Ademas se anade una prueba para el temporizador que cierra el gesto: si
 falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
 motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
 
-Suite: 44 -> 112 comprobaciones (nuevas: el cierre del gesto protegido, que el
+Suite: 44 -> 116 comprobaciones (nuevas: el cierre del gesto protegido, que el
 lector cierre su socket, que al reconectar se cierre el enlace anterior, el
 protocolo de tramas (construccion, CRC, parseo, basura y trama incompleta), el
 codec de floats del ecualizador con la deteccion de modelo del dispositivo, y
@@ -184,6 +184,14 @@ pulsaciones pendiente; si la hay, espera a que termine el gesto (si no, se
 comeria las pulsaciones y la de N no se dispararia nunca). El comentario se
 corrige y ahora las pruebas lo anclan: con una regla de N pendiente, el
 respaldo espera; sin ella, dispara al instante.
+
+Y al releer la ejecucion de la regla: el refactor habia perdido una proteccion
+que si tenia el codigo antiguo. Al restituir el volumen tras un atajo, se
+comprobaba que el volumen siguiera siendo el que dejo el gesto (si el
+usuario habia girado el dial otra vez, no se restituia). Ahora esa
+comprobacion se hace por el valor (no por el reloj) y se avisa en el log
+cuando el cambio es del usuario. De paso se retira el campo _restore_target,
+que se habia quedado muerto.
 
 La ultima es importante: la tabla de codigos (125 = SUPER) no tenia ninguna
 prueba, y si un codigo se equivocara las reglas que exigen SUPER dejarian de

@@ -118,6 +118,18 @@ def _as_list(value):
     return []
 
 
+def _debe_restaurar(actual, desde, tolerancia=1):
+    """Si el volumen se puede restituir tras un atajo.
+
+    'actual' es el volumen de ahora y 'desde' el que habia justo despues
+    del gesto. Si son muy distintos, el usuario ha girado el dial otra vez y
+    su cambio se respeta: no se restaura el volumen anterior.
+    """
+    if actual is None or desde is None:
+        return True
+    return abs(int(actual) - int(desde)) <= tolerancia
+
+
 def _modifier_de_evento(etype, code):
     """Nombre del modificador de un evento de teclado, o None.
 
@@ -456,7 +468,6 @@ class LocalActionEngine:
         self._self_set_volume = None
         self._self_set_at = 0.0
         self._last_event = {}
-        self._restore_target = None
         self.modifiers = ModifierTracker(self.log)
         self.watcher = None
         self._sink_provider = None
@@ -844,8 +855,6 @@ class LocalActionEngine:
 
     def _run_rule(self, rule, trigger, count, modifiers, previous_volume):
         command = (rule.get("command") or "").strip()
-        if rule.get("restore_volume") and previous_volume is not None:
-            self._restore_target = int(previous_volume)
         info = {
             "trigger": trigger,
             "presses": count,
@@ -878,12 +887,24 @@ class LocalActionEngine:
         """Restaura el volumen esperando a que termine la rampa de PipeWire y
         comprueba que el valor se quedase; si no, reintenta."""
 
+        # El volumen que habia justo despues del gesto: si ahora es muy
+        # distinto, el usuario ha girado el dial otra vez y su cambio se
+        # respeta en vez de restituirlos.
+        desde = self._last_volume
+
         def _apply(attempts):
             try:
                 if not self._sink_provider:
                     return
                 sink = self._sink_provider()
                 if not sink:
+                    return
+                actual = self._read_volume(sink)
+                if not _debe_restaurar(actual, desde):
+                    self.log(
+                        "El volumen lo ha cambiado el usuario (%s%%): no se restaura"
+                        % actual
+                    )
                     return
                 self.note_self_change(int(percent))
                 res = _run(

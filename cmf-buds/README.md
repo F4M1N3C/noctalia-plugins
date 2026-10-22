@@ -131,7 +131,7 @@ auriculares (simula la señal del dial):
 python3 bin/test_local_actions.py
 ```
 
-Cubre (53 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
+Cubre (62 comprobaciones): la regla "cualquiera" sola, la precedencia de la de N
 pulsaciones y su respaldo, reglas con modificadores distintos, la
 especificidad, el comando vacío, que una ráfaga sea un solo gesto, que gestos
 separados disparen acciones distintas, que un gesto tras restaurar el volumen
@@ -146,7 +146,9 @@ suscripción que se cierra antes de tiempo cuente como fallo**, **que el watcher
 sobreviva a un resolutor que falla**, **que un restore fallido quede en el
 log**, **que al guardar no se pisen las reglas del fichero** y **que el cierre
 del gesto no se pierda en silencio** y **que el lector cierre su socket al
-morir** y **que al reconectar se cierre el enlace anterior**.
+morir** y **que al reconectar se cierre el enlace anterior**,
+**que las tramas RFCOMM se construyan y se parseen bien** y **que el buffer de
+recepción no crezca sin límite**.
 
 Las pruebas **esperan a la condición que comprueban**, no a un tiempo fijo: si
 la máquina va cargada, no falla "por el motivo equivocado", y una comprobación
@@ -244,6 +246,10 @@ anteriores que resultaron inexactas) está en [`CHANGELOG.md`](CHANGELOG.md).
   (`presses`, `require`, `forbid`) se leen de forma tolerante y una regla
   inválida —editada a mano— se **ignora entera**, con aviso en el log, de modo
   que ni tapa a las reglas bien escritas ni aborta la evaluación de las demás.
+- **El buffer de recepción está acotado.** Si una trama llega con la longitud
+  corrupta, el parser se quedaría esperando para siempre y el buffer crecería
+  sin límite (el enlace dejaría de leerse). Ahora, si el buffer se pasa de
+  8 KB, se descarta y se vuelve a buscar el inicio de la siguiente trama.
 - **El socket del enlace se cierra siempre.** Cuando el lector RFCOMM muere
   (o el monitor reconecta), su socket se cierra: si se deja abierto, el
   descriptor se fuga en cada reconexión y el canal puede quedar ocupado, que

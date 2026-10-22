@@ -129,8 +129,14 @@ Ademas se anade una prueba para el temporizador que cierra el gesto: si
 falla, el gesto se perdia sin que nadie se enterara; ahora queda anotado y el
 motor sigue funcionando (comprobado rompiendo el codigo a proposito ✓).
 
-Suite: 44 -> 53 comprobaciones (nuevas: el cierre del gesto protegido, que el
-lector cierre su socket y que al reconectar se cierre el enlace anterior).
+Suite: 44 -> 62 comprobaciones (nuevas: el cierre del gesto protegido, que el
+lector cierre su socket, que al reconectar se cierre el enlace anterior, y
+el protocolo de tramas: construccion, CRC, parseo, basura y trama incompleta).
+
+Ademas, el buffer de recepcion se acota: si una trama llega con la longitud
+corrupta, el parser se quedaba esperando para siempre y el buffer crecia sin
+limite (el enlace dejaba de leerse). Ahora, si el buffer se pasa de 8 KB, se
+descarta y se vuelve a buscar el inicio de la siguiente trama.
 
 ### Comprobaciones finales — ciclo de vida del demonio
 

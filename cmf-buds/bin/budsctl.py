@@ -192,6 +192,21 @@ def build_frame(cmd: int, payload: bytes = b"", fsn: int = 1) -> bytes:
     return frame + struct.pack("<H", crc16(frame))
 
 
+# Si el buffer de recepcion se pasa de esto, es que se ha perdido el
+# sincronismo de las tramas (una longitud corrupta, por ejemplo): se
+# descarta y se vuelve a buscar el inicio de la siguiente trama. Sin esto
+# el parser se quedaria esperando para siempre y el buffer creeria sin
+# limite.
+MAX_BUFFER = 8192
+
+
+def _acotar_buffer(buf: bytes, limite: int = MAX_BUFFER) -> bytes:
+    """Devuelve el buffer, o vacio si se ha pasado del limite."""
+    if len(buf) > limite:
+        return b""
+    return buf
+
+
 def parse_frames(buf: bytes):
     """Devuelve (frames, resto). Cada frame es (cmd_normalizado, payload)."""
     frames = []
@@ -439,6 +454,14 @@ class BudsLink:
                 if not chunk:
                     break
                 buf += chunk
+                acotado = _acotar_buffer(buf)
+                if not acotado:
+                    # Se ha perdido el sincronismo: se descarta el buffer para
+                    # no quedarnos atascados leyendo basura.
+                    self.log("Buffer de RFCOMM desbordado: se resincroniza")
+                    buf = b""
+                    continue
+                buf = acotado
                 frames, buf = parse_frames(buf)
                 for cmd, payload in frames:
                     self._handle(cmd, payload)

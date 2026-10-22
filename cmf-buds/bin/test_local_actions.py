@@ -703,6 +703,49 @@ def test_reconectar_cierra_el_enlace_anterior():
     return r.failures
 
 
+def test_tramas_rfcmm():
+    print("24) las tramas se construyen, se parsean y la basura no revienta")
+    import random
+
+    import budsctl
+
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    payload = b"\x01\x02\x03"
+    frame = budsctl.build_frame(0xC001, payload, 7)
+    frames, resto = budsctl.parse_frames(frame)
+    r.check("la trama se parsea", len(frames) == 1, frames)
+    r.check("el payload es correcto", bool(frames) and frames[0][1] == payload, frames)
+    r.check("no queda resto", resto == b"", resto)
+    r.check(
+        "el CRC de la trama es el calculado",
+        frame[-2:] == budsctl.struct.pack("<H", budsctl.crc16(frame[:-2])),
+    )
+    basura = bytes(random.randrange(256) for _ in range(64))
+    try:
+        frames2, resto2 = budsctl.parse_frames(basura)
+        ok = isinstance(frames2, list) and isinstance(resto2, bytes)
+    except Exception as exc:
+        ok = False
+        frames2 = exc
+    r.check("la basura no revienta", ok, frames2)
+    medio = frame[:5]
+    frames3, resto3 = budsctl.parse_frames(medio)
+    r.check(
+        "una trama incompleta espera mas datos",
+        frames3 == [] and resto3 == medio,
+        (frames3, resto3),
+    )
+    r.check(
+        "el buffer se acota (no crece sin limite)",
+        budsctl._acotar_buffer(b"x" * (budsctl.MAX_BUFFER + 1)) == b"",
+    )
+    r.check(
+        "un buffer normal se respeta",
+        budsctl._acotar_buffer(b"x" * 10) == b"x" * 10,
+    )
+    return r.failures
+
+
 def test_recarga():
     print("7) las reglas editadas fuera del panel se recargan")
     path = "/tmp/cmf-buds-test-rules.json"
@@ -751,6 +794,7 @@ def main():
         test_gesto_no_se_pierde,
         test_lector_cierra_el_socket,
         test_reconectar_cierra_el_enlace_anterior,
+        test_tramas_rfcmm,
     ):
         total += test()
     print("")

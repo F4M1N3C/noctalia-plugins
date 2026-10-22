@@ -42,14 +42,20 @@ import urllib.request
 APP = "lyrics-carousel"
 VERSION = "1.1.0"
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# realpath: el script se lanza por el enlace simbolico de ~/.local/bin. Con
+# abspath el directorio seria ~/.local/bin y los modulos hermanos
+# (image_renderer, graphics) no se encontrarian: el modo imagen se caeria
+# en silencio al modo texto.
+_HERE = os.path.dirname(os.path.realpath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+IMAGE_ERROR = ""
 try:
     from image_renderer import ImageRenderer
-except Exception:  # noqa: BLE001  (el modo imagen es opcional)
+except Exception as error:  # noqa: BLE001  (el modo imagen es opcional)
     ImageRenderer = None
+    IMAGE_ERROR = repr(error)
 
 CACHE_DIR = os.path.join(
     os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
@@ -1506,11 +1512,19 @@ class LyricsCarousel:
         self.last_counters = 0.0
         self._player = PlayerWatcher(args.player) if not self.demo else None
         self.image = None
+        self.image_error = ""
         if ImageRenderer is not None:
             try:
                 self.image = ImageRenderer(self)
-            except Exception:  # noqa: BLE001
+            except Exception as error:  # noqa: BLE001
                 self.image = None
+                self.image_error = repr(error)
+        if self.cfg["render_mode"] == "image" and self.image is None:
+            # Degradar en silencio deja al usuario creyendo que esta viendo
+            # el modo imagen cuando en realidad es el de texto: se avisa.
+            reason = self.image_error or IMAGE_ERROR or "motivo desconocido"
+            self.warn(f"modo imagen no disponible: {reason}")
+            self.status_message = "modo imagen no disponible"
         self.last_mode = ""
         self._demo_start = time.monotonic() - max(0.0, args.demo_offset)
         if self.demo:
@@ -1522,6 +1536,10 @@ class LyricsCarousel:
     def log(self, message: str):
         if not self.args.debug:
             return
+        self.warn(message)
+
+    def warn(self, message: str):
+        """Anota un problema en el log de diagnostico (siempre, no solo con --debug)."""
         try:
             os.makedirs(CACHE_DIR, exist_ok=True)
             with open(os.path.join(CACHE_DIR, "debug.log"), "a", encoding="utf-8") as handle:
@@ -2046,6 +2064,7 @@ class LyricsCarousel:
             sys.stdout.flush()
             self.last_mode = "image"
             self.need_clear = False
+            self.log("modo: imagen")
         try:
             rendered = self.image.render()
         except OSError as error:
@@ -2100,6 +2119,7 @@ class LyricsCarousel:
                 pass
             self.last_mode = ""
             self.need_clear = True
+            self.log("modo: texto")
         self._draw_text_frame(force)
 
     def _draw_text_frame(self, force=False):
@@ -2250,6 +2270,32 @@ class LyricsCarousel:
 # CLI
 # --------------------------------------------------------------------------
 
+def diagnostics() -> dict:
+    """Estado del script: rutas, modulos disponibles y ajustes en uso.
+
+    Sirve para diagnosticar sin abrir la interfaz (lo usa el autotest) y
+    comprueba que los modulos hermanos se encuentran aunque el script se
+    lance por el enlace simbolico de ~/.local/bin.
+    """
+    helper = os.path.join(_HERE, "set-setting.py")
+    try:
+        import graphics  # noqa: F401
+
+        graphics_ok = True
+    except Exception:  # noqa: BLE001
+        graphics_ok = False
+    return {
+        "script": os.path.abspath(__file__),
+        "bin_dir": _HERE,
+        "helper": helper,
+        "helper_exists": os.path.isfile(helper),
+        "image_renderer": ImageRenderer is not None,
+        "image_error": IMAGE_ERROR,
+        "graphics": graphics_ok,
+        "version": VERSION,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog=APP,
@@ -2268,8 +2314,17 @@ def main():
     parser.add_argument("--force", action="store_true", help="ignorar la caché al buscar letra")
     parser.add_argument("--debug", action="store_true", help="escribir diagnóstico en la caché")
     parser.add_argument("--clear-cache", action="store_true", help="borrar la caché de letras y salir")
+    parser.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help="imprimir el estado del script (rutas, modulos, ajustes) y salir",
+    )
     parser.add_argument("--version", action="version", version=f"{APP} {VERSION}")
     args = parser.parse_args()
+
+    if args.diagnostics:
+        print(json.dumps(diagnostics(), ensure_ascii=False, sort_keys=True))
+        return 0
 
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")

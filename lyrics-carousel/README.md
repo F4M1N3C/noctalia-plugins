@@ -102,11 +102,28 @@ it. The font only needs a restart in text mode; in image mode it applies instant
 noctalia msg panel-toggle faminec/lyrics-carousel:panel
 ```
 
+## Diagnostics
+
+```sh
+python3 ~/.local/share/noctalia/plugins/lyrics-carousel/bin/selftest.py --verbose
+lyrics-carousel --diagnostics
+```
+
+The self-test checks the installation assumptions: the helper is next to the
+script, the data directory can be created, the overrides round-trip, the
+external tools are available and — importantly — that the script finds its
+sibling modules and the helper when it is launched through the symbolic link
+in `~/.local/bin` (which is how the panel starts it).
+
+`--diagnostics` prints the same information for the running script as JSON.
+Both are used by `tools/verify-plugins.py`.
+
 ## Notes
 
 - The window is opened with `hl.dsp.exec_cmd(...)` and the class
   `noctalia-lyrics-carousel`; the script can also be run by hand as `lyrics-carousel`.
-- Outside kitty (or without Pillow) the script falls back to text mode on its own.
+- Outside kitty (or without Pillow) the script falls back to text mode on its own,
+  and it says so in `~/.cache/lyrics-carousel/debug.log` instead of doing it silently.
 - The accent colour is read from the theme Noctalia generates for kitty, so it follows
   the wallpaper.
 - Kitty only accepts monospaced fonts, so in text mode the usable list is

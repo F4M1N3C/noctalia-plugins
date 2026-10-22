@@ -6,7 +6,9 @@ import os
 import subprocess
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# realpath: el modulo puede alcanzarse por un enlace simbolico y sus
+# hermanos (graphics) viven en el directorio real.
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
 from graphics import GraphicsRenderer, load_font, terminal_cells, text_width  # noqa: E402
 

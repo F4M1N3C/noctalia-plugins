@@ -22,6 +22,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 PLUGIN_DIR = os.path.dirname(HERE)
@@ -104,7 +105,8 @@ def main(argv):
     if created:
         check("directorio de datos", True, DATA_DIR)
 
-    # 3) ida y vuelta de los overrides.
+    # 3) el directorio de datos real se puede usar (sin escribir nada en el:
+    #    la prueba de escritura se hace en un HOME temporal).
     if created:
         probe = os.path.join(DATA_DIR, "selftest.json")
         try:
@@ -116,24 +118,55 @@ def main(argv):
             check("escritura de overrides", data.get("selftest") is True)
         except (OSError, ValueError) as error:
             check("escritura de overrides", False, str(error))
+            try:
+                os.remove(probe)
+            except OSError:
+                pass
 
-        # 4) el helper responde y crea el directorio si falta.
-        try:
-            shutil.rmtree(DATA_DIR, ignore_errors=True)
-            result = subprocess.run(
-                [sys.executable, HELPER, "override", "marker", "true", "bool"],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            ok = result.returncode == 0 and os.path.isdir(DATA_DIR)
-            check("el helper crea el directorio", ok, result.stderr.strip()[:120])
-            if ok:
-                subprocess.run(
-                    [sys.executable, HELPER, "merge"], capture_output=True, timeout=15
+        # 4) el helper responde, crea el directorio si falta y vuelca los
+        #    overrides al settings.toml. Todo con un HOME temporal: si se
+        #    usara el real, el autotest dejaria cambiados los ajustes del
+        #    usuario (el volcado escribe en el settings.toml de verdad).
+        with tempfile.TemporaryDirectory() as fake_home:
+            fake_state = os.path.join(fake_home, ".local", "state", "noctalia")
+            os.makedirs(fake_state, exist_ok=True)
+            fake_settings = os.path.join(fake_state, "settings.toml")
+            with open(fake_settings, "w", encoding="utf-8") as handle:
+                handle.write("")
+            env = {**os.environ, "HOME": fake_home}
+            try:
+                result = subprocess.run(
+                    [sys.executable, HELPER, "override", "marker", "true", "bool"],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    env=env,
                 )
-        except (OSError, subprocess.SubprocessError) as error:
-            check("el helper crea el directorio", False, repr(error)[:120])
+                fake_dir = os.path.join(
+                    fake_home,
+                    ".local/state/noctalia/plugins/data/faminec/lyrics-carousel",
+                )
+                ok = result.returncode == 0 and os.path.isdir(fake_dir)
+                check(
+                    "el helper crea el directorio", ok, result.stderr.strip()[:120]
+                )
+                if ok:
+                    merge = subprocess.run(
+                        [sys.executable, HELPER, "merge"],
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
+                        env=env,
+                    )
+                    with open(fake_settings, encoding="utf-8") as handle:
+                        written = handle.read()
+                    check(
+                        "el helper vuelca al settings.toml",
+                        merge.returncode == 0 and "marker = true" in written,
+                        merge.stderr.strip()[:120],
+                    )
+            except (OSError, subprocess.SubprocessError) as error:
+                check("el helper crea el directorio", False, repr(error)[:120])
 
     # 5) herramientas externas.
     for tool in ("kitty", "fc-match", "playerctl", "hyprctl"):

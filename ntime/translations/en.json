@@ -1,0 +1,49 @@
+{
+  "active": "Active",
+  "clock": "Clock",
+  "countdown": "Countdown",
+  "countup": "Countup",
+  "pause": "Pause",
+  "resume": "Resume",
+  "stop": "Stop",
+  "settings": "Settings",
+  "tooltip": "ntime - click to toggle, scroll to adjust",
+  "mode": "Mode",
+  "font": "Font",
+  "duration": "Duration (minutes)",
+  "mode_clock": "Clock",
+  "mode_countdown": "Countdown",
+  "mode_countup": "Countup",
+  "font_tty_clock": "tty-clock (colored squares, retro style)",
+  "font_digital": "Digital",
+  "font_blocks": "Blocks",
+  "option_clock": "Show current time",
+  "option_countdown": "Configurable countdown",
+  "option_countup": "Continuous count-up",
+  "font_tty_clock_desc": "TTY Clock font with colored square digits",
+  "font_digital_desc": "Digital display font",
+  "font_blocks_desc": "Retro blocks font",
+  "settings_title": "ntime Settings",
+  "apply": "Apply",
+  "close": "Close",
+  "settings": {
+    "mode": {
+      "label": "Timer mode",
+      "description": "Select the timer mode",
+      "option_clock": "Show current time",
+      "option_countdown": "Configurable countdown",
+      "option_countup": "Continuous count-up"
+    },
+    "font": {
+      "label": "Display font",
+      "description": "Select the display font",
+      "option_tty_clock": "TTY Clock font with colored square digits",
+      "option_digital": "Digital display font",
+      "option_blocks": "Retro blocks font"
+    },
+    "duration": {
+      "label": "Default duration (minutes)",
+      "description": "Default countdown duration in minutes"
+    }
+  }
+}

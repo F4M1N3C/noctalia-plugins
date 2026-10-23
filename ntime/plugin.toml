@@ -1,0 +1,62 @@
+# ntime - Timer/Clock plugin for Noctalia
+# Id: faminec/ntime
+
+id = "faminec/ntime"
+name = "ntime"
+version = "1.0.0"
+plugin_api = 35
+author = "faminec"
+license = "MIT"
+description = "Timer and clock with multiple modes, font selection, and tty-clock style display."
+tags = ["clock", "countdown", "utility"]
+icon = "timer"
+dependencies = []
+
+[[setting]]
+key = "mode"
+type = "select"
+label_key = "settings.mode.label"
+description_key = "settings.mode.description"
+default = "clock"
+options = [
+  { value = "countdown", label_key = "settings.mode.option_countdown" },
+  { value = "countup", label_key = "settings.mode.option_countup" },
+  { value = "clock", label_key = "settings.mode.option_clock" }
+]
+
+[[setting]]
+key = "font"
+type = "select"
+label_key = "settings.font.label"
+description_key = "settings.font.description"
+default = "tty-clock"
+options = [
+  { value = "tty-clock", label_key = "settings.font.option_tty_clock" },
+  { value = "digital", label_key = "settings.font.option_digital" },
+  { value = "blocks", label_key = "settings.font.option_blocks" }
+]
+
+[[setting]]
+key = "duration"
+type = "int"
+label_key = "settings.duration.label"
+description_key = "settings.duration.description"
+default = 25
+min = 1
+max = 1440
+
+[[service]]
+id = "service"
+entry = "service.luau"
+
+[[widget]]
+id = "widget"
+entry = "widget.luau"
+
+[[panel]]
+id = "panel"
+entry = "panel.luau"
+width = 500
+height = 600
+placement = "floating"
+open_near_click = true

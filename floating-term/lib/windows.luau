@@ -8,6 +8,9 @@
 --   hl.dsp.window.close({ window = "address:0x55d1..." })
 
 local util = require("./util.luau")
+local layoutLib = require("./layout.luau")
+
+local spawnExpression
 
 local M = {}
 
@@ -48,6 +51,13 @@ function M.list(callback)
         for _, client in ipairs(decoded) do
           local at = client.at or {}
           local size = client.size or {}
+          local workspace = client.workspace
+          local workspaceId = nil
+          if type(workspace) == "table" then
+            workspaceId = workspace.id
+          elseif workspace ~= nil then
+            workspaceId = workspace
+          end
           table.insert(clients, {
             address = tostring(client.address or ""),
             class = tostring(client.class or ""),
@@ -57,6 +67,9 @@ function M.list(callback)
             w = tonumber(size[1]) or 0,
             h = tonumber(size[2]) or 0,
             monitor = tostring(client.monitor or ""),
+            workspace = workspaceId,
+            hidden = client.hidden == true,
+            mapped = client.mapped ~= false,
           })
         end
       end
@@ -231,6 +244,26 @@ end
 -- Crea la ventana. `persistent_size` de Hyprland puede pisar el tamaño al
 -- mapear, así que la geometría se reaplica un instante después.
 function M.spawn(params, callback)
+  local expression = spawnExpression(params)
+  M.dispatch(expression, function(success)
+    if not success and params.onError ~= nil then
+      params.onError()
+    end
+    local started = noctalia.runAsync({ "sleep", "0.6" }, function()
+      M.focusExisting(params.class, params.geometry, function()
+        if callback ~= nil then
+          callback()
+        end
+      end)
+    end)
+    if not started and callback ~= nil then
+      callback()
+    end
+  end)
+end
+
+-- Expresión de lanzamiento reutilizable por `spawn` y `spawnMany`.
+spawnExpression = function(params)
   local terminal = params.terminal or "kitty"
   local closeOpt = ""
   if terminal:find("kitty", 1, true) ~= nil then
@@ -251,31 +284,90 @@ function M.spawn(params, callback)
     monitorRule = string.format(", monitor = %s", util.luaQuote(params.monitor))
   end
 
-  local rules = string.format(
-    "{ float = true%s, move = { %d, %d }, size = { %d, %d } }",
+  return string.format(
+    "hl.dsp.exec_cmd(%s, { float = true%s, move = { %d, %d }, size = { %d, %d } })",
+    util.luaQuote(full),
     monitorRule,
     math.floor(params.geometry.x),
     math.floor(params.geometry.y),
     math.floor(params.geometry.width),
     math.floor(params.geometry.height)
   )
-  local expression = string.format("hl.dsp.exec_cmd(%s, %s)", util.luaQuote(full), rules)
+end
 
-  M.dispatch(expression, function(success)
-    if not success and params.onError ~= nil then
-      params.onError()
+-- Lanza una lista de ventanas en paralelo (una sola espera de 0.6 s). 
+function M.spawnMany(paramsList, callback)
+  if #paramsList == 0 then
+    if callback ~= nil then
+      callback(true)
     end
-    local started = noctalia.runAsync({ "sleep", "0.6" }, function()
-      M.focusExisting(params.class, params.geometry, function()
+    return true
+  end
+
+  local pending = #paramsList
+  local allOk = true
+  local function finishOne(success)
+    if not success then
+      allOk = false
+    end
+    pending = pending - 1
+    if pending == 0 then
+      local started = noctalia.runAsync({ "sleep", "0.6" }, function()
         if callback ~= nil then
-          callback()
+          callback(allOk)
         end
       end)
-    end)
-    if not started and callback ~= nil then
-      callback()
+      if not started then
+        if callback ~= nil then
+          callback(allOk)
+        end
+      end
     end
+  end
+
+  for _, params in ipairs(paramsList) do
+    local expression = spawnExpression(params)
+    M.dispatch(expression, function(success)
+      if not success and params.onError ~= nil then
+        params.onError()
+      end
+      finishOne(success)
+    end)
+  end
+  return true
+end
+
+function M.layers(callback)
+  local started = noctalia.runAsync({ "hyprctl", "layers", "-j" }, function(result)
+    local layers = {}
+    if result.exitCode == 0 and type(result.stdout) == "string" and result.stdout ~= "" then
+      local ok, decoded = pcall(noctalia.json.decode, result.stdout)
+      if ok and type(decoded) == "table" then
+        for _, output in pairs(decoded) do
+          if type(output) == "table" and type(output.levels) == "table" then
+            for level, items in pairs(output.levels) do
+              if type(items) == "table" then
+                for _, item in ipairs(items) do
+                  table.insert(layers, {
+                    level = tonumber(level) or 0,
+                    x = tonumber(item.x) or 0,
+                    y = tonumber(item.y) or 0,
+                    w = tonumber(item.w) or 0,
+                    h = tonumber(item.h) or 0,
+                    namespace = tostring(item.namespace or ""),
+                  })
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+    callback(layers)
   end)
+  if not started then
+    callback({})
+  end
 end
 
 function M.closeWindow(address, callback)
@@ -357,47 +449,9 @@ local function permutation(sorted, mode)
       result[index] = ((index - 2) % count) + 1
     end
   elseif mode == "opposite" then
-    local paired = {}
-    local function pairOf(a, b)
-      paired[a] = b
-      paired[b] = a
-    end
+    local mapping = layoutLib.oppositePairs(sorted)
     for index = 1, count do
-      if paired[index] == nil then
-        local best = nil
-        local bestDistance = nil
-        for other = index + 1, count do
-          if paired[other] == nil then
-            local centerX = sorted[index].monitor.width / 2
-            local centerY = sorted[index].monitor.height / 2
-            local angleA = math.atan2(
-              (sorted[index].y + sorted[index].h / 2) - centerY,
-              (sorted[index].x + sorted[index].w / 2) - centerX
-            )
-            local angleB = math.atan2(
-              (sorted[other].y + sorted[other].h / 2) - centerY,
-              (sorted[other].x + sorted[other].w / 2) - centerX
-            )
-            local difference = math.abs(angleA - angleB)
-            if difference > math.pi then
-              difference = 2 * math.pi - difference
-            end
-            local distance = math.abs(difference - math.pi)
-            if bestDistance == nil or distance < bestDistance then
-              bestDistance = distance
-              best = other
-            end
-          end
-        end
-        if best ~= nil then
-          pairOf(index, best)
-        else
-          paired[index] = index
-        end
-      end
-    end
-    for index = 1, count do
-      result[index] = paired[index] or index
+      result[index] = mapping[index] or index
     end
   elseif mode == "pairs" then
     local index = 1
@@ -433,8 +487,14 @@ local function permutation(sorted, mode)
   return result
 end
 
+-- Bloqueo de rotación para evitar pisadas por pulsaciones rápidas.
+M.rotating = false
+
 -- Rota las ventanas del plugin: cada una se va al sitio de otra.
 function M.rotate(windows, mode, swapSizes, callback)
+  if M.rotating then
+    return false
+  end
   local groups = {}
   local order = {}
   for _, window in ipairs(windows) do
@@ -468,7 +528,21 @@ function M.rotate(windows, mode, swapSizes, callback)
     end
   end
 
-  M.applyGeometry(moves, callback)
+  if #moves == 0 then
+    if callback ~= nil then
+      callback()
+    end
+    return true
+  end
+
+  M.rotating = true
+  M.applyGeometry(moves, function()
+    M.rotating = false
+    if callback ~= nil then
+      callback()
+    end
+  end)
+  return true
 end
 
 return M

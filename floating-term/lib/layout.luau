@@ -164,6 +164,84 @@ function M.parseLayout(value)
   return spec
 end
 
+-- Permutación para la rotación "opposite": cada ventana va al sitio de la
+-- que está en el lado opuesto del grupo, midiendo la oposición por la posición
+-- real de los centros (no por un centro global de monitor). Así funciona para
+-- cualquier disposición, incluso si las cuatro ventanas están en una sola zona.
+function M.oppositePairs(windows)
+  local count = #windows
+  local result = {}
+  for index = 1, count do
+    result[index] = index
+  end
+  if count < 2 then
+    return result
+  end
+
+  -- Centro del grupo.
+  local cx = 0
+  local cy = 0
+  local centers = {}
+  for index, window in ipairs(windows) do
+    local x = (window.x or 0) + (window.w or 0) / 2
+    local y = (window.y or 0) + (window.h or 0) / 2
+    centers[index] = { x = x, y = y }
+    cx = cx + x
+    cy = cy + y
+  end
+  cx = cx / count
+  cy = cy / count
+
+  -- Extensión del grupo (para normalizar).
+  local extentX = 0
+  local extentY = 0
+  for index = 1, count do
+    extentX = math.max(extentX, math.abs(centers[index].x - cx))
+    extentY = math.max(extentY, math.abs(centers[index].y - cy))
+  end
+  if extentX == 0 then
+    extentX = 1
+  end
+  if extentY == 0 then
+    extentY = 1
+  end
+
+  -- Candidatos de emparejamiento ordenados por cuán opuestos son sus
+  -- vectores desde el centro del grupo (suma cercana a cero en ambos ejes).
+  local pairsList = {}
+  for i = 1, count do
+    for j = i + 1, count do
+      local ax = (centers[i].x - cx) / extentX
+      local ay = (centers[i].y - cy) / extentY
+      local bx = (centers[j].x - cx) / extentX
+      local by = (centers[j].y - cy) / extentY
+      local score = (ax + bx) ^ 2 + (ay + by) ^ 2
+      table.insert(pairsList, { i = i, j = j, score = score })
+    end
+  end
+  table.sort(pairsList, function(a, b)
+    return a.score < b.score
+  end)
+
+  local paired = {}
+  for _, candidate in ipairs(pairsList) do
+    if paired[candidate.i] == nil and paired[candidate.j] == nil then
+      paired[candidate.i] = candidate.j
+      paired[candidate.j] = candidate.i
+    end
+  end
+  for index = 1, count do
+    if paired[index] == nil then
+      paired[index] = index
+    end
+  end
+
+  for index = 1, count do
+    result[index] = paired[index]
+  end
+  return result
+end
+
 function M.anchorPosition(anchor, width, height, screenWidth, screenHeight, margin)
   margin = math.max(0, math.floor(margin or 0))
   local x

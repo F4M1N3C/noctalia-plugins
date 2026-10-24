@@ -88,11 +88,12 @@ opens the same page).
 | `x` | `int` | `120` | Fallback X position (monitor coordinates). |
 | `y` | `int` | `140` | Fallback Y position (monitor coordinates). |
 | `glyph` | `glyph` | `terminal-2` | Bar icon. |
-| `close_on_launch` | `bool` | `true` | Close the panel as soon as a command is launched. |
+| `close_on_launch` | `bool` | `false` | Close the panel as soon as a command is launched. |
+| `preview_interval` | `int` | `3` | Seconds between live preview refreshes (1 to 60). |
 | `rotation` | `select` | `clockwise` | How the windows are rotated: `clockwise`, `counterclockwise`, `opposite`, `pairs` or `shuffle`. |
 | `rotation_sizes` | `bool` | `false` | Swap the sizes between the windows when rotating. |
 | `columns` | `int` | `2` | Columns of the card grid (1 to 3). |
-| `card_preview` | `select` | `auto` | Card preview: `auto` (screenshot when possible), `screenshot` or `mock`. |
+| `card_preview` | `select` | `auto` | Card preview: `auto`, `screenshot`, `live` (auto-refreshing screenshots) or `mock`. |
 | `avoid_collisions` | `bool` | `true` | Move a window to the closest free slot when its layout collides with another one. |
 
 ### Layout format
@@ -142,6 +143,29 @@ The `add` payload is split on `|`, so the command itself cannot contain one.
 
 The panel entry is only reachable over IPC while the panel is open; the other session's
 runtime is created on demand.
+
+## Changelog
+
+### 2.1.0
+
+- `close_on_launch` now defaults to `false` (panel stays open after launching).
+- Card previews can be `live` (refreshed every `preview_interval` seconds) and the
+  closed-card preview animates with the last captured frames.
+- Thumbnails are only captured when the widget window is fully visible, so a
+  window on top no longer leaks into another card's preview.
+- `opposite` rotation now pairs windows by their real geometry, so it works for
+  any layout (including four windows clustered in one corner).
+- Rotation is atomic: rapid presses are ignored while a rotation is running, so
+  two widgets can never end up in the same slot.
+- "Open all" launches every missing window in a single batch instead of one by
+  one.
+- Right-clicking an open card closes its window.
+- Cards keep a uniform size even in a partial last row.
+- Panel edits are flushed to `settings.toml` on close, so the settings page and
+  the panel share one source of truth; deleting a widget from the panel removes
+  it from the settings too.
+- Editing a widget's size or position re-applies its geometry instead of
+  closing the window.
 
 ## Tests
 

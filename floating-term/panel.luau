@@ -14,6 +14,7 @@ local layoutLib = require("./lib/layout.luau")
 local storeLib = require("./lib/store.luau")
 local win = require("./lib/windows.luau")
 local preview = require("./lib/preview.luau")
+local settingsLib = require("./lib/settings.luau")
 
 local DEBOUNCE_MS = 700
 local PANEL_WIDTH = 620
@@ -40,6 +41,7 @@ local cfg = {
   rotationSizes = false,
   columns = 2,
   cardPreview = "auto",
+  previewInterval = 3,
   avoidCollisions = true,
 }
 
@@ -51,6 +53,10 @@ local state = {
   thumbUsed = {},
   clients = {},
   classNames = {},
+  frames = {},
+  capturing = false,
+  lastCapture = 0,
+  tick = 0,
   editing = false,
   editTarget = nil,
   editSession = 0,
@@ -103,12 +109,13 @@ local function loadConfig()
   end
   cfg.output = output
 
-  cfg.closeOnLaunch = noctalia.getConfig("close_on_launch") ~= false
+  cfg.closeOnLaunch = noctalia.getConfig("close_on_launch") == true
   cfg.reuseExisting = noctalia.getConfig("reuse_existing") ~= false
   cfg.rotation = tostring(noctalia.getConfig("rotation") or "clockwise")
   cfg.rotationSizes = noctalia.getConfig("rotation_sizes") == true
   cfg.columns = math.floor(util.clamp(tonumber(noctalia.getConfig("columns")) or 2, 1, 3))
   cfg.cardPreview = tostring(noctalia.getConfig("card_preview") or "auto")
+  cfg.previewInterval = math.floor(util.clamp(tonumber(noctalia.getConfig("preview_interval")) or 3, 1, 60))
   cfg.avoidCollisions = noctalia.getConfig("avoid_collisions") ~= false
 end
 
@@ -117,9 +124,29 @@ local function widgetNames()
 end
 
 -- Fusiona defaults + Ajustes + store propio y aplica los borrados.
-local function loadWidgets()
+local function loadWidgets(resurrect)
   local base = defaults.load()
   state.store = state.store or storeLib.load()
+
+  if resurrect then
+    -- Resurrección bidireccional: si un widget está marcado como borrado pero
+    -- vuelve a aparecer en Ajustes, se deja de considerar borrado.
+    local configCommands = noctalia.getConfig("commands") or {}
+    local configLayouts = noctalia.getConfig("layouts") or {}
+    local toResurrect = {}
+    for _, name in ipairs(state.store.removed or {}) do
+      if configCommands[name] ~= nil or configLayouts[name] ~= nil then
+        table.insert(toResurrect, name)
+      end
+    end
+    if #toResurrect > 0 then
+      for _, name in ipairs(toResurrect) do
+        storeLib.upsert(state.store, name, nil, nil)
+      end
+      storeLib.save(state.store)
+    end
+  end
+
   state.commands = storeLib.merge(
     base.commands,
     noctalia.getConfig("commands"),
@@ -352,81 +379,109 @@ end
 -- que las que están ENCIMA de una dada son las que van después en la lista.
 -- Si otra ventana la tapa, la captura mostraría otra cosa y es mejor no
 -- capturar.
-local function isMostlyCovered(clients, index, rect)
-  local covered = 0
-  for position = index + 1, #clients do
-    local other = clients[position]
-    local overlapX = math.min(rect.x + rect.w, other.x + other.w) - math.max(rect.x, other.x)
-    local overlapY = math.min(rect.y + rect.h, other.y + other.h) - math.max(rect.y, other.y)
-    if overlapX > 0 and overlapY > 0 then
-      covered = covered + (overlapX * overlapY)
+local function isCovered(window, clients, layers)
+  local rect = { x = window.x, y = window.y, w = window.w, h = window.h }
+  local targetMonitor = window.monitor and window.monitor.name or ""
+  local targetWorkspace = window.workspace
+
+  -- Otras ventanas por encima (misma salida y espacio de trabajo).
+  for _, other in ipairs(clients or {}) do
+    if other.mapped ~= false and not other.hidden then
+      if other.address ~= window.address then
+        local otherMonitor = other.monitor
+        if (targetMonitor == "" or otherMonitor == targetMonitor or otherMonitor == window.monitorId) then
+          if targetWorkspace == nil or other.workspace == nil or other.workspace == targetWorkspace then
+            local overlapX = math.min(rect.x + rect.w, other.x + other.w) - math.max(rect.x, other.x)
+            local overlapY = math.min(rect.y + rect.h, other.y + other.h) - math.max(rect.y, other.y)
+            if overlapX > 0 and overlapY > 0 then
+              return true
+            end
+          end
+        end
+      end
     end
   end
-  local area = rect.w * rect.h
-  if area <= 0 then
-    return true
+
+  -- Capas superiores (barra, paneles, notificaciones).
+  for _, layer in ipairs(layers or {}) do
+    if (layer.level or 0) >= 2 then
+      local overlapX = math.min(rect.x + rect.w, layer.x + layer.w) - math.max(rect.x, layer.x)
+      local overlapY = math.min(rect.y + rect.h, layer.y + layer.h) - math.max(rect.y, layer.y)
+      if overlapX > 0 and overlapY > 0 then
+        return true
+      end
+    end
   end
-  -- Cualquier solape relevante hace que la captura no sea fiel, así que con
-  -- un 2 % ya se considera tapada.
-  return (covered / area) > 0.02
+  return false
 end
 
-captureThumbs = function()
+captureThumbs = function(force)
   if cfg.cardPreview == "mock" then
     return
   end
   if not preview.toolsAvailable() then
     return
   end
-
-  local clients = state.clients or {}
-  local entries = {}
-  for index, client in ipairs(clients) do
-    local name = state.classNames[client.class]
-    if name ~= nil and client.w > 0 and client.h > 0 then
-      local window = state.windows[name]
-      if window ~= nil and not isMostlyCovered(clients, index, {
-        x = client.x,
-        y = client.y,
-        w = client.w,
-        h = client.h,
-      }) then
-        table.insert(entries, {
-          name = name,
-          output = window.monitor.name,
-          x = window.x,
-          y = window.y,
-          w = window.w,
-          h = window.h,
-        })
-      end
-    end
-  end
-
-  -- Limpia las miniaturas que ya no usa ninguna tarjeta. Se conservan
-  -- también las de la vista anterior: al reabrir el panel, el host vuelve
-  -- a aplicar el árbol que tenía guardado e intenta cargar esas imágenes.
-  -- La antigüedad mínima (30 min) deja margen por si el host pide una
-  -- imagen que ya no está en uso.
-  local function cleanup()
-    local used = preview.currentPaths(state.windows)
-    for path in pairs(state.thumbUsed or {}) do
-      used[path] = true
-    end
-    preview.pruneUnused(used, 1800)
-  end
-
-  if #entries == 0 then
-    -- Aun sin capturas nuevas hay que retirar las miniaturas caducadas.
-    cleanup()
+  if state.capturing then
     return
   end
+  if cfg.cardPreview ~= "live" and not force then
+    -- En modo screenshot solo se captura cuando se pide explícitamente.
+  end
 
-  preview.capture(entries, function()
-    cleanup()
-    if state.open then
-      render()
+  state.capturing = true
+  state.lastCapture = noctalia.nowMs()
+
+  local clients = state.clients or {}
+  win.layers(function(layers)
+    local entries = {}
+    for _, client in ipairs(clients) do
+      local name = state.classNames[client.class]
+      if name ~= nil and client.w > 0 and client.h > 0 then
+        local window = state.windows[name]
+        if window ~= nil and not isCovered(window, clients, layers) then
+          local seq = nil
+          if cfg.cardPreview == "live" or cfg.cardPreview == "auto" then
+            seq = noctalia.nowMs()
+          end
+          table.insert(entries, {
+            name = name,
+            output = window.monitor.name,
+            x = window.x,
+            y = window.y,
+            w = window.w,
+            h = window.h,
+            seq = seq,
+          })
+        end
+      end
     end
+
+    local function cleanup()
+      local used = preview.currentPaths(state.windows)
+      for path in pairs(state.thumbUsed or {}) do
+        used[path] = true
+      end
+      preview.pruneUnused(used, 1800)
+      state.capturing = false
+    end
+
+    if #entries == 0 then
+      cleanup()
+      return
+    end
+
+    preview.capture(entries, function()
+      cleanup()
+      -- Record frame paths for demo animation.
+      for _, entry in ipairs(entries) do
+        local frames = preview.frames(entry.name, 8)
+        state.frames[entry.name] = frames
+      end
+      if state.open then
+        render()
+      end
+    end)
   end)
 end
 
@@ -565,6 +620,9 @@ end
 
 -- Rota las ventanas abiertas entre sí.
 rotateWindows = function()
+  if win.rotating then
+    return
+  end
   win.list(function(clients)
     win.monitors(function(monitors)
       local map = classMap()
@@ -577,9 +635,12 @@ rotateWindows = function()
         return
       end
 
-      win.rotate(windows, cfg.rotation, cfg.rotationSizes, function()
+      local started = win.rotate(windows, cfg.rotation, cfg.rotationSizes, function()
         refresh()
       end)
+      if started == false then
+        return
+      end
     end)
   end)
 end
@@ -620,23 +681,56 @@ openAll = function()
         return
       end
 
-      local index = 0
-      local function nextWidget()
-        index = index + 1
-        local name = missing[index]
-        if name == nil then
-          refresh()
-          return
-        end
-        launch(name, {
-          keepOpen = true,
-          onDone = function()
-            nextWidget()
-          end,
-        })
+      -- Lanzamiento paralelo: se calculan las geometrías de una sola vez (con
+      -- la lista de ocupadas compartida) y se despachan todos los spawns en un
+      -- único lote, en vez de abrirlos uno a uno.
+      local paramsList = {}
+      local occupied = win.occupiedRects(clients, monitors, "", nil)
+      -- Semilla las ventanas ya abiertas para avoidCollisions.
+      for _, window in ipairs(windows) do
+        table.insert(occupied, { x = window.x, y = window.y, w = window.w, h = window.h })
       end
 
-      nextWidget()
+      for _, name in ipairs(missing) do
+        local command = state.commands[name]
+        if type(command) ~= "string" or command == "" then
+          noctalia.notifyError(tr("title"), tr("missing_command", { name = tostring(name) }))
+        else
+          local geometry = resolveGeometry(name)
+          if cfg.avoidCollisions then
+            geometry.x, geometry.y = avoidCollisions(geometry, occupied, geometry.auto)
+            table.insert(occupied, { x = geometry.x, y = geometry.y, w = geometry.width, h = geometry.height })
+          end
+          local class = util.classFor(name)
+          state.lastLaunch[class] = noctalia.nowMs()
+          state.launching[class] = true
+          table.insert(paramsList, {
+            terminal = cfg.terminal,
+            class = class,
+            name = name,
+            command = command,
+            geometry = geometry,
+            monitor = cfg.output ~= "" and cfg.output or nil,
+            onError = function()
+              noctalia.notifyError(tr("title"), tr("launch_failed"))
+            end,
+          })
+        end
+      end
+
+      if #paramsList == 0 then
+        refresh()
+        return
+      end
+
+      win.spawnMany(paramsList, function()
+        for _, params in ipairs(paramsList) do
+          state.launching[params.class] = nil
+        end
+        noctalia.runAsync({ "sleep", "1.2" }, function()
+          refresh()
+        end)
+      end)
     end)
   end)
 end
@@ -684,6 +778,16 @@ local function applyWidget(name, command, layout)
   end
 
   loadWidgets()
+
+  -- Si el widget está abierto y cambió su geometría, se reaplica en vez de
+  -- cerrar la ventana (así editar tamaño/posición no la mata).
+  local window = state.windows[name]
+  if window ~= nil then
+    local geometry = resolveGeometry(name)
+    win.focusExisting(util.classFor(name), geometry, function()
+      refresh()
+    end)
+  end
   return true, nil
 end
 
@@ -825,22 +929,43 @@ local function mockPreview(name)
 end
 
 local function cardPreview(name)
-  if cfg.cardPreview ~= "mock" then
-    local window = state.windows[name]
-    if window ~= nil then
-      local path = preview.cached(name, preview.signature(window))
-      if path ~= nil then
-        return ui.image({
-          path = path,
-          width = cardWidth(),
-          height = previewHeight(),
-          fit = "cover",
-          radius = 8,
-          border = "outline/0.25",
-          borderWidth = 1,
-        })
-      end
+  if cfg.cardPreview == "mock" then
+    return mockPreview(name)
+  end
+
+  local window = state.windows[name]
+  local path = nil
+  if window ~= nil then
+    path = preview.latest(name)
+    if path == nil then
+      path = preview.cached(name, preview.signature(window))
     end
+  end
+
+  -- Si el widget está cerrado, animamos un demo con los últimos frames
+  -- capturados (el "GIF" de los últimos segundos) si los hay.
+  if window == nil then
+    local frames = state.frames[name]
+    if frames == nil or #frames == 0 then
+      frames = preview.frames(name, 8)
+      state.frames[name] = frames
+    end
+    if #frames > 0 then
+      local index = (state.tick % #frames) + 1
+      path = frames[index]
+    end
+  end
+
+  if path ~= nil then
+    return ui.image({
+      path = path,
+      width = cardWidth(),
+      height = previewHeight(),
+      fit = "cover",
+      radius = 8,
+      border = "outline/0.25",
+      borderWidth = 1,
+    })
   end
   return mockPreview(name)
 end
@@ -884,7 +1009,7 @@ card = function(name)
 
   local cardProps = {
     key = "card-" .. name,
-    flexGrow = 1,
+    width = cardWidth(),
     gap = 6,
     padding = CARD_PADDING,
     radius = 12,
@@ -900,6 +1025,15 @@ card = function(name)
   if not state.editing then
     cardProps.onClick = function()
       launch(name)
+    end
+    -- Click derecho sobre un widget abierto lo cierra.
+    cardProps.onRightClick = function()
+      local window = state.windows[name]
+      if window ~= nil then
+        win.closeWindow(window.address, function()
+          refresh()
+        end)
+      end
     end
   end
 
@@ -1027,7 +1161,9 @@ header = function()
     variant = "ghost",
     tooltip = tr("open_settings"),
     onClick = function()
-      noctalia.openSettings()
+      settingsLib.sync(state.commands, state.layouts, function()
+        noctalia.openSettings()
+      end)
     end,
   }))
   append(buttons, ui.button({
@@ -1103,6 +1239,7 @@ end
 
 function onOpen(_context)
   state.open = true
+  panel.setWantsSecondTicks(true)
   -- El manifiesto se cachea para no analizarlo en cada callback; al abrir el
   -- panel se relee, por si el plugin se actualizó sin reiniciar Noctalia.
   defaults.reset()
@@ -1110,6 +1247,10 @@ function onOpen(_context)
   loadWidgets()
   state.editing = false
   state.editTarget = nil
+  state.frames = {}
+  for _, name in ipairs(widgetNames()) do
+    state.frames[name] = preview.frames(name, 8)
+  end
   render()
   refreshWindows(function()
     if state.open then
@@ -1120,12 +1261,16 @@ end
 
 function onClose()
   state.open = false
+  panel.setWantsSecondTicks(false)
+  -- Vuelca la lista efectiva a settings.toml para que la página de Ajustes
+  -- vea los mismos widgets (incluidos los añadidos/borrados desde el panel).
+  settingsLib.sync(state.commands, state.layouts, function() end)
 end
 
 function onConfigChanged()
   defaults.reset()
   loadConfig()
-  loadWidgets()
+  loadWidgets(true)
   if state.open then
     render()
     -- Los indicadores de "abierta" y las miniaturas se refrescan también.
@@ -1135,6 +1280,19 @@ function onConfigChanged()
       end
     end)
   end
+end
+
+function update()
+  if not state.open then
+    return
+  end
+  state.tick = state.tick + 1
+  if cfg.cardPreview == "live" and not state.capturing then
+    if (noctalia.nowMs() - (state.lastCapture or 0)) >= (cfg.previewInterval * 1000) then
+      captureThumbs(true)
+    end
+  end
+  render()
 end
 
 function onIpc(event, payload)

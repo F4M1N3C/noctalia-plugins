@@ -599,6 +599,23 @@ mx, my = movedTo("0xarriba-izq")
 check("opuesto: arriba-izq toma abajo-der", mx, 2524)
 check("opuesto: arriba-izq toma abajo-der (y)", my, 624)
 
+-- Rotación "opposite" geométricamente correcta en cualquier disposición:
+-- un cuadrado formado en una sola esquina debe girar por diagonales.
+local corner = {
+  fakeWindow("c1", 10, 10, 100, 100),
+  fakeWindow("c2", 10, 200, 100, 100),
+  fakeWindow("c3", 200, 10, 100, 100),
+  fakeWindow("c4", 200, 200, 100, 100),
+}
+dispatched = {}
+win.rotate(corner, "opposite", false, function() end)
+mx, my = movedTo("0xc1")
+check("opuesto en esquina: c1 toma c4 (x)", mx, 200)
+check("opuesto en esquina: c1 toma c4 (y)", my, 200)
+mx, my = movedTo("0xc2")
+check("opuesto en esquina: c2 toma c3 (x)", mx, 200)
+check("opuesto en esquina: c2 toma c3 (y)", my, 10)
+
 dispatched = {}
 win.rotate(group, "shuffle", false, function() end)
 local targets = {}
@@ -652,6 +669,12 @@ for _, expression in ipairs(dispatched) do
   end
 end
 check("sin tamaños no se redimensiona", resized, false)
+
+-- Bloqueo atómico de la rotación.
+win.rotating = true
+local locked = win.rotate(group, "clockwise", false, function() end)
+check("rotación bloqueada mientras gira", false, locked)
+win.rotating = false
 
 -- -------------------------------------------------------------------- panel --
 
@@ -764,6 +787,9 @@ if cardNode == nil then
 end
 check("la tarjeta lleva el comando en el tooltip", true, cardNode ~= nil and cardNode.props.tooltip ~= nil and cardNode.props.tooltip:len() > 0)
 check("la tarjeta se puede pulsar", true, cardNode ~= nil and cardNode.props.onClick ~= nil)
+check("la tarjeta tiene ancho fijo (tamaño uniforme)", true, cardNode ~= nil and cardNode.props.width ~= nil)
+check("la tarjeta no crece en filas parciales", nil, cardNode ~= nil and cardNode.props.flexGrow)
+check("click derecho cierra el widget", true, cardNode ~= nil and cardNode.props.onRightClick ~= nil)
 
 -- Modo edición: aparecen el formulario y los botones de borrar.
 local editButton = findNode(lastTree, "edit")

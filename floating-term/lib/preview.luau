@@ -55,8 +55,12 @@ function M.cacheDir()
   return path
 end
 
-function M.signature(window)
-  return string.format("%d,%d,%d,%d", window.x, window.y, window.w, window.h)
+function M.signature(window, seq)
+  local base = string.format("%d,%d,%d,%d", window.x, window.y, window.w, window.h)
+  if seq ~= nil then
+    return base .. "@" .. tostring(seq)
+  end
+  return base
 end
 
 function M.thumbPath(name, signature)
@@ -167,7 +171,7 @@ function M.capture(entries, callback)
 
   local items = {}
   for _, entry in ipairs(entries) do
-    local signature = M.signature(entry)
+    local signature = M.signature(entry, entry.seq)
     local path = M.thumbPath(entry.name, signature)
     if path ~= nil and not noctalia.fileExists(path) then
       table.insert(items, {
@@ -235,6 +239,49 @@ function M.capture(entries, callback)
       callback()
     end
   end
+end
+
+-- Devuelve las miniaturas recientes de un widget (más nuevas primero), para
+-- poder animarlas como un GIF casero cuando el widget está cerrado.
+function M.frames(name, limit)
+  local dir = M.cacheDir()
+  if dir == nil then
+    return {}
+  end
+  local files = noctalia.listDir(dir)
+  if files == nil then
+    return {}
+  end
+  limit = tonumber(limit) or 8
+  local slug = util.slug(name)
+  local prefix = slug .. "-"
+  local suffix = ".png"
+  local matches = {}
+  for _, file in ipairs(files) do
+    if file:sub(1, #prefix) == prefix and file:sub(-4) == suffix then
+      local path = dir .. "/" .. file
+      local info = noctalia.fileInfo(path)
+      local mtime = type(info) == "table" and tonumber(info.mtime) or 0
+      table.insert(matches, { path = path, mtime = mtime })
+    end
+  end
+  table.sort(matches, function(a, b)
+    return a.mtime > b.mtime
+  end)
+  local out = {}
+  for index = 1, math.min(limit, #matches) do
+    table.insert(out, matches[index].path)
+  end
+  return out
+end
+
+-- Última miniatura disponible para un widget (la más reciente).
+function M.latest(name)
+  local frames = M.frames(name, 1)
+  if #frames > 0 then
+    return frames[1]
+  end
+  return nil
 end
 
 return M

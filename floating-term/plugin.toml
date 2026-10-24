@@ -9,7 +9,7 @@
 
 id = "faminec/floating-term"
 name = "Term Deck"
-version = "2.0.0"
+version = "2.1.0"
 plugin_api = 32
 author = "faminec"
 license = "MIT"
@@ -110,7 +110,7 @@ key = "close_on_launch"
 type = "bool"
 label_key = "settings.close_on_launch.label"
 description_key = "settings.close_on_launch.description"
-default = true
+default = false
 
 [[setting]]
 key = "rotation"
@@ -151,8 +151,18 @@ default = "auto"
 options = [
   { value = "auto", label_key = "settings.card_preview.options.auto" },
   { value = "screenshot", label_key = "settings.card_preview.options.screenshot" },
+  { value = "live", label_key = "settings.card_preview.options.live" },
   { value = "mock", label_key = "settings.card_preview.options.mock" },
 ]
+
+[[setting]]
+key = "preview_interval"
+type = "int"
+label_key = "settings.preview_interval.label"
+description_key = "settings.preview_interval.description"
+default = 3
+min = 1
+max = 60
 
 [[setting]]
 key = "avoid_collisions"

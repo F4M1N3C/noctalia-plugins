@@ -1,8 +1,7 @@
 --!nonstrict
 -- Widget de ntime: timer/clock con modos COUNTDOWN, COUNTUP y CLOCK,
--- con Fuentes seleccionables incluyendo el estilo tty-clock (cuadrados coloreados).
+-- con fuentes seleccionables incluyendo el estilo tty-clock (cuadrados coloreados).
 
-local ui = require("ui")
 local noctalia = noctalia
 
 local STATE_FILE = noctalia.pluginDataDir() .. "/ntime_state.json"
@@ -31,7 +30,6 @@ local function saveState()
 end
 
 local function get_timer_state()
-  -- Read state from the ntimer utility's state file
   local state_path = "/home/faminec/.local/state/ntimer/state.json"
   if not noctalia.fileExists(state_path) then
     return nil
@@ -44,7 +42,7 @@ local function get_timer_state()
 end
 
 local function getTimeString(mode, timer_state)
-  local now = noctalia.__sys_now() or os.time()
+  local now = os.time()
   local text = ""
 
   if mode == "clock" then
@@ -81,76 +79,19 @@ local function getTimeString(mode, timer_state)
   return text
 end
 
-local function getColor(mode, timer_state)
-  local color = "on_surface"
-  if mode == "countdown" and timer_state then
-    local remaining = timer_state.remaining or 0
-    if remaining <= 10 then
-      color = "on_error"
-    end
-  end
-  return color
-end
-
 local function render()
   local timer_state = get_timer_state()
   local display_text = getTimeString(current_mode, timer_state)
-  local color = getColor(current_mode, timer_state)
-
-  -- Determine glyph based on font
-  local glyph_name
-  if current_font == "tty-clock" then
-    glyph_name = "tty-clock"
-  elseif current_font == "digital" then
-    glyph_name = "digital"
-  elseif current_font == "blocks" then
-    glyph_name = "blocks"
-  end
-
-  local rows = {}
-
-  -- Mode label
-  table.insert(rows, ui.label({
-    text = tr("mode_" .. current_mode),
-    fontSize = 10,
-    color = "on_surface_variant",
-    width = 80,
-  }))
-
-  -- Time display
-  if glyph_name then
-    table.insert(rows, ui.glyph({
-      name = glyph_name,
-      size = 36,
-      color = color,
-    }))
-    table.insert(rows, ui.label({
-      text = display_text,
-      fontSize = 14,
-      color = color,
-      width = 100,
-    }))
-  else
-    table.insert(rows, ui.label({
-      text = display_text,
-      fontSize = 18,
-      color = color,
-      flexGrow = 1,
-    }))
-  end
-
-  -- Font info
-  table.insert(rows, ui.label({
-    text = tr("font") .. ": " .. tr(current_font),
-    fontSize = 8,
-    color = "on_surface_variant",
-    width = 70,
-  }))
-
-  return ui.row({ align = "center", gap = 4 }, rows)
+  local tooltip = tr("tooltip") .. " - " .. display_text .. " (" .. tr("mode_" .. current_mode) .. ")"
+  barWidget.setGlyph("timer")
+  barWidget.setTooltip(tooltip)
 end
 
-local function onClick()
+function update()
+  render()
+end
+
+function onClick()
   -- Cycle modes on click: clock -> countdown -> countup -> clock
   if current_mode == "clock" then
     current_mode = "countdown"
@@ -163,13 +104,11 @@ local function onClick()
   render()
 end
 
-local function onScroll(direction)
+function onScroll(direction)
   -- Scroll up/down: adjust timer or change font
   if current_mode == "countdown" then
     local minutes = direction == "up" and 1 or -1
     noctalia.msg("plugin", "noctalia/timer:timer", "start", tostring(minutes))
-  elseif current_mode == "countup" then
-    -- Nothing special for countup scroll
   elseif current_mode == "clock" then
     -- Change font on scroll
     if current_font == "tty-clock" then
@@ -184,14 +123,10 @@ local function onScroll(direction)
   end
 end
 
+function onConfigChanged()
+  loadState()
+  render()
+end
+
 loadState()
-
-local widget = ui.widget({
-  onClick = onClick,
-  onScroll = onScroll,
-  onRender = function()
-    return render()
-  end,
-})
-
-return widget
+render()

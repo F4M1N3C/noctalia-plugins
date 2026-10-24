@@ -1,8 +1,7 @@
 --!nonstrict
--- Panel de ntime: panel completo con timer/clock, seleccione de modo y fuente,
+-- Panel de ntime: panel completo con timer/clock, seleccion de modo y fuente,
 -- y controles para COUNTDOWN, COUNTUP y CLOCK.
 
-local ui = require("ui")
 local noctalia = noctalia
 
 local STATE_FILE = noctalia.pluginDataDir() .. "/ntime_state.json"
@@ -43,7 +42,7 @@ local function get_timer_state()
 end
 
 local function getTimeString(mode, timer_state)
-  local now = noctalia.__sys_now() or os.time()
+  local now = os.time()
   local text = ""
 
   if mode == "clock" then
@@ -102,7 +101,9 @@ local function getFontGlyph(font)
   return nil
 end
 
-local function render()
+local render
+
+local function doRender()
   local timer_state = get_timer_state()
   local display_text = getTimeString(current_mode, timer_state)
   local color = getColor(current_mode, timer_state)
@@ -141,8 +142,9 @@ local function render()
   end
 
   -- Mode info
-  table.insert(rows, ui.hyperlink({
+  table.insert(rows, ui.button({
     text = tr("mode_" .. current_mode),
+    variant = "ghost",
     onClick = function()
       -- Cycle modes
       if current_mode == "clock" then
@@ -205,7 +207,11 @@ local function render()
     }))
   end
 
-  return ui.column({ flexGrow = 1, gap = 12, align = "stretch" }, rows)
+  panel.render(ui.column({ flexGrow = 1, gap = 12, align = "stretch" }, rows))
+end
+
+render = function()
+  doRender()
 end
 
 local function onClick()
@@ -228,17 +234,12 @@ end
 
 loadState()
 
-local panel = panel.render(function()
-  return render()
-end)
-
--- Expose IPC handlers for external control
-function panel.onOpen(context)
+function onOpen(context)
   loadState()
   render()
 end
 
-function panel.onIpc(event, payload)
+function onIpc(event, payload)
   if event == "set_mode" then
     if payload == "clock" then
       current_mode = "clock"
@@ -267,5 +268,3 @@ function panel.onIpc(event, payload)
     end
   end
 end
-
-return panel

@@ -4,7 +4,7 @@
 id = "faminec/ntime"
 name = "ntime"
 version = "1.0.0"
-plugin_api = 35
+plugin_api = 34
 author = "faminec"
 license = "MIT"
 description = "Timer and clock with multiple modes, font selection, and tty-clock style display."

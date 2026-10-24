@@ -19,6 +19,7 @@
   "anchor_top_center": "sup centro",
   "anchor_top_left": "sup izq",
   "anchor_top_right": "sup der",
+  "anchor_custom": "personalizado",
   "close": "Cerrar",
   "direction": "Sentido",
   "down": "abajo",
@@ -63,6 +64,14 @@
     "anchor": {
       "description": "Dónde se abre la ventana: center, top-left, bottom-right...",
       "label": "Posición de la ventana"
+    },
+    "custom_x": {
+      "description": "Posición horizontal personalizada (solo con posición personalizada)",
+      "label": "X"
+    },
+    "custom_y": {
+      "description": "Posición vertical personalizada (solo con posición personalizada)",
+      "label": "Y"
     },
     "animation_ms": {
       "description": "Duración del desplazamiento entre líneas, en milisegundos. 0 = instantáneo.",
@@ -156,5 +165,7 @@
   "visible_above": "Renglones arriba",
   "visible_below": "Renglones abajo",
   "width": "Ancho",
+  "custom_x": "X",
+  "custom_y": "Y",
   "write_failed": "No se pudo guardar el ajuste."
 }

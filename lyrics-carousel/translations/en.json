@@ -19,6 +19,7 @@
   "anchor_top_center": "top mid",
   "anchor_top_left": "top left",
   "anchor_top_right": "top right",
+  "anchor_custom": "custom",
   "close": "Close",
   "direction": "Direction",
   "down": "down",
@@ -63,6 +64,14 @@
     "anchor": {
       "description": "Where the window opens: center, top-left, bottom-right...",
       "label": "Window position"
+    },
+    "custom_x": {
+      "description": "Custom horizontal position (only with custom position)",
+      "label": "X"
+    },
+    "custom_y": {
+      "description": "Custom vertical position (only with custom position)",
+      "label": "Y"
     },
     "animation_ms": {
       "description": "Duration of the scroll between lines, in milliseconds. 0 = instant.",
@@ -156,5 +165,7 @@
   "visible_above": "Lines above",
   "visible_below": "Lines below",
   "width": "Width",
+  "custom_x": "X",
+  "custom_y": "Y",
   "write_failed": "Could not save the setting."
 }

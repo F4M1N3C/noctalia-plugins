@@ -30,12 +30,23 @@ SETTINGS = os.path.expanduser("~/.local/state/noctalia/settings.toml")
 # La ruta del fichero de overrides puede redirigirse con la variable de
 # entorno LYRICS_CAROUSEL_OVERRIDES (la usa el autotest para no tocar el
 # estado real).
-OVERRIDES = os.path.expanduser(
-    os.environ.get(
-        "LYRICS_CAROUSEL_OVERRIDES",
-        "~/.local/state/noctalia/plugins/data/faminec/lyrics-carousel/overrides.json",
+def _overrides_path() -> str:
+    """Ruta del fichero de overrides.
+
+    Se puede redirigir con la variable de entorno
+    LYRICS_CAROUSEL_OVERRIDES (la usa el autotest para no tocar el estado
+    real). Una variable vacia se ignora: si no, la ruta seria "" y se
+    escribiria un ".lock" en el directorio actual.
+    """
+    alternativa = os.environ.get("LYRICS_CAROUSEL_OVERRIDES", "").strip()
+    if alternativa:
+        return os.path.expanduser(alternativa)
+    return os.path.expanduser(
+        "~/.local/state/noctalia/plugins/data/faminec/lyrics-carousel/overrides.json"
     )
-)
+
+
+OVERRIDES = _overrides_path()
 
 ALLOWED = {
     "font_family", "font_size", "render_mode", "direction", "marker",

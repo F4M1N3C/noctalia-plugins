@@ -29,6 +29,8 @@ local DEFAULTS = {
   width = 1200,
   height = 820,
   anchor = "center",
+  custom_x = 100,
+  custom_y = 100,
   accent = "primary",
   custom_color = "#e46767",
   active_scale = 1.35,
@@ -43,6 +45,7 @@ local BOOL_KEYS = {
 local INT_KEYS = {
   font_size = true, spacing = true, animation_ms = true, offset_ms = true,
   width = true, height = true, visible_above = true, visible_below = true,
+  custom_x = true, custom_y = true,
 }
 local FLOAT_KEYS = { active_scale = true }
 

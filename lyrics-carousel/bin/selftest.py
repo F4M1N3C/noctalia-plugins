@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -279,6 +280,45 @@ def restaurar_overrides(path, previo):
         pass
 
 
+def check_salida_al_cerrar():
+    """El script sale cuando la salida se cierra (la terminal se cierra).
+
+    Se ejecuta con la salida hacia una tuberia cuyo extremo de lectura
+    esta cerrado: las escrituras fallan y el script tiene que salir, en
+    vez de quedarse dibujando en el vacio. Con un pty no valia: el
+    SIGHUP del kernel lo interceptaba el propio script y salia con
+    codigo 0 sin pasar por su deteccion.
+    """
+    temporal = tempfile.mkdtemp(prefix="lyrics-carousel-cierre-")
+    overrides = os.path.join(temporal, "overrides.json")
+    entorno = {**os.environ, "LYRICS_CAROUSEL_OVERRIDES": overrides}
+    lectura, escritura = os.pipe()
+    os.close(lectura)  # el que lee se cierra: escribir falla
+    proceso = subprocess.Popen(
+        [sys.executable, os.path.join(HERE, "lyrics-carousel"), "--demo"],
+        stdout=escritura,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        env=entorno,
+    )
+    os.close(escritura)
+    codigo = None
+    try:
+        codigo = proceso.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        proceso.kill()
+        proceso.wait(timeout=10)
+    # 0: salida normal. 120: Python avisa de que no pudo vaciar la salida
+    # al terminar (normal si estaba cerrada). Lo que no vale es que se
+    # quede colgado (sin codigo) o muera por una senal (codigo negativo).
+    check(
+        "el script sale al cerrar la salida",
+        codigo is not None and codigo >= 0,
+        "código %s" % codigo,
+    )
+    shutil.rmtree(temporal, ignore_errors=True)
+
+
 def main(argv):
     verbose = "--verbose" in argv
 
@@ -364,6 +404,10 @@ def main(argv):
     #     Es la prueba de que el script, el helper y el overrides
     #     funcionan juntos de verdad.
     check_atajos()
+
+    # 4c) si la terminal se cierra, el script tiene que salir: si se
+    #      queda, sigue dibujando en el vacio indefinidamente.
+    check_salida_al_cerrar()
 
     # 5) herramientas externas.
     for tool in ("kitty", "fc-match", "playerctl", "hyprctl"):

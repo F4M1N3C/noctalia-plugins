@@ -78,6 +78,11 @@ class ImageRenderer:
             self.fonts[key] = font
         return font
 
+    def invalidate_fonts(self):
+        """Limpia la cache de fuentes (tras un cambio de font_family/font_size)."""
+        self.fonts.clear()
+        self.font_files.clear()
+
     # -- utilidades de dibujo ------------------------------------------
 
     @staticmethod

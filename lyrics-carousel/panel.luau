@@ -208,6 +208,7 @@ local ANCHORS = {
   ["bottom-left"] = true,
   ["bottom-center"] = true,
   ["bottom-right"] = true,
+  ["custom"] = true,
 }
 
 local ANCHOR_ALIASES = {
@@ -304,8 +305,15 @@ end
 applyGeometry = function()
   local width = math.floor(numberOf("width"))
   local height = math.floor(numberOf("height"))
+  local anchor = normalizeAnchor(valueOf("anchor"))
   local screenWidth, screenHeight = outputGeometry()
-  local x, y = anchorPosition(normalizeAnchor(valueOf("anchor")), width, height, screenWidth, screenHeight)
+  local x, y
+  if anchor == "custom" then
+    x = math.floor(numberOf("custom_x"))
+    y = math.floor(numberOf("custom_y"))
+  else
+    x, y = anchorPosition(anchor, width, height, screenWidth, screenHeight)
+  end
   local window = "class:^noctalia-lyrics-carousel$"
   local resize = string.format(
     'hl.dsp.window.resize({ x = %d, y = %d, window = "%s" })', width, height, window
@@ -336,9 +344,15 @@ launch = function()
   local width = math.floor(numberOf("width"))
   local height = math.floor(numberOf("height"))
   local anchor = normalizeAnchor(valueOf("anchor"))
-
+  
   local screenWidth, screenHeight = outputGeometry()
-  local x, y = anchorPosition(anchor, width, height, screenWidth, screenHeight)
+  local x, y
+  if anchor == "custom" then
+    x = math.floor(numberOf("custom_x"))
+    y = math.floor(numberOf("custom_y"))
+  else
+    x, y = anchorPosition(anchor, width, height, screenWidth, screenHeight)
+  end
 
   -- Se lanza el script por ruta absoluta (y con python3): depender del
   -- PATH exigiria un enlace simbolico en ~/.local/bin que el plugin no
@@ -369,8 +383,6 @@ launch = function()
           launching = false
           if not success then
             safe("notifyError", noctalia.notifyError, tr("title"), tr("launch_failed"))
-          else
-            closePanel()
           end
         end)
       end)
@@ -379,8 +391,6 @@ launch = function()
         dispatch(expression, function(success)
           if not success then
             safe("notifyError", noctalia.notifyError, tr("title"), tr("launch_failed"))
-          else
-            closePanel()
           end
         end)
         render()
@@ -469,7 +479,7 @@ local function fontChips()
       variant = name == current and "secondary" or "ghost",
       fontSize = 11,
       onClick = function()
-        setSetting("font_family", name, { relaunch = tostring(valueOf("render_mode")) == "text" })
+        setSetting("font_family", name)
       end,
     }))
     if index % 3 == 0 then
@@ -496,7 +506,7 @@ local function imageOnlyFonts()
       variant = name == current and "secondary" or "ghost",
       fontSize = 11,
       onClick = function()
-        setSetting("font_family", name, { relaunch = tostring(valueOf("render_mode")) == "text" })
+        setSetting("font_family", name)
       end,
     }))
     if index % 2 == 0 then
@@ -519,7 +529,7 @@ local function sizeChips()
       text = tostring(size),
       selected = size == current,
       onClick = function()
-        setSetting("font_size", size, { relaunch = tostring(valueOf("render_mode")) == "text" })
+        setSetting("font_size", size)
       end,
     })
   end
@@ -583,6 +593,7 @@ local ANCHOR_CHOICES = {
   "top-left", "top-center", "top-right",
   "left-center", "center", "right-center",
   "bottom-left", "bottom-center", "bottom-right",
+  "custom",
 }
 
 local function anchorChips()
@@ -612,20 +623,67 @@ local function anchorChips()
   return ui.column({ gap = 6 }, rows)
 end
 
-local function windowSizeChips(key, values)
-  local current = math.floor(numberOf(key))
-  local items = {}
-  for _, value in ipairs(values) do
-    table.insert(items, {
-      key = key .. "-" .. value,
-      text = tostring(value),
-      selected = value == current,
-      onClick = function()
-        setSetting(key, value, { geometry = true })
-      end,
-    })
+local function anchorSelect()
+  local current = tostring(valueOf("anchor"))
+  local options = {}
+  for _, name in ipairs(ANCHOR_CHOICES) do
+    table.insert(options, tr("anchor_" .. name:gsub("-", "_")))
   end
-  return chipRow(items)
+  local selectedIndex = 1
+  for i, name in ipairs(ANCHOR_CHOICES) do
+    if name == current then
+      selectedIndex = i
+      break
+    end
+  end
+  return ui.select({
+    options = options,
+    selectedIndex = selectedIndex,
+    controlSize = "sm",
+    onChange = function(idx)
+      local name = ANCHOR_CHOICES[tonumber(idx) or 1]
+      if name then
+        setSetting("anchor", name, { geometry = true })
+      end
+    end,
+  })
+end
+
+local function sizeStepper(key, label, min, max, step)
+  local current = math.floor(numberOf(key))
+  local dec = math.max(min, current - step)
+  local inc = math.min(max, current + step)
+  return ui.row({ align = "center", gap = 6 }, {
+    ui.button({
+      key = key .. "-dec",
+      text = "-",
+      variant = "ghost",
+      fontSize = 12,
+      onHover = function(state)
+        if state == "true" then
+          setSetting(key, dec, { geometry = true })
+        end
+      end,
+      onClick = function()
+        setSetting(key, dec, { geometry = true })
+      end,
+    }),
+    ui.label({ text = tostring(current), fontSize = 12, color = "on_surface", flexGrow = 1 }),
+    ui.button({
+      key = key .. "-inc",
+      text = "+",
+      variant = "ghost",
+      fontSize = 12,
+      onHover = function(state)
+        if state == "true" then
+          setSetting(key, inc, { geometry = true })
+        end
+      end,
+      onClick = function()
+        setSetting(key, inc, { geometry = true })
+      end,
+    }),
+  })
 end
 
 render = function()
@@ -741,15 +799,44 @@ render = function()
     ui.separator({ thickness = 1, color = "outline/0.25", spacing = 6 }),
     ui.label({ text = tr("section_window"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     ui.label({ text = tr("anchor"), fontSize = 11, color = "on_surface_variant" }),
-    anchorChips(),
+    anchorSelect(),
+    (function()
+      if tostring(valueOf("anchor")) == "custom" then
+        return ui.row({ gap = 10 }, {
+          ui.column({ flexGrow = 1, gap = 4 }, {
+            ui.label({ text = tr("custom_x"), fontSize = 10, color = "on_surface_variant" }),
+            ui.input({
+              value = tostring(math.floor(numberOf("custom_x"))),
+              controlSize = "sm",
+              onChange = function(v)
+                local n = tonumber(v)
+                if n then setSetting("custom_x", math.floor(n), { geometry = true }) end
+              end,
+            }),
+          }),
+          ui.column({ flexGrow = 1, gap = 4 }, {
+            ui.label({ text = tr("custom_y"), fontSize = 10, color = "on_surface_variant" }),
+            ui.input({
+              value = tostring(math.floor(numberOf("custom_y"))),
+              controlSize = "sm",
+              onChange = function(v)
+                local n = tonumber(v)
+                if n then setSetting("custom_y", math.floor(n), { geometry = true }) end
+              end,
+            }),
+          }),
+        })
+      end
+      return nil
+    end)(),
     ui.row({ gap = 10 }, {
       ui.column({ flexGrow = 1, gap = 4 }, {
         ui.label({ text = tr("width"), fontSize = 11, color = "on_surface_variant" }),
-        windowSizeChips("width", { 800, 1000, 1200, 1400, 1600 }),
+        sizeStepper("width", tr("width"), 300, 4000, 100),
       }),
       ui.column({ flexGrow = 1, gap = 4 }, {
         ui.label({ text = tr("height"), fontSize = 11, color = "on_surface_variant" }),
-        windowSizeChips("height", { 600, 700, 820, 1000 }),
+        sizeStepper("height", tr("height"), 200, 3000, 50),
       }),
     }),
     ui.separator({ thickness = 1, color = "outline/0.25", spacing = 6 }),

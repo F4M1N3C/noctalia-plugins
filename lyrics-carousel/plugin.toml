@@ -158,6 +158,24 @@ description_key = "settings.anchor.description"
 default = "center"
 
 [[setting]]
+key = "custom_x"
+type = "int"
+label_key = "settings.custom_x.label"
+description_key = "settings.custom_x.description"
+default = 100
+min = 0
+max = 10000
+
+[[setting]]
+key = "custom_y"
+type = "int"
+label_key = "settings.custom_y.label"
+description_key = "settings.custom_y.description"
+default = 100
+min = 0
+max = 10000
+
+[[setting]]
 key = "accent"
 type = "select"
 label_key = "settings.accent.label"

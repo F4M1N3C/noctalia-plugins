@@ -1246,12 +1246,23 @@ SETTINGS_PATH = os.path.expanduser("~/.local/state/noctalia/settings.toml")
 # La ruta del fichero de overrides puede redirigirse con la variable de
 # entorno LYRICS_CAROUSEL_OVERRIDES: asi las pruebas no tocan el estado
 # real (y no compiten con las escrituras asincronas del script).
-OVERRIDES_PATH = os.path.expanduser(
-    os.environ.get(
-        "LYRICS_CAROUSEL_OVERRIDES",
-        "~/.local/state/noctalia/plugins/data/faminec/lyrics-carousel/overrides.json",
+def _overrides_path() -> str:
+    """Ruta del fichero de overrides.
+
+    Se puede redirigir con la variable de entorno
+    LYRICS_CAROUSEL_OVERRIDES (la usa el autotest para no tocar el estado
+    real). Una variable vacia se ignora: si no, la ruta seria "" y no se
+    podria leer nada.
+    """
+    alternativa = os.environ.get("LYRICS_CAROUSEL_OVERRIDES", "").strip()
+    if alternativa:
+        return os.path.expanduser(alternativa)
+    return os.path.expanduser(
+        "~/.local/state/noctalia/plugins/data/faminec/lyrics-carousel/overrides.json"
     )
-)
+
+
+OVERRIDES_PATH = _overrides_path()
 
 
 def read_overrides() -> dict:
@@ -1519,6 +1530,9 @@ class LyricsCarousel:
         self._player = PlayerWatcher(args.player) if not self.demo else None
         self.image = None
         self.image_error = ""
+        # Si la terminal se cierra, las escrituras fallan: hay que salir en
+        # vez de quedarse dibujando en el vacio.
+        self.output_broken = False
         if ImageRenderer is not None:
             try:
                 self.image = ImageRenderer(self)
@@ -1680,6 +1694,16 @@ class LyricsCarousel:
         if previous.get("render_mode") != cfg.get("render_mode"):
             self.image_disabled = False
             self.image_failures = 0
+        # Invalida la cache de fuentes si cambio la familia o el tamaño.
+        if (
+            previous.get("font_family") != cfg.get("font_family")
+            or previous.get("font_size") != cfg.get("font_size")
+        ):
+            if self.image is not None:
+                try:
+                    self.image.invalidate_fonts()
+                except Exception:  # noqa: BLE001
+                    pass
         self.cfg = cfg
         self.direction = 1 if cfg["direction"] == "down" else -1
         self.karaoke = bool(cfg["karaoke"])
@@ -1697,6 +1721,11 @@ class LyricsCarousel:
                 self.log("geometría aplicada en caliente")
 
     def _poll_data(self):
+        # Recarga de ajustes: vale tanto en modo demo como en modo real.
+        if time.monotonic() - self.last_cfg > 1.2:
+            self.last_cfg = time.monotonic()
+            self._reload_config()
+
         if self.demo:
             position, duration = self._demo_position()
             now = time.monotonic()
@@ -1734,9 +1763,7 @@ class LyricsCarousel:
             self.fetcher.start(self.track, force=True)
             self.log("reintento automático de la letra")
 
-        if time.monotonic() - self.last_cfg > 1.2:
-            self.last_cfg = time.monotonic()
-            self._reload_config()
+        # (la recarga de ajustes ya se hizo arriba, vale para demo y real)
 
         if time.monotonic() - self.last_reload > 15:
             self.last_reload = time.monotonic()
@@ -2000,15 +2027,46 @@ class LyricsCarousel:
                 else:
                     cut = int(round(len(text) * fraction))
                 cut = max(0, min(len(text), cut))
+                active_scale = float(self.cfg.get("active_scale", 1.0))
+                osc_start = ""
+                osc_end = ""
+                osc_reset = ""
+                if highlight and active_scale > 1.05:
+                    s = max(1, int(active_scale))
+                    frac = active_scale - s
+                    if frac > 0.01:
+                        n = min(15, max(0, int(round(frac * 10))))
+                        d = 10
+                        osc_start = f"\x1b]66;s={s};n={n};d={d};"
+                    else:
+                        osc_start = f"\x1b]66;s={s};"
+                    osc_end = "\x07"
+                    osc_reset = "\x1b]66;s=1;\x07"
+
                 sung = blend(theme.background, theme.accent, 1.0)
                 unsung = blend(theme.background, theme.accent, 0.42)
                 body = (
-                    fg(sung, bold=True) + text[:cut]
-                    + fg(unsung) + text[cut:]
+                    fg(sung, bold=True) + osc_start + text[:cut] + osc_end + osc_reset
+                    + fg(unsung) + osc_start + text[cut:] + osc_end + osc_reset
                     + RESET
                 )
             else:
-                body = fg(base_color, bold=highlight) + text + RESET
+                active_scale = float(self.cfg.get("active_scale", 1.0))
+                osc_start = ""
+                osc_end = ""
+                osc_reset = ""
+                if highlight and active_scale > 1.05:
+                    s = max(1, int(active_scale))
+                    frac = active_scale - s
+                    if frac > 0.01:
+                        n = min(15, max(0, int(round(frac * 10))))
+                        d = 10
+                        osc_start = f"\x1b]66;s={s};n={n};d={d};"
+                    else:
+                        osc_start = f"\x1b]66;s={s};"
+                    osc_end = "\x07"
+                    osc_reset = "\x1b]66;s=1;\x07"
+                body = fg(base_color, bold=highlight) + osc_start + text + osc_end + osc_reset + RESET
             rows[y] = pad + prefix_color + prefix + RESET + body
 
     def build_frame(self):
@@ -2097,8 +2155,10 @@ class LyricsCarousel:
         try:
             rendered = self.image.render()
         except OSError as error:
-            # Terminal redimensionado o cerrado: no cuenta como fallo de render.
+            # Terminal redimensionado o cerrado: no cuenta como fallo de
+            # render, pero si esta cerrado hay que salir.
             self.log(f"escritura: {error!r}")
+            self.output_broken = True
             return
         except Exception as error:  # noqa: BLE001
             import traceback
@@ -2166,8 +2226,10 @@ class LyricsCarousel:
             try:
                 sys.stdout.write("".join(out))
                 sys.stdout.flush()
-            except OSError:
-                pass
+            except OSError as error:
+                # La terminal se ha cerrado: no tiene sentido seguir.
+                self.output_broken = True
+                self.log(f"salida: {error!r}")
         self.prev_rows = rows
 
     # ---- teclado ------------------------------------------------------
@@ -2253,7 +2315,9 @@ class LyricsCarousel:
                 self._update_scroll(position)
                 self.draw(force=self.dirty)
                 self.dirty = False
-                if self.args.once:
+                if self.args.once or self.output_broken:
+                    # La terminal se ha cerrado: se sale limpio en vez de
+                    # quedarse dibujando en el vacio.
                     break
                 for key in self._read_keys():
                     if not self.handle_key(key):

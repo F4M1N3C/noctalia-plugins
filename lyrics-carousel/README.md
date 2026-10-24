@@ -85,16 +85,31 @@ that is already open.
 | `offset_ms` | `int` | `0` | Offset to fine-tune the synchronisation. |
 | `width` | `int` | `1200` | Window width. |
 | `height` | `int` | `820` | Window height. |
-| `anchor` | `string` | `center` | Window anchor: `center`, `top-left`, `bottom-right`… |
+| `anchor` | `string` | `center` | Window anchor: `center`, `top-left`, `bottom-right`… or `custom` (uses custom_x/custom_y). |
+| `custom_x` | `int` | `100` | Custom horizontal position (only with anchor = custom). |
+| `custom_y` | `int` | `100` | Custom vertical position (only with anchor = custom). |
 | `accent` | `select` | `primary` | Colour of the active line: `primary` (follows the wallpaper), an ANSI colour or `custom`. |
 | `custom_color` | `string` | `#e46767` | Hex colour used when `accent = custom`. |
-| `active_scale` | `double` | `1.35` | Size multiplier of the line being sung (image mode). |
+| `active_scale` | `double` | `1.35` | Size multiplier of the line being sung (image and text mode). |
 | `visible_above` | `int` | `6` | Lines visible above the active one. |
 | `visible_below` | `int` | `6` | Lines visible below the active one. |
 | `glyph` | `glyph` | `music` | Bar icon. |
 
 The position and the size are applied live to the running window, without recreating
 it. The font only needs a restart in text mode; in image mode it applies instantly.
+
+## Changelog (round 2)
+
+- Width/height controls are now steppers (− / value / +) with hover-to-adjust;
+  only 3 controls per row, no visual collision.
+- Font family and font size apply live in image mode (font cache invalidated on
+  change). In text mode, font size applies live via kitty remote control and
+  active line scaling uses the kitty text sizing protocol (OSC 66).
+- The window is no longer closed/reopened when changing settings; it stays open.
+- Window position is now a dropdown (9 anchors + custom) with X/Y coordinate
+  inputs when "custom" is selected.
+- Active line size (active_scale) now works in both image mode and text mode.
+- Added regression tests for each of the above.
 
 ## IPC
 

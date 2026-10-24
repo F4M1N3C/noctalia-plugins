@@ -41,6 +41,7 @@ ficheros=(
   translations/en.json
   translations/es.json
   bin/thumbs.py
+  thumbnail.webp
 )
 
 # Comprobacion de sintaxis ANTES de desplegar: si el script no compila, el

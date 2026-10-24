@@ -5,14 +5,14 @@
 
 id = "faminec/wallpaper-carousel"
 name = "Wallpaper Carousel"
-version = "2.0.0"
+version = "2.1.0"
 plugin_api = 34
 author = "faminec"
 license = "MIT"
 dependencies = ["python3", "python-pillow"]
 tags = ["wallpaper", "utility", "panel", "desktop"]
 icon = "wallpaper"
-description = "Full-screen wallpaper carousel with skewed cards, parallax crops and a bar button."
+description = "Full-screen circular wallpaper carousel with shapeable cards, continuous parallax crops and a bar button."
 
 [[setting]]
 key = "directory"
@@ -27,24 +27,48 @@ type = "glyph"
 label_key = "settings.glyph.label"
 description_key = "settings.glyph.description"
 default = "wallpaper"
+advanced = true
 
 [[setting]]
 key = "card_width"
 type = "int"
 label_key = "settings.card_width.label"
 description_key = "settings.card_width.description"
-default = 250
+default = 300
 min = 140
 max = 640
+advanced = true
 
 [[setting]]
 key = "card_height"
 type = "int"
 label_key = "settings.card_height.label"
 description_key = "settings.card_height.description"
-default = 350
+default = 400
 min = 180
 max = 900
+
+[[setting]]
+key = "card_shape"
+type = "select"
+label_key = "settings.card_shape.label"
+description_key = "settings.card_shape.description"
+default = "skew"
+  [[setting.options]]
+  value = "skew"
+  label_key = "settings.card_shape.options.skew"
+  [[setting.options]]
+  value = "rect"
+  label_key = "settings.card_shape.options.rect"
+  [[setting.options]]
+  value = "square"
+  label_key = "settings.card_shape.options.square"
+  [[setting.options]]
+  value = "triangle"
+  label_key = "settings.card_shape.options.triangle"
+  [[setting.options]]
+  value = "ellipse"
+  label_key = "settings.card_shape.options.ellipse"
 
 [[setting]]
 key = "skew"
@@ -54,6 +78,8 @@ description_key = "settings.skew.description"
 default = 0.35
 min = 0.0
 max = 0.8
+visible_when = { key = "card_shape", values = ["skew"] }
+advanced = true
 
 [[setting]]
 key = "parallax"
@@ -78,9 +104,10 @@ key = "base_scale"
 type = "double"
 label_key = "settings.base_scale.label"
 description_key = "settings.base_scale.description"
-default = 0.75
+default = 0.88
 min = 0.4
 max = 1.0
+advanced = true
 
 [[setting]]
 key = "hover_boost"
@@ -90,6 +117,7 @@ description_key = "settings.hover_boost.description"
 default = 0.2
 min = 0.0
 max = 0.6
+advanced = true
 
 [[setting]]
 key = "scrim"
@@ -99,6 +127,13 @@ description_key = "settings.scrim.description"
 default = 0.0
 min = 0.0
 max = 0.9
+
+[[setting]]
+key = "open_random"
+type = "bool"
+label_key = "settings.open_random.label"
+description_key = "settings.open_random.description"
+default = true
 
 [[setting]]
 key = "close_on_apply"
@@ -113,6 +148,7 @@ type = "bool"
 label_key = "settings.apply_all.label"
 description_key = "settings.apply_all.description"
 default = true
+advanced = true
 
 [[setting]]
 key = "show_filenames"
@@ -142,11 +178,11 @@ entry = "widget.luau"
 [[panel]]
 id = "panel"
 entry = "panel.luau"
-width = "fill"
-height = "fill"
+width = 1720
+height = 1000
 placement = "floating"
 position = "center"
 keyboard_focus = "exclusive"
 capture_keys = ["Escape", "Left", "Right", "Return", "space", "Home", "End", "h", "l", "j", "k", "r"]
-dismiss_on_outside_click = false
+dismiss_on_outside_click = true
 layer = "overlay"

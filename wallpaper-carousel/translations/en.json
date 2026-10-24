@@ -58,16 +58,31 @@
       "label": "Selected card scale"
     },
     "show_filenames": {
-      "description": "Show the selected file name in the panel footer.",
+      "description": "Show the selected file name. Works on its own; with the footer on, the name appears in the footer.",
       "label": "Show filenames"
     },
     "skew": {
-      "description": "How much the cards lean to the right. 0 gives straight cards.",
+      "description": "How much the cards lean to the right when the shape is the skewed ribbon.",
       "label": "Card skew"
     },
     "wheel": {
       "label": "Scroll with the mouse wheel",
       "description": "Move the carousel with the mouse wheel. Off disables the wheel."
+    },
+    "card_shape": {
+      "description": "Shape of every card. The preview is masked, so the ribbon keeps a continuous look.",
+      "label": "Card shape",
+      "options": {
+        "ellipse": "Ellipse",
+        "rect": "Rectangle",
+        "skew": "Skewed ribbon",
+        "square": "Square",
+        "triangle": "Triangle"
+      }
+    },
+    "open_random": {
+      "description": "Open on a random wallpaper every time. Off opens on the current desktop wallpaper.",
+      "label": "Open at a random wallpaper"
     }
   },
   "thumb_error": "Could not generate thumbnails. Showing the original wallpapers.",

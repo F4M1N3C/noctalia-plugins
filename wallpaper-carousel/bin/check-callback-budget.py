@@ -23,7 +23,7 @@ import time
 
 LOG = os.path.expanduser("~/.cache/noctalia/noctalia.log")
 PANEL = "faminec/wallpaper-carousel:panel"
-COST = re.compile(r"wc-budget\s+(?P<name>[a-zA-Z ]+?)\s+cost=(?P<cost>[0-9.]+)\s*ms")
+COST = re.compile(r"wc-budget\s+(?P<name>[a-zA-Z0-9 ]+?)\s+cost=(?P<cost>[0-9.]+)\s*ms")
 
 
 def read_costs(path):

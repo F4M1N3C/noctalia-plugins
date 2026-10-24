@@ -17,7 +17,14 @@
 -- vertical se compensa con el relleno del propio scroll para que la cinta no
 -- se mueva de sitio, y su delta mueve el carrusel horizontalmente.
 
-local THUMB_VERSION = "v5"
+local THUMB_VERSION = "v6"
+-- Tamaño logico del panel. El host no expone el tamaño de la superficie al
+-- script y el manifiesto no acepta "fill" fuera del modo flotante, asi que el
+-- panel declara este mismo tamaño en plugin.toml y la cinta se calcula con el.
+-- Es una ventana flotante grande: "attached near trigger" coloca esta misma
+-- ventana junto al boton de la barra y el clic fuera la cierra.
+local PANEL_WIDTH = 1720
+local PANEL_HEIGHT = 1000
 local SCROLL_STEP = 56 -- px de superficie por dentado de la rueda
 -- Margen para el umbral del paso. Un dentado mueve el scroll exactamente 56
 -- px, pero el shell lo reparte en varios saltos y al sumarlos uno a uno se
@@ -39,15 +46,24 @@ local IMAGE_EXTENSIONS = {
   [".bmp"] = true,
 }
 
+local SHAPES = {
+  skew = true,
+  rect = true,
+  square = true,
+  triangle = true,
+  ellipse = true,
+}
+
 local cfg = {
   directory = "",
   glyph = "wallpaper",
-  cardWidth = 250,
-  cardHeight = 350,
+  cardWidth = 300,
+  cardHeight = 400,
   skew = 0.35,
+  shape = "skew",
   parallax = 1.0,
   selectedScale = 1.08,
-  baseScale = 0.75,
+  baseScale = 0.88,
   hoverBoost = 0.2,
   scrim = 0.0,
   closeOnApply = true,
@@ -55,6 +71,7 @@ local cfg = {
   showFilenames = true,
   chrome = false,
   wheel = true,
+  openRandom = true,
 }
 
 local wallpapers = {}
@@ -111,6 +128,16 @@ local hovered = nil
 local heldKey = nil
 local heldElapsed = 0.0
 local heldRepeat = 0.0
+
+-- Doble clic: el host solo entrega `onClick` (no hay `onDoubleClick`), asi que
+-- el segundo clic dentro de esta ventana aplica la tarjeta del primero.
+local DOUBLE_CLICK_MS = 450
+local lastClickIndex = nil
+local lastClickMs = 0
+
+-- Que fondo hay en cada hueco de la cinta. La cinta es circular y los huecos
+-- quedan fijos (de -half a +half), asi que el mapa se rehace en cada render.
+local slotIndex = {}
 
 -- Forward declarations: render y los ayudantes de navegación se llaman entre sí.
 local render, selectIndex, move, randomWallpaper, apply, reload, recenterScroll
@@ -257,6 +284,7 @@ local function thumbPath(source, bucket)
     tostring(thumbPixelHeight()),
     string.format("%.2f", bucket),
     string.format("%.2f", cfg.skew),
+    cfg.shape,
     THUMB_VERSION,
   }, "|")
   local path = cacheDir .. "/" .. hashText(key) .. ".png"
@@ -284,12 +312,16 @@ local function loadConfig()
   uiScaleCache = nil
   cfg.directory = noctalia.getConfig("directory") or ""
   cfg.glyph = noctalia.getConfig("glyph") or "wallpaper"
-  cfg.cardWidth = clamp(tonumber(noctalia.getConfig("card_width")) or 250, 140, 640)
-  cfg.cardHeight = clamp(tonumber(noctalia.getConfig("card_height")) or 350, 180, 900)
+  cfg.cardWidth = clamp(tonumber(noctalia.getConfig("card_width")) or 300, 140, 640)
+  cfg.cardHeight = clamp(tonumber(noctalia.getConfig("card_height")) or 400, 180, 900)
   cfg.skew = clamp(tonumber(noctalia.getConfig("skew")) or 0.35, 0.0, 0.8)
+  cfg.shape = tostring(noctalia.getConfig("card_shape") or "skew")
+  if not SHAPES[cfg.shape] then
+    cfg.shape = "skew"
+  end
   cfg.parallax = clamp(tonumber(noctalia.getConfig("parallax")) or 1.0, 0.0, 1.5)
   cfg.selectedScale = clamp(tonumber(noctalia.getConfig("selected_scale")) or 1.08, 1.0, 1.6)
-  cfg.baseScale = clamp(tonumber(noctalia.getConfig("base_scale")) or 0.75, 0.4, 1.0)
+  cfg.baseScale = clamp(tonumber(noctalia.getConfig("base_scale")) or 0.88, 0.4, 1.0)
   cfg.hoverBoost = clamp(tonumber(noctalia.getConfig("hover_boost")) or 0.2, 0.0, 0.6)
   cfg.scrim = clamp(tonumber(noctalia.getConfig("scrim")) or 0.0, 0.0, 0.9)
   cfg.closeOnApply = noctalia.getConfig("close_on_apply") ~= false
@@ -297,6 +329,7 @@ local function loadConfig()
   cfg.showFilenames = noctalia.getConfig("show_filenames") ~= false
   cfg.chrome = noctalia.getConfig("chrome") == true
   cfg.wheel = noctalia.getConfig("wheel") ~= false
+  cfg.openRandom = noctalia.getConfig("open_random") ~= false
 end
 
 -- Prepara el escaneo: resuelve el directorio y saca la lista de nombres. El
@@ -416,12 +449,24 @@ end
 -- que el alto visible se estima a partir del output. El panel mide en px de
 -- la superficie, pero sus props se escalan: de ahí los dos factores.
 local function panelHeight()
-  local output = focusedOutput()
-  local height = tonumber(output and output.height) or 1080
-  if height < 240 then
-    height = 1080
+  -- Reserva el pie del panel (pie o etiqueta de nombre) para que la cinta se
+  -- centre en el hueco que queda para el scroll.
+  local chrome = 0
+  if cfg.chrome then
+    chrome = chrome + 56
   end
-  return math.max(240, height - 48)
+  if cfg.showFilenames and not cfg.chrome then
+    chrome = chrome + 36
+  end
+  -- PANEL_HEIGHT es el tamaño logico declarado en el manifiesto (ventana
+  -- flotante). Si el monitor es mas pequeño, el host lo recorta y se usa el
+  -- valor menor para no dibujar fuera de la superficie.
+  local output = focusedOutput()
+  local available = PANEL_HEIGHT
+  if output and tonumber(output.height) and tonumber(output.height) > 0 then
+    available = math.min(available, tonumber(output.height) - 48)
+  end
+  return math.max(240, available - chrome)
 end
 
 local function viewportHeight()
@@ -430,11 +475,11 @@ end
 
 local function viewportWidth()
   local output = focusedOutput()
-  local width = tonumber(output and output.width) or 1920
-  if width < 320 then
-    width = 1920
+  local available = PANEL_WIDTH
+  if output and tonumber(output.width) and tonumber(output.width) > 0 then
+    available = math.min(available, tonumber(output.width) - 32)
   end
-  return math.max(320, width / uiScale())
+  return math.max(320, available / uiScale())
 end
 
 -- Métricas de la cinta: cuántas tarjetas entran en pantalla y cuánto relleno
@@ -461,11 +506,17 @@ local function metrics()
   -- detrás de la cinta, del hueco se descuenta su altura y la del ancla.
   -- El ajuste fino se mide sobre el salto real y se corrige solo.
   local anchorGap = math.max(0, viewport - pad - 1 - ribbonHeight - 1 + anchorGapAdjust)
+  -- Las tarjetas laterales llenan su hueco: el paso de la cinta es el ancho de
+  -- la tarjeta por la escala lateral, asi que no quedan huecos entre ellas y la
+  -- cinta se lee como un rectangulo continuo. La seleccionada, algo mayor, se
+  -- solapa con las vecinas como en la cinta de referencia.
+  local slot = math.max(1, math.floor(cfg.cardWidth * cfg.baseScale + 0.5))
   -- Cuántas tarjetas caben a cada lado del centro.
-  local slots = viewportWidth() / cfg.cardWidth
-  local half = math.max(1, math.floor((slots - 3) / 2))
+  local slots = viewportWidth() / slot
+  local half = math.max(1, math.floor((slots - 1) / 2))
   return {
     half = half,
+    slot = slot,
     viewport = viewport,
     ribbonHeight = ribbonHeight,
     pad = pad,
@@ -520,6 +571,7 @@ local function ensureThumbs()
             offset = bucket * cfg.parallax,
             zoom = 1.35,
             skew = cfg.skew,
+            shape = cfg.shape,
           })
         end
       end
@@ -656,11 +708,12 @@ end
 
 -- ¿Está el puntero sobre esta tarjeta?
 function onCardHover(state, key)
-  local index = tonumber(key)
-  if index == nil then
+  local slot = tonumber(key)
+  if slot == nil then
     return
   end
   local hoverStarted = os.clock()
+  local index = slotIndex[slot]
   local nextHovered = nil
   if state == "true" then
     nextHovered = index
@@ -672,15 +725,34 @@ function onCardHover(state, key)
   noctalia.log(string.format("wc-budget onCardHover end cost=%.2f ms", (os.clock() - hoverStarted) * 1000))
 end
 
+-- Un clic elige la tarjeta; dos clics seguidos aplican la elegida. El host no
+-- distingue doble clic, asi que se mide el intervalo con `nowMs()` (reloj de
+-- pared: `os.clock()` es CPU y no avanza mientras se espera).
+--
+-- El segundo clic aplica la tarjeta del PRIMER clic, no la que haya bajo el
+-- puntero: al elegir, la cinta empieza a deslizarse y la tarjeta se mueve de
+-- hueco, asi que el hueco del segundo clic ya no es el mismo.
 function onCardClick(key)
-  local index = tonumber(key)
+  local slot = tonumber(key)
+  if slot == nil then
+    return
+  end
+  local index = slotIndex[slot]
   if index == nil then
     return
   end
+  local now = noctalia.nowMs() or 0
+  if lastClickIndex ~= nil and now - lastClickMs <= DOUBLE_CLICK_MS then
+    lastClickIndex = nil
+    lastClickMs = 0
+    apply()
+    return
+  end
+  lastClickIndex = index
+  lastClickMs = now
   if index ~= selected then
     selectIndex(index)
   end
-  apply()
 end
 
 render = function()
@@ -690,21 +762,44 @@ render = function()
   end
 
   local m = metrics()
+  local count = #wallpapers
   local center = math.floor(viewPos)
   local fraction = viewPos - center
   local nodes = {}
+  slotIndex = {}
 
-  for offset = -m.half, m.half do
-    local index = center + offset
+  -- La cinta es circular: cada hueco toma el fondo que le toca con modulo, de
+  -- modo que SIEMPRE hay tarjetas a los dos lados, tambien al abrir cerca del
+  -- principio o del final de la carpeta. Sin esto el primer y el ultimo fondo
+  -- dejaban medio panel vacio.
+  local half = m.half
+  if count <= 1 then
+    half = 0
+  elseif count - 1 < half then
+    half = count - 1
+  end
+
+  for offset = -half, half do
+    local index = ((center + offset - 1) % count) + 1
+    slotIndex[offset] = index
     local source = wallpapers[index]
     if source then
-      -- Caída suave con la distancia: la seleccionada es la única opaca.
-      local distance = math.abs(index - viewPos)
+      -- Distancia al centro visible de la cinta: se mide en huecos, no en
+      -- indices, para que la vuelta circular no hunda el brillo.
+      local relative = offset - fraction
+      local distance = math.abs(relative)
       local falloff = 1.0 / (1.0 + distance * distance)
 
+      -- El recorte cambia cuando la tarjeta cruza el centro mientras la cinta
+      -- se desplaza, no de golpe al terminar la animacion: la seleccionada
+      -- siempre acaba con el recorte central (bucket 0).
       local bucket = 0
       if cfg.parallax > 0 then
-        bucket = offset > 0 and 1 or (offset < 0 and -1 or 0)
+        if relative >= 0.5 then
+          bucket = 1
+        elseif relative <= -0.5 then
+          bucket = -1
+        end
       end
 
       local imagePath = imagePathFor(source, bucket)
@@ -719,10 +814,14 @@ render = function()
       local cardWidth = math.floor(cfg.cardWidth * scale + 0.5)
       local cardHeight = math.floor(cfg.cardHeight * scale + 0.5)
 
+      -- La clave es el hueco (-half..half), no el indice: con la cinta
+      -- circular dos huecos pueden mostrar el mismo fondo y las claves de los
+      -- nodos tienen que ser unicas. onCardClick/onCardHover traducen el hueco
+      -- con slotIndex.
       local preview
       if imagePath then
         preview = ui.image({
-          key = tostring(index),
+          key = tostring(offset),
           path = imagePath,
           width = cardWidth,
           height = cardHeight,
@@ -733,7 +832,7 @@ render = function()
         })
       else
         preview = ui.box({
-          key = tostring(index),
+          key = tostring(offset),
           width = cardWidth,
           height = cardHeight,
           fill = "surface_variant/0.4",
@@ -745,8 +844,8 @@ render = function()
       end
 
       table.insert(nodes, ui.column({
-        key = "card-" .. tostring(index),
-        width = cfg.cardWidth,
+        key = "card-" .. tostring(offset),
+        width = m.slot,
         height = m.ribbonHeight,
         align = "center",
         justify = "center",
@@ -761,17 +860,16 @@ render = function()
   -- inicial coloca la tarjeta seleccionada en el centro de la pantalla. Al
   -- avanzar, el relleno se encoge y la cinta se desliza hacia la izquierda.
   --
-  -- Cerca del principio y del final de la lista no hay tarjetas a un lado,
-  -- asi que el relleno tiene que contar solo las que si existen.
-  local firstIndex = math.max(1, center - m.half)
-  local lead = viewportWidth() / 2 - cfg.cardWidth / 2 - (center - firstIndex) * cfg.cardWidth
+  -- Con la cinta circular siempre hay huecos a ambos lados, asi que el relleno
+  -- no depende de ninguna condicion de borde.
+  local lead = viewportWidth() / 2 - m.slot / 2 - fraction * m.slot
   -- El `ui.spacer` de Noctalia nace con flexGrow = 1: si se deja crecer se
   -- come todo el ancho sobrante de la fila y el ancho del lead no se aplica,
   -- así que la cinta se quedaba a la derecha del todo. Con flexGrow = 0
   -- ocupa justo el ancho pedido.
   table.insert(nodes, 1, ui.spacer({
     key = "lead",
-    width = math.max(0, math.floor(lead - fraction * cfg.cardWidth + 0.5)),
+    width = math.max(0, math.floor(lead + 0.5)),
     height = 1,
     flexGrow = 0,
   }))
@@ -865,6 +963,30 @@ render = function()
     }))
   end
 
+  -- El nombre del archivo es un ajuste propio: se muestra aunque el pie este
+  -- apagado, para que "Mostrar nombres" funcione por si solo. Con el pie
+  -- encendido ya lo pinta el propio pie y no se duplica.
+  if cfg.showFilenames and not cfg.chrome then
+    local selectedPath = wallpapers[selected]
+    if selectedPath then
+      table.insert(rootChildren, ui.row({
+        key = "filename",
+        paddingH = 16,
+        paddingV = 10,
+        align = "center",
+        justify = "center",
+      }, {
+        ui.label({
+          text = basename(selectedPath),
+          fontSize = 12,
+          color = "on_surface",
+          textAlign = "center",
+          maxLines = 1,
+        }),
+      }))
+    end
+  end
+
   local scrim = cfg.scrim
   local fill = "#00000000"
   if scrim > 0 then
@@ -917,6 +1039,7 @@ move = function(delta)
   if #wallpapers == 0 then
     return
   end
+  lastClickIndex = nil
   local next = selected + delta
   -- La cinta es circular: al pasar del final vuelve al principio.
   while next > #wallpapers do
@@ -932,6 +1055,7 @@ randomWallpaper = function()
   if #wallpapers <= 1 then
     return
   end
+  lastClickIndex = nil
   local nextIndex = selected
   while nextIndex == selected do
     nextIndex = math.random(1, #wallpapers)
@@ -984,6 +1108,8 @@ reload = function(keepSelection)
   hovered = nil
   scrollOffset = 0
   scrollAccum = 0
+  lastClickIndex = nil
+  lastClickMs = 0
   -- El frame tick no se apaga: lo NeedsFrameTick alimenta la carga troceada,
   -- la animacion de la cinta y la repeticion de las teclas.
   wakeUp()
@@ -1038,6 +1164,8 @@ function onOpen(_context)
   animating = false
   hovered = nil
   heldKey = nil
+  lastClickIndex = nil
+  lastClickMs = 0
   scrollOffset = 0
   scrollAccum = 0
   scrollResetting = false
@@ -1173,9 +1301,19 @@ function onFrameTick(deltaMs)
         initStage = 2
       end
     elseif initStage == 2 then
-      local path = keepSelectionPath or currentWallpaperPath()
+      -- Posicion de apertura: por defecto, un fondo aleatorio (la cinta es
+      -- circular, asi que siempre se ven tarjetas a los dos lados). Al cambiar
+      -- ajustes se conserva el fondo que estaba seleccionado, y con
+      -- `open_random` apagado se abre en el fondo actual del escritorio.
+      local keep = keepSelectionPath
       keepSelectionPath = nil
-      selected = indexOfPath(path) or indexOfPath(currentWallpaperPath()) or 1
+      if keep then
+        selected = indexOfPath(keep) or indexOfPath(currentWallpaperPath()) or 1
+      elseif cfg.openRandom and #wallpapers > 1 then
+        selected = math.random(1, #wallpapers)
+      else
+        selected = indexOfPath(currentWallpaperPath()) or 1
+      end
       viewPos = selected
       animating = false
       scrollOffset = 0
@@ -1275,10 +1413,12 @@ function onKey(chord, pressed)
     end
   elseif chord == "Home" then
     if pressed then
+      lastClickIndex = nil
       selectIndex(1)
     end
   elseif chord == "End" then
     if pressed then
+      lastClickIndex = nil
       selectIndex(#wallpapers)
     end
   elseif chord == "r" then

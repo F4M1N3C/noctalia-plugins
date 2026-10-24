@@ -24,6 +24,9 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageOps
 
 
+SHAPES = {"skew", "rect", "square", "triangle", "ellipse"}
+
+
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
@@ -38,8 +41,11 @@ def normalized_item(raw: dict[str, Any]) -> dict[str, Any] | None:
         zoom = max(1.0, min(2.0, float(raw.get("zoom", 1.35))))
         skew = clamp(float(raw.get("skew", 0.35)), -0.9, 0.9)
         darken = clamp(float(raw.get("darken", 0.0)), 0.0, 1.0)
+        shape = str(raw.get("shape", "skew"))
     except (KeyError, TypeError, ValueError):
         return None
+    if shape not in SHAPES:
+        shape = "skew"
     if width < 16 or height < 16 or not os.path.isfile(source):
         return None
     return {
@@ -51,7 +57,40 @@ def normalized_item(raw: dict[str, Any]) -> dict[str, Any] | None:
         "zoom": zoom,
         "skew": skew,
         "darken": darken,
+        "shape": shape,
     }
+
+
+def shape_mask(shape: str, width: int, height: int, skew: float):
+    from PIL import ImageDraw
+
+    mask = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(mask)
+    right = float(width - 1)
+    bottom = float(height - 1)
+    if shape == "rect":
+        draw.rectangle([0.0, 0.0, right, bottom], fill=255)
+    elif shape == "square":
+        side = min(width, height)
+        left = (width - side) / 2.0
+        top = (height - side) / 2.0
+        draw.rectangle([left, top, left + side - 1, top + side - 1], fill=255)
+    elif shape == "triangle":
+        draw.polygon([(width / 2.0, 0.0), (right, bottom), (0.0, bottom)], fill=255)
+    elif shape == "ellipse":
+        draw.ellipse([0.0, 0.0, right, bottom], fill=255)
+    else:
+        shift = skew * height
+        draw.polygon(
+            [
+                (shift, 0.0),
+                (float(width), 0.0),
+                (float(width) - shift, float(height)),
+                (0.0, float(height)),
+            ],
+            fill=255,
+        )
+    return mask
 
 
 def render(item: dict[str, Any]) -> None:
@@ -63,6 +102,7 @@ def render(item: dict[str, Any]) -> None:
     zoom = item["zoom"]
     skew = item["skew"]
     darken = item["darken"]
+    shape = item["shape"]
 
     # Si la miniatura ya está en caché no se vuelve a generar: así el plugin
     # puede pedir un rango amplio de tarjetas sin repetir trabajo.
@@ -114,19 +154,8 @@ def render(item: dict[str, Any]) -> None:
         #
         # Everything outside it is transparent, which is what makes the row
         # read as a skewed ribbon instead of a plain strip of rectangles.
-        shift = skew * height
         canvas = image.convert("RGBA")
-        mask = Image.new("L", (width, height), 0)
-        ImageDraw.Draw(mask).polygon(
-            [
-                (shift, 0.0),
-                (float(width), 0.0),
-                (float(width) - shift, float(height)),
-                (0.0, float(height)),
-            ],
-            fill=255,
-        )
-        canvas.putalpha(mask)
+        canvas.putalpha(shape_mask(shape, width, height, skew))
 
         # PNG, not WebP: Noctalia's image loader only ships the JPEG, PNG and
         # SVG handlers, so a WebP would render as an empty placeholder.

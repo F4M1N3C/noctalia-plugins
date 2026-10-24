@@ -31,8 +31,6 @@ local SCROLL_STEP = 56 -- px de superficie por dentado de la rueda
 -- queda unas centesimas por debajo (55,99). Sin este margen el paso se
 -- perdia y la cinta solo avanzaba un fondo de cada dos dentados.
 local SCROLL_EPS = 0.5 -- px
-local SCROLL_TAIL = 300 -- relleno final del contenido del scroll
-local SCROLL_JUMP = 1500 -- px que salta el scroll al recentrarse
 local KEY_REPEAT_DELAY = 380 -- ms antes de empezar a repetir
 local KEY_REPEAT_RATE = 55 -- ms entre repeticiones
 local VIEWPORT_PADDING = 8 -- relleno interno que Noctalia pone al scroll
@@ -115,15 +113,9 @@ local THUMB_CHUNK_WALLPAPERS = 4
 -- Rueda del ratón (capturada por el ui.scroll)
 local scrollOffset = 0.0
 local scrollAccum = 0.0
-local scrollResetting = false
-local scrollReveal = 0
-local scrollComp = nil -- relleno previsto para el siguiente salto del scroll
-local anchorOffset = nil -- distancia real del ancla (medida, px de superficie)
--- Correccion fina del hueco hasta el ancla: se calcula con el salto real.
-local anchorGapAdjust = 0
-local lastRecenterComp = nil -- relleno usado en el ultimo recentrado
--- Offset esperado basado en los pasos procesados (para compensacion robusta
--- frente a posibles animaciones del shell o valores reportados inconsistentes).
+-- Offset esperado basado en los pasos procesados (para consistencia interna).
+-- Con el nuevo diseño sin rango vertical, este valor solo sirve de referencia
+-- y se reinicia al dar la vuelta circular.
 local expectedScrollOffset = 0.0
 
 -- Puntero y teclado
@@ -143,7 +135,7 @@ local lastClickMs = 0
 local slotIndex = {}
 
 -- Forward declarations: render y los ayudantes de navegación se llaman entre sí.
-local render, selectIndex, move, randomWallpaper, apply, reload, recenterScroll
+local render, selectIndex, move, randomWallpaper, apply, reload
 
 local function tr(key, args)
   return noctalia.tr(key, args)
@@ -494,21 +486,12 @@ end
 local function metrics()
   local viewport = viewportHeight()
   local ribbonHeight = cfg.cardHeight
-  -- Relleno que deja la cinta centrada: el scroll la sube lo mismo que la
-  -- baja, así que el desplazamiento y el relleno se cancelan.
+  -- Relleno vertical que centra la cinta: los espaciadores flexGrow=1
+  -- la centran automáticamente, pero pad se usa como paddingV base del scroll.
   local pad = (viewport - ribbonHeight) / 2
   if pad < 0 then
     pad = 0
   end
-  -- Distancia desde la cinta hasta el ancla del scroll, en px lógicos.
-  --
-  -- El ancla tiene que quedar por debajo de la ventana (para que al revelarla
-  -- el scroll salte hacia arriba) y a la vez el salto tiene que dejar la cinta
-  -- en el mismo sitio de la pantalla. Esa segunda condición pide que el ancla
-  -- quede a `viewport - pad - 1` del borde del contenido; como el ancla va
-  -- detrás de la cinta, del hueco se descuenta su altura y la del ancla.
-  -- El ajuste fino se mide sobre el salto real y se corrige solo.
-  local anchorGap = math.max(0, viewport - pad - 1 - ribbonHeight - 1 + anchorGapAdjust)
   -- Las tarjetas laterales llenan su hueco: el paso de la cinta es el ancho de
   -- la tarjeta por la escala lateral, asi que no quedan huecos entre ellas y la
   -- cinta se lee como un rectangulo continuo. La seleccionada, algo mayor, se
@@ -523,7 +506,6 @@ local function metrics()
     viewport = viewport,
     ribbonHeight = ribbonHeight,
     pad = pad,
-    anchorGap = anchorGap,
   }
 end
 
@@ -885,36 +867,19 @@ render = function()
     justify = "start",
   }, nodes)
 
+  -- El contenido del scroll: espaciadores superior/inferior con flexGrow=1
+  -- centran la cinta verticalmente. La altura total del contenido iguala al
+  -- viewport, así que maxOffset = 0: el shell NO puede hacer scroll visual
+  -- vertical, pero onScroll SÍ recibe los eventos de rueda.
   local children = {
+    ui.spacer({ key = "vspacer-top", width = 1, height = 1, flexGrow = 1 }),
     ribbon,
-    ui.spacer({ key = "anchor-gap", width = 1, height = m.anchorGap, flexGrow = 0 }),
-    -- Dos anclas con claves alternas: Noctalia sólo vuelve a revelar un
-    -- descendente cuando la clave del `revealKey` cambia, así que se van
-    -- turnando para poder recentrar el scroll tantas veces como haga falta.
-    ui.box({ key = "anchor-0", width = 1, height = 1 }),
-    ui.box({ key = "anchor-1", width = 1, height = 1 }),
-    ui.spacer({ key = "tail", width = 1, height = cfg.wheel and SCROLL_TAIL or 0, flexGrow = 0 }),
+    ui.spacer({ key = "vspacer-bottom", width = 1, height = 1, flexGrow = 1 }),
   }
 
-  -- El relleno vertical del scroll compensa su propio desplazamiento: la
-  -- cinta se queda quieta en pantalla aunque el scroll se mueva. El scroll
-  -- mide en px de la superficie y el relleno se pasa en px lógicos, así que
-  -- el desplazamiento va dividido por la escala.
-  --
-  -- IMPORTANTE: usamos expectedScrollOffset (lo que nosotros esperamos que
-  -- sea el scroll basándonos en los pasos procesados) en lugar de scrollOffset
-  -- (lo que el shell reporta), para evitar el desfase de un frame que causa
-  -- el "parpadeo" vertical. El contenido visual del scroll se posiciona en
-  -- (paddingV * scale - scrollOffset); al hacer paddingV = expectedOffset/scale
-  -- + m.pad, la posición queda fija en m.pad aunque el shell reporte valores
-  -- intermedios durante su animación interna.
-  local compensation = scrollComp
-  if compensation == nil then
-    compensation = expectedScrollOffset / uiScale() + m.pad
-  end
-  if not cfg.wheel then
-    compensation = m.pad
-  end
+  -- paddingV fijo: la cinta se centra por los espaciadores flexGrow.
+  -- No hay compensación dinámica porque el scroll no se mueve verticalmente.
+  local compensation = m.pad
 
   local scroll = ui.scroll({
     key = "carousel-scroll",
@@ -922,10 +887,6 @@ render = function()
     fill = "#00000000",
     paddingV = compensation,
     onScroll = "onScroll",
-    revealKey = scrollReveal % 2 == 0 and "anchor-0" or "anchor-1",
-    -- Intento de deshabilitar la barra de scroll nativa (prop no documentada
-    -- pero presente en el C++ ScrollViewProps). Si el reconcilier la pasa,
-    -- oculta la barra y evita saltos de layout por su aparición.
     scrollbarVisible = false,
   }, children)
 
@@ -1057,11 +1018,18 @@ move = function(delta)
   lastClickIndex = nil
   local next = selected + delta
   -- La cinta es circular: al pasar del final vuelve al principio.
+  -- Al dar la vuelta, reiniciamos expectedScrollOffset para evitar deriva.
+  local wrapped = false
   while next > #wallpapers do
     next = next - #wallpapers
+    wrapped = true
   end
   while next < 1 do
     next = next + #wallpapers
+    wrapped = true
+  end
+  if wrapped then
+    expectedScrollOffset = 0
   end
   selectIndex(next)
 end
@@ -1071,6 +1039,7 @@ randomWallpaper = function()
     return
   end
   lastClickIndex = nil
+  expectedScrollOffset = 0
   local nextIndex = selected
   while nextIndex == selected do
     nextIndex = math.random(1, #wallpapers)
@@ -1131,32 +1100,6 @@ reload = function(keepSelection)
   wakeUp()
 end
 
--- Recentra el scroll: el ancla está tan abajo que al revelarla el scroll
--- salta SCROLL_JUMP px hacia arriba, dejando sitio para seguir subiendo. El
--- relleno se adelanta al salto para que la cinta no dé un tirón.
-recenterScroll = function()
-  local m = metrics()
-  local scale = uiScale()
-  -- El scroll salta hacia arriba para reabrir el recorrido. El salto se
-  -- calcula con el relleno que Noctalia va a dejar puesto (revealKey apunta
-  -- al ancla), de modo que la cinta no se mueve ni un píxel.
-  -- Objetivo del salto, en px lógicos.
-  local target = scrollOffset / scale + SCROLL_JUMP
-  -- Distancia del ancla al inicio del contenido, en px lógicos. La primera
-  -- vez se estima; a partir de ahi se mide con el salto real.
-  local offset = anchorOffset or (m.viewport - m.pad - 1)
-  scrollComp = target - offset - 1 + m.viewport
-  scrollResetting = true
-  scrollReveal = scrollReveal + 1
-  -- El scroll mide en px de la superficie: el objetivo va escalado.
-  scrollOffset = target * scale
-  expectedScrollOffset = scrollOffset
-  scrollAccum = 0
-  lastRecenterComp = scrollComp
-  render()
-  scrollComp = nil
-end
-
 function onOpen(_context)
   opened = true
   noctalia.state.set("carousel.open", true)
@@ -1186,7 +1129,6 @@ function onOpen(_context)
   scrollOffset = 0
   expectedScrollOffset = 0
   scrollAccum = 0
-  scrollResetting = false
   thumbErrorShown = false
   -- El frame tick sirve para la carga inicial troceada, para la animacion de
   -- la cinta y para la repeticion de las teclas.
@@ -1200,7 +1142,6 @@ function onClose()
   heldKey = nil
   -- Si el panel se cerrara con un reinicio a medias, el primer evento de la
   -- sesion nueva se tragaria sin motivo.
-  scrollResetting = false
   scrollAccum = 0
   expectedScrollOffset = 0
   -- Al cerrar se apaga el tick: al reabrir tiene que volver a encenderse (y
@@ -1226,72 +1167,22 @@ function onScroll(offset, _maxOffset)
   -- El recentro: el shell acaba de saltar al ancla. Ese salto es nuestro, no
   -- del usuario, y es el unico desplazamiento que el shell hace por su cuenta
   -- (el resto lo mueve la rueda), asi que va antes de nada: si se mezclara
-  -- con la cuenta, el dentado siguiente se perderia.
-  --
-  -- El relleno del scroll no genera ningun evento: la cinta se mantiene quieta
-  -- porque el contenido se coloca en (relleno - desplazamiento) y ambos crecen
-  -- a la vez, asi que el shell no mueve el scroll al cambiar el relleno.
-  if scrollResetting then
-    scrollResetting = false
-    scrollOffset = newOffset
-    scrollAccum = 0
-    -- El salto real mide donde está el ancla. Con ese dato el relleno del
-    -- scroll se calcula al milimetro y el recentrado no mueve la cinta.
-    if lastRecenterComp then
-      local scale = uiScale()
-      local viewport = panelHeight() - VIEWPORT_PADDING * 2
-      -- Distancia real del ancla dentro del contenido (px lógicos).
-      local measured = (newOffset - lastRecenterComp * scale - scale + viewport) / scale
-      local ideal = viewport / scale - metrics().pad - 1
-      anchorOffset = measured
-      -- Y el hueco hasta el ancla se ajusta para que el salto deje la cinta
-      -- en el mismo sitio de la pantalla.
-      local correction = measured - ideal
-      if correction > 60 then
-        correction = 60
-      elseif correction < -60 then
-        correction = -60
-      end
-      anchorGapAdjust = anchorGapAdjust - correction
-      lastRecenterComp = nil
-    end
-    render()
-    return
-  end
-
-  -- Cuando el scroll llega al principio no puede seguir subiendo: se recentra
-  -- saltando hacia abajo para reabrir el recorrido.
-  if newOffset <= 0.5 then
-    scrollOffset = newOffset
-    recenterScroll()
-    return
-  end
-
-  -- El desplazamiento se acumula aqui y no en el frame tick: la rueda no puede
-  -- depender de un mecanismo que el shell puede no ejecutar. Se avanza la
-  -- cinta en cuanto hay un dentado completo y el resto se guarda para el
-  -- siguiente.
+  -- El desplazamiento se acumula aqui: la rueda mueve el carrusel
+  -- horizontalmente. Como el contenido del scroll no tiene rango vertical
+  -- (altura = viewport), el shell no hace scroll visual; onScroll recibe
+  -- los deltas de la rueda y nosotros los convertimos en pasos horizontales.
   local delta = newOffset - scrollOffset
   scrollOffset = newOffset
-  -- Sincronizar offset esperado: si el shell reporta un salto grande (animación
-  -- o recálculo), nos alineamos a lo reportado; si es un dentado normal,
-  -- avanzamos el esperado en SCROLL_STEP por paso procesado.
+  -- Sincronizar offset esperado ante saltos grandes del shell.
   if math.abs(delta) > SCROLL_STEP * 2 then
     expectedScrollOffset = newOffset
   end
   if math.abs(delta) > 0.5 then
-    -- Un salto mucho mayor que un dentado no lo ha dado el usuario: el shell
-    -- se reposiciona solo (al recalcular el relleno o al revelar el ancla) y
-    -- eso no debe mover la cinta de golpe. Se sincroniza y se sigue.
     if math.abs(delta) > SCROLL_STEP * 2 then
       scrollAccum = 0
       render()
       return
     end
-    -- Al cambiar de sentido lo que queda acumulado pertenece al sentido
-    -- contrario, asi que no sirve: si se conserva, el resto y el dentado
-    -- nuevo no llegan a completar un paso y el primer dentado del giro nuevo
-    -- se traga (la cinta se queda quieta un dentado y luegoresponde).
     if scrollAccum ~= 0 and (delta > 0) ~= (scrollAccum > 0) then
       scrollAccum = 0
     end
@@ -1300,12 +1191,9 @@ function onScroll(offset, _maxOffset)
     if steps > 0 then
       local direction = scrollAccum > 0 and 1 or -1
       scrollAccum = scrollAccum - direction * steps * SCROLL_STEP
-      -- Avanzar el offset esperado en surface px por cada paso procesado.
       expectedScrollOffset = expectedScrollOffset + direction * steps * SCROLL_STEP
       move(direction * steps)
     else
-      -- Aunque no haya salto completo, el relleno del scroll cambia: hay que
-      -- repintar para que la cinta no se mueva de sitio.
       render()
     end
   end
@@ -1345,21 +1233,15 @@ function onFrameTick(deltaMs)
       animating = false
       scrollOffset = 0
       scrollAccum = 0
-      scrollResetting = false
       initStage = 3
     elseif initStage == 3 then
       if not ensureThumbs() then
         initStage = 4
       end
     else
-      -- Etapa 4: la cinta ya esta montada. El scroll arranca en cero, sin
-      -- recorrido hacia arriba: se recentra para que la rueda pueda ir en
-      -- ambos sentidos.
-      if #wallpapers > 0 and cfg.wheel then
-        recenterScroll()
-      else
-        render()
-      end
+      -- Etapa 4: la cinta ya esta montada. Sin recentrado necesario porque
+      -- el scroll no tiene rango vertical.
+      render()
       initStage = 5
       pendingInit = false
     end

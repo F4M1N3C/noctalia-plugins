@@ -868,13 +868,15 @@ render = function()
   }, nodes)
 
   -- El contenido del scroll: espaciadores superior/inferior con flexGrow=1
-  -- centran la cinta verticalmente. La altura total del contenido iguala al
-  -- viewport, así que maxOffset = 0: el shell NO puede hacer scroll visual
-  -- vertical, pero onScroll SÍ recibe los eventos de rueda.
+  -- centran la cinta verticalmente. Añadimos 1px extra de altura al contenido
+  -- para que maxOffset > 0 y el shell entregue eventos de rueda a onScroll.
+  -- Visualmente el scroll no se mueve (1px es imperceptible), pero la rueda
+  -- sigue funcionando para mover el carrusel horizontalmente.
   local children = {
     ui.spacer({ key = "vspacer-top", width = 1, height = 1, flexGrow = 1 }),
     ribbon,
     ui.spacer({ key = "vspacer-bottom", width = 1, height = 1, flexGrow = 1 }),
+    ui.spacer({ key = "scroll-enabler", width = 1, height = 1, flexGrow = 0 }),
   }
 
   -- paddingV fijo: la cinta se centra por los espaciadores flexGrow.

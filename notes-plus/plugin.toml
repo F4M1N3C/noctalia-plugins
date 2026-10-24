@@ -1,0 +1,82 @@
+# Notes Plus - Fusionado de notes + notes-sync
+# Plugin unificado que integra las funcionalidades de ambos plugins
+id = "faminec/notes-plus"
+name = "Notes Plus"
+version = "1.0.0"
+plugin_api = 26
+author = "faminec"
+license = "MIT"
+dependencies = []
+tags = ["productivity", "utility", "launcher"]
+icon = "notes"
+description = "Quick text notes with live sync from mobile app and sync panel integration."
+
+[[setting]]
+key = "notes_dir"
+type = "folder"
+label_key = "settings.notes_dir.label"
+description_key = "settings.notes_dir.description"
+default = "~/Documents/Notes"
+
+[[setting]]
+key = "extension"
+type = "string"
+label_key = "settings.extension.label"
+description_key = "settings.extension.description"
+default = "md"
+
+[[setting]]
+key = "watch"
+type = "bool"
+label_key = "settings.watch.label"
+description_key = "settings.watch.description"
+default = true
+
+[[setting]]
+key = "server_url"
+type = "string"
+label_key = "settings.server_url.label"
+description_key = "settings.server_url.description"
+default = "http://127.0.0.1:8787"
+
+[[setting]]
+key = "token"
+type = "string"
+label_key = "settings.token.label"
+description_key = "settings.token.description"
+default = ""
+
+[[setting]]
+key = "poll_interval"
+type = "int"
+label_key = "settings.poll_interval.label"
+description_key = "settings.poll_interval.description"
+default = 10
+
+[[panel]]
+id = "panel"
+entry = "panel.luau"
+width = 420
+height = "fill"
+placement = "floating"
+position = "center_right"
+
+[[service]]
+id = "service"
+entry = "service.luau"
+
+[[widget]]
+id = "widget"
+entry = "widget.luau"
+
+  [[widget.setting]]
+  key = "glyph"
+  type = "glyph"
+  label_key = "settings.glyph.label"
+  default = "notes"
+
+  [[widget.setting]]
+  key = "show_text"
+  type = "bool"
+  label_key = "settings.show_text.label"
+  default = false

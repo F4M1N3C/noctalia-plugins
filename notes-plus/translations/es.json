@@ -1,0 +1,45 @@
+{
+  "settings": {
+    "extension": {
+      "description": "Extensión de los archivos de notas (sin el punto); solo se listan los archivos con esta extensión",
+      "label": "Extensión de archivo"
+    },
+    "glyph": {
+      "label": "Glifo de la barra"
+    },
+    "notes_dir": {
+      "label": "Carpeta de notas",
+      "description": "Dónde se guardan los archivos de notas"
+    },
+    "watch": {
+      "description": "Refresca el panel cuando las notas cambian fuera de él (app móvil, herramientas de sincronización)",
+      "label": "Vigilar carpeta"
+    },
+    "server_url": {
+      "label": "URL del servidor",
+      "description": "Dirección del servidor notes-mobile"
+    },
+    "token": {
+      "label": "Token",
+      "description": "Token de autenticación"
+    },
+    "poll_interval": {
+      "label": "Intervalo de sondeo (segundos)",
+      "description": "Frecuencia de sondeo cuando el SSE no está activo"
+    },
+    "show_text": {
+      "label": "Mostrar texto",
+      "description": "Mostrar texto de la etiqueta en el widget"
+    }
+  },
+  "scratchpad": "Notas rápidas",
+  "title": "Notas Plus",
+  "sync": {
+    "status": "Estado",
+    "connected": "Conectado",
+    "disconnected": "Desconectado",
+    "phone": "Teléfono",
+    "push": "Enviar a móvil",
+    "settings": "Configuración"
+  }
+}

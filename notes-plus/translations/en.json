@@ -1,0 +1,45 @@
+{
+  "settings": {
+    "extension": {
+      "description": "Extension of note files (without the dot); only files with this extension are listed",
+      "label": "File extension"
+    },
+    "glyph": {
+      "label": "Bar glyph"
+    },
+    "notes_dir": {
+      "label": "Notes folder",
+      "description": "Where note files are stored"
+    },
+    "watch": {
+      "description": "Refresh the panel when notes change outside it (mobile app, sync tools)",
+      "label": "Watch folder"
+    },
+    "server_url": {
+      "label": "Server URL",
+      "description": "Address of the notes-mobile server"
+    },
+    "token": {
+      "label": "Token",
+      "description": "Authentication token"
+    },
+    "poll_interval": {
+      "label": "Poll interval (seconds)",
+      "description": "Polling frequency when SSE is not active"
+    },
+    "show_text": {
+      "label": "Show text",
+      "description": "Show label text in the widget"
+    }
+  },
+  "scratchpad": "Quick notes",
+  "title": "Notes Plus",
+  "sync": {
+    "status": "Status",
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "phone": "Phone",
+    "push": "Push to mobile",
+    "settings": "Settings"
+  }
+}

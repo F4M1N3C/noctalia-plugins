@@ -122,6 +122,9 @@ local anchorOffset = nil -- distancia real del ancla (medida, px de superficie)
 -- Correccion fina del hueco hasta el ancla: se calcula con el salto real.
 local anchorGapAdjust = 0
 local lastRecenterComp = nil -- relleno usado en el ultimo recentrado
+-- Offset esperado basado en los pasos procesados (para compensacion robusta
+-- frente a posibles animaciones del shell o valores reportados inconsistentes).
+local expectedScrollOffset = 0.0
 
 -- Puntero y teclado
 local hovered = nil
@@ -897,9 +900,17 @@ render = function()
   -- cinta se queda quieta en pantalla aunque el scroll se mueva. El scroll
   -- mide en px de la superficie y el relleno se pasa en px lógicos, así que
   -- el desplazamiento va dividido por la escala.
+  --
+  -- IMPORTANTE: usamos expectedScrollOffset (lo que nosotros esperamos que
+  -- sea el scroll basándonos en los pasos procesados) en lugar de scrollOffset
+  -- (lo que el shell reporta), para evitar el desfase de un frame que causa
+  -- el "parpadeo" vertical. El contenido visual del scroll se posiciona en
+  -- (paddingV * scale - scrollOffset); al hacer paddingV = expectedOffset/scale
+  -- + m.pad, la posición queda fija en m.pad aunque el shell reporte valores
+  -- intermedios durante su animación interna.
   local compensation = scrollComp
   if compensation == nil then
-    compensation = scrollOffset / uiScale() + m.pad
+    compensation = expectedScrollOffset / uiScale() + m.pad
   end
   if not cfg.wheel then
     compensation = m.pad
@@ -912,6 +923,10 @@ render = function()
     paddingV = compensation,
     onScroll = "onScroll",
     revealKey = scrollReveal % 2 == 0 and "anchor-0" or "anchor-1",
+    -- Intento de deshabilitar la barra de scroll nativa (prop no documentada
+    -- pero presente en el C++ ScrollViewProps). Si el reconcilier la pasa,
+    -- oculta la barra y evita saltos de layout por su aparición.
+    scrollbarVisible = false,
   }, children)
 
   local rootChildren = { scroll }
@@ -1107,6 +1122,7 @@ reload = function(keepSelection)
   animating = false
   hovered = nil
   scrollOffset = 0
+  expectedScrollOffset = 0
   scrollAccum = 0
   lastClickIndex = nil
   lastClickMs = 0
@@ -1134,6 +1150,7 @@ recenterScroll = function()
   scrollReveal = scrollReveal + 1
   -- El scroll mide en px de la superficie: el objetivo va escalado.
   scrollOffset = target * scale
+  expectedScrollOffset = scrollOffset
   scrollAccum = 0
   lastRecenterComp = scrollComp
   render()
@@ -1167,6 +1184,7 @@ function onOpen(_context)
   lastClickIndex = nil
   lastClickMs = 0
   scrollOffset = 0
+  expectedScrollOffset = 0
   scrollAccum = 0
   scrollResetting = false
   thumbErrorShown = false
@@ -1184,6 +1202,7 @@ function onClose()
   -- sesion nueva se tragaria sin motivo.
   scrollResetting = false
   scrollAccum = 0
+  expectedScrollOffset = 0
   -- Al cerrar se apaga el tick: al reabrir tiene que volver a encenderse (y
   -- el host solo pide frames en esa transicion).
   panel.setNeedsFrameTick(false)
@@ -1254,6 +1273,12 @@ function onScroll(offset, _maxOffset)
   -- siguiente.
   local delta = newOffset - scrollOffset
   scrollOffset = newOffset
+  -- Sincronizar offset esperado: si el shell reporta un salto grande (animación
+  -- o recálculo), nos alineamos a lo reportado; si es un dentado normal,
+  -- avanzamos el esperado en SCROLL_STEP por paso procesado.
+  if math.abs(delta) > SCROLL_STEP * 2 then
+    expectedScrollOffset = newOffset
+  end
   if math.abs(delta) > 0.5 then
     -- Un salto mucho mayor que un dentado no lo ha dado el usuario: el shell
     -- se reposiciona solo (al recalcular el relleno o al revelar el ancla) y
@@ -1275,6 +1300,8 @@ function onScroll(offset, _maxOffset)
     if steps > 0 then
       local direction = scrollAccum > 0 and 1 or -1
       scrollAccum = scrollAccum - direction * steps * SCROLL_STEP
+      -- Avanzar el offset esperado en surface px por cada paso procesado.
+      expectedScrollOffset = expectedScrollOffset + direction * steps * SCROLL_STEP
       move(direction * steps)
     else
       -- Aunque no haya salto completo, el relleno del scroll cambia: hay que

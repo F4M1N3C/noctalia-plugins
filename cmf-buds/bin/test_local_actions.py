@@ -1276,6 +1276,46 @@ def test_contrato_del_estado():
     return r.failures
 
 
+def test_forbid_vacio():
+    print("37) una regla guardada desde el panel con forbid={} sigue funcionando")
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    # Simula lo que el panel serializa: forbid como objeto vacio.
+    r.engine.rules[0]["forbid"] = {}
+    r.engine.rules[0]["require"] = ["super"]
+    r.engine._rules_mtime = 0.0
+    r.engine.modifiers.held = {"super"}
+    r.engine.volume = 60
+    r.engine._on_volume_change("fake")
+    time.sleep(0.2)
+    r.check("la regla con forbid={} se dispara", r.engine.fired == ["UNO"], r.engine.fired)
+    return r.failures
+
+
+def test_knob_press():
+    print("38) el boton del estuche (knob) tambien puede disparar reglas")
+    r = Runner([rule("k", "knob_press", 1, "none", "KNOB")])
+    r.engine._on_media_press("PlayPause")
+    time.sleep(0.9)
+    r.check("una pulsacion del knob dispara la regla", "KNOB" in r.engine.fired, r.engine.fired)
+    return r.failures
+
+
+def test_ultima_accion_y_mods():
+    print("39) el motor publica la ultima accion y los modificadores usados")
+    r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
+    r.engine.modifiers.held = {"super"}
+    r.engine.modifiers.available = True
+    r.engine.volume = 60
+    r.engine._on_volume_change("fake")
+    time.sleep(0.2)
+    snap = r.engine.snapshot()
+    r.check("last_event tiene el disparador", snap["last_event"].get("trigger") == "volume_up", snap["last_event"])
+    r.check("last_action tiene el comando", snap["last_action"].get("command") == "UNO", snap["last_action"])
+    r.check("last_action guarda los modificadores", snap["last_action"].get("modifiers") == ["super"], snap["last_action"])
+    r.check("modifiers disponibles", snap["modifiers_available"] is True, snap)
+    return r.failures
+
+
 def test_traducciones():
     print("37) las traducciones son consistentes y validas para la tienda")
     import json
@@ -1399,6 +1439,9 @@ def main():
         test_modificador_prohibido,
         test_restaurar_volumen,
         test_contrato_del_estado,
+        test_forbid_vacio,
+        test_knob_press,
+        test_ultima_accion_y_mods,
         test_traducciones,
     ):
         total += test()

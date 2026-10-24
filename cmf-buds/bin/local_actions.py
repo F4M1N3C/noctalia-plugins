@@ -67,7 +67,17 @@ SELF_CHANGE_TTL = 2.0
 
 # Disparadores que el motor puede generar. La UI usa los mismos nombres:
 # si se desincronizasen, las reglas de la UI no se dispararian nunca.
-TRIGGERS = ("volume_up", "volume_down")
+#
+# "knob_press" es una pulsacion del boton del estuche. Los auriculares no
+# mandan la pulsacion cruda: mandan la accion configurada (play/pause,
+# siguiente, anterior). Se detecta por MPRIS (dbus-monitor) y se agrupa con
+# la misma ventana que el dial, asi que sirve para "pulsar el knob 1, 2 o 3
+# veces".
+TRIGGERS = ("volume_up", "volume_down", "knob_press")
+
+# Miembros MPRIS que cuentan como una pulsacion del boton del estuche.
+MEDIA_PRESS_MEMBERS = ("PlayPause", "Play", "Pause", "Next", "Previous", "Stop")
+MEDIA_PRESS_PATTERN = re.compile(r"member=(%s)\b" % "|".join(MEDIA_PRESS_MEMBERS))
 
 MODIFIER_LABELS = {
     "super": "SUPER",
@@ -451,6 +461,91 @@ class VolumeWatcher:
             self._stop.wait(delay)
 
 
+class MediaKeyWatcher:
+    """Detecta las pulsaciones del boton del estuche via MPRIS.
+
+    El firmware no manda la pulsacion cruda por RFCOMM: ejecuta la accion
+    configurada y el PC la ve como una llamada MPRIS (PlayPause, Next...).
+    ``dbus-monitor`` es parte de dbus, que ya hace falta para el escritorio,
+    asi que no anade dependencias.
+    """
+
+    def __init__(self, on_press, log=None):
+        self.on_press = on_press
+        self.log = log or (lambda msg: None)
+        self._proc = None
+        self._stop = threading.Event()
+        self._failures = 0
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def start(self):
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        proc = self._proc
+        if proc:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+    @staticmethod
+    def parse(line):
+        """Miembro MPRIS de una linea de dbus-monitor, o None."""
+        match = MEDIA_PRESS_PATTERN.search(line or "")
+        return match.group(1) if match else None
+
+    def _loop(self):
+        while not self._stop.is_set():
+            try:
+                self._proc = subprocess.Popen(
+                    [
+                        "dbus-monitor",
+                        "--session",
+                        "type='method_call',interface='org.mpris.MediaPlayer2.Player'",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    bufsize=1,
+                )
+            except Exception as exc:
+                self._failures += 1
+                delay = min(10.0, 1.0 + self._failures)
+                self.log("Knob: no se pudo abrir dbus-monitor: %s" % exc)
+                self._stop.wait(delay)
+                continue
+            started = time.monotonic()
+            try:
+                for line in self._proc.stdout:
+                    if self._stop.is_set():
+                        break
+                    member = self.parse(line)
+                    if member is None:
+                        continue
+                    try:
+                        self.on_press(member)
+                    except Exception as exc:
+                        self.log("Knob: error al procesar %s: %s" % (member, exc))
+            except Exception as exc:
+                self.log("Knob: error en la suscripcion: %s" % exc)
+            finally:
+                try:
+                    if self._proc:
+                        self._proc.kill()
+                except Exception:
+                    pass
+                self._proc = None
+            if self._stop.is_set():
+                return
+            if time.monotonic() - started >= HEALTHY_SECONDS:
+                self._failures = 0
+            else:
+                self._failures += 1
+            self._stop.wait(min(10.0, 1.0 + self._failures))
+
+
 class LocalActionEngine:
     """Reglas de atajo: senal de los auriculares + modificadores -> comando."""
 
@@ -469,9 +564,13 @@ class LocalActionEngine:
         self._self_set_at = 0.0
         self._last_event = {}
         self.modifiers = ModifierTracker(self.log)
+        self.media = MediaKeyWatcher(self._on_media_press, self.log)
         self.watcher = None
         self._sink_provider = None
         self._last_volume = None
+        # Gancho del demonio: asi el panel ve en vivo los cambios de volumen
+        # hechos con el dial o desde la app Nothing.
+        self.on_volume = None
 
     # -- persistencia --------------------------------------------------------
     def load(self):
@@ -561,6 +660,7 @@ class LocalActionEngine:
             # contra que restaurar el volumen.
             self.log("No se pudo leer el volumen inicial: %s" % exc)
         self.modifiers.start()
+        self.media.start()
         self.watcher = VolumeWatcher(sink_provider, self._on_volume_change, self.log)
         self.watcher.start()
         self.log("Motor de acciones locales activo")
@@ -573,6 +673,7 @@ class LocalActionEngine:
                 pass
         if self.watcher:
             self.watcher.stop()
+        self.media.stop()
         self.modifiers.stop()
 
     # -- volumen -------------------------------------------------------------
@@ -615,6 +716,13 @@ class LocalActionEngine:
             # de volumen no se puede calcular ningun cambio.
             self._last_volume = None
             return
+        # Avisar SIEMPRE (tambien de nuestros propios cambios): el panel
+        # necesita ver el volumen real en vivo, no solo cuando hay un atajo.
+        if self.on_volume is not None:
+            try:
+                self.on_volume(value, sink)
+            except Exception as exc:
+                self.log("No se pudo publicar el volumen: %s" % exc)
         previous = self._last_volume
         self._last_volume = value
         if previous is None:
@@ -639,6 +747,11 @@ class LocalActionEngine:
         # Es un cambio de verdad: nuestra marca deja de ser valida.
         self._self_set_volume = None
         self._register(TRIGGERS[0] if delta > 0 else TRIGGERS[1], sink, previous)
+
+    def _on_media_press(self, member):
+        """Una pulsacion del boton del estuche (via MPRIS)."""
+        self._register("knob_press", None, None)
+        self.log("Knob: pulsacion detectada (%s)" % member)
 
     # -- agrupacion de pulsaciones -----------------------------------------
     def _register(self, trigger, sink=None, previous_volume=None):
@@ -783,7 +896,7 @@ class LocalActionEngine:
                     )
                     continue
                 for key in ("require", "forbid"):
-                    if key in rule and not isinstance(rule[key], (list, tuple)):
+                    if key in rule and not isinstance(rule[key], (list, tuple, dict)):
                         self.log("Regla ignorada por '%s' invalido" % key)
                         presses = None
                         break

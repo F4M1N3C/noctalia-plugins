@@ -1,7 +1,6 @@
 --!nonstrict
 -- Panel de control de los CMF Buds Pro 2 (implementación compartida).
--- Cada pestaña es un panel propio (panel_sound.luau, panel_controls.luau...)
--- para que la ventana se ajuste al tamaño del contenido.
+-- Un único panel con 4 pestañas internas; transición suave "burbuja".
 
 local C = require("./common.luau")
 
@@ -29,6 +28,21 @@ local localLast = {}
 local localAction = {}
 local localMods = {}
 local localModsOk = false
+local localDevices = {}
+
+-- Animación "burbuja" entre secciones
+local anim = {
+  active = false,
+  t = 0,
+  duration = 0.18, -- 180ms
+  from = 1,
+  to = 1,
+  scale = 1,
+}
+
+local dragUntil = 0
+local pendingVolume = nil
+local pendingEq = nil
 
 local dot = nil
 local grotesk = nil
@@ -117,6 +131,9 @@ local function readState()
   st = data
   syncCustom()
   syncLocal()
+  if data.devices ~= nil then
+    localDevices = data.devices
+  end
   return true
 end
 
@@ -128,7 +145,6 @@ local function rpc(req, cb)
     render()
     return false
   end
-  busy = true
   local encoded = noctalia.json.encode(req)
   if encoded == nil then
     noctalia.log("cmf-buds: no se pudo serializar la petición")
@@ -147,6 +163,12 @@ local function rpc(req, cb)
     statePath,
     "--log",
     logPath,
+    "--poll",
+    tostring(tonumber(noctalia.getConfig("poll_seconds")) or 60),
+    "--device-mac",
+    noctalia.getConfig("device_mac") or "",
+    "--device-name",
+    noctalia.getConfig("device_name") or "",
   }
   return noctalia.runAsync(argv, function(result)
     busy = false
@@ -166,8 +188,11 @@ local function rpc(req, cb)
         if data.local_actions.rules ~= nil then
           localRules = data.local_actions.rules
         end
-        if data.local_actions.last ~= nil then
-          localLast = data.local_actions.last
+        if data.local_actions.last_event ~= nil then
+          localLast = data.local_actions.last_event
+        end
+        if data.local_actions.last_action ~= nil then
+          localAction = data.local_actions.last_action
         end
         if data.local_actions.modifiers ~= nil then
           localMods = data.local_actions.modifiers
@@ -175,6 +200,9 @@ local function rpc(req, cb)
         if data.local_actions.modifiers_available ~= nil then
           localModsOk = data.local_actions.modifiers_available
         end
+      end
+      if data.devices ~= nil then
+        localDevices = data.devices
       end
       if data.ok ~= true then
         errorText = data.error or tr("error.generic")
@@ -461,19 +489,21 @@ local function volumeCard()
     step = 1,
     value = percent,
     flexGrow = 1,
-    -- Noctalia (con el parche) ajusta el valor con la rueda del raton.
     wheelAdjustEnabled = wheelAdjust,
     onChange = function(value)
-      dragging = true
+      dragUntil = os.clock() + 0.8
       if st ~= nil then
         st.volume = st.volume or {}
         st.volume.percent = tonumber(value) or percent
         st.volume.muted = false
       end
+      pendingVolume = tonumber(value) or percent
+      render()
     end,
     onDragEnd = function()
-      dragging = false
+      dragUntil = 0
       local target = st and st.volume and st.volume.percent or percent
+      pendingVolume = nil
       rpc({ cmd = "volume", percent = target, mute = "off" })
     end,
   })
@@ -513,17 +543,24 @@ local function customSlider(labelKey, key)
       flexGrow = 1,
       wheelAdjustEnabled = wheelAdjust,
       onChange = function(newValue)
-        dragging = true
+        dragUntil = os.clock() + 0.8
         customDirty = true
         if st ~= nil then
           st.eq = st.eq or {}
           st.eq.custom = st.eq.custom or { bass = 0, mid = 0, treble = 0 }
           st.eq.custom[key] = tonumber(newValue) or value
         end
+        local c = st and st.eq and st.eq.custom or {}
+        pendingEq = {
+          bass = tonumber(c.bass) or 0,
+          mid = tonumber(c.mid) or 0,
+          treble = tonumber(c.treble) or 0,
+        }
       end,
       onDragEnd = function()
-        dragging = false
+        dragUntil = 0
         local c = st and st.eq and st.eq.custom or {}
+        pendingEq = nil
         rpc({
           cmd = "custom_eq",
           bass = tonumber(c.bass) or 0,
@@ -712,12 +749,13 @@ local function infoRow(labelKey, value)
   })
 end
 
-local TRIGGERS = { "volume_up", "volume_down" }
-local TRIGGER_NAMES = { volume_up = "dial_up", volume_down = "dial_down" }
+local TRIGGERS = { "volume_up", "volume_down", "knob_press" }
+local TRIGGER_NAMES = { volume_up = "dial_up", volume_down = "dial_down", knob_press = "knob" }
 
 local function triggerName(trigger)
   return TRIGGER_NAMES[tostring(trigger)] or tostring(trigger)
 end
+
 local MODIFIERS = { "none", "super", "ctrl", "alt", "shift", "no_super" }
 
 local function modifierRequire(mod)
@@ -748,6 +786,13 @@ local ruleCounter = 0
 local function saveRule(rule)
   rule.require = modifierRequire(rule.modifier)
   rule.forbid = modifierForbid(rule.modifier)
+  -- Serializar tablas vacías como nil para que JSON sea array, no object
+  if rule.require ~= nil and next(rule.require) == nil then
+    rule.require = nil
+  end
+  if rule.forbid ~= nil and next(rule.forbid) == nil then
+    rule.forbid = nil
+  end
   rpc({ cmd = "local_rule_set", rule = rule })
 end
 
@@ -839,6 +884,7 @@ local function ruleCard(rule)
     selectRow(tr("shortcut.gesture_label"), {
       tr("shortcut.gesture.dial_up"),
       tr("shortcut.gesture.dial_down"),
+      tr("shortcut.gesture.knob"),
     }, triggerIdx, function(value)
       rule.trigger = TRIGGERS[(tonumber(value) or 0) + 1] or "volume_up"
       saveRule(rule)
@@ -957,8 +1003,9 @@ local function shortcutsTab()
 
   local lastText = tr("shortcut.none")
   if localLast ~= nil and localLast.trigger ~= nil then
+    local tname = triggerName(tostring(localLast.trigger))
     lastText = tr("shortcut.last", {
-      trigger = tostring(localLast.trigger),
+      trigger = tr("shortcut.gesture." .. tname),
       presses = tostring(localLast.presses or 1),
       modifiers = modsText(localLast.modifiers),
     })
@@ -967,6 +1014,9 @@ local function shortcutsTab()
   local actionText = tr("shortcut.none")
   if localAction ~= nil and localAction.command ~= nil and localAction.command ~= "" then
     actionText = tostring(localAction.command)
+    if localAction.modifiers ~= nil and #localAction.modifiers > 0 then
+      actionText = actionText .. " (" .. table.concat(localAction.modifiers, "+") .. ")"
+    end
   end
 
   local modsText = localModsOk and (tr("shortcut.mods_held", { mods = (#localMods > 0) and table.concat(localMods, "+") or "—" })) or tr("shortcut.mods_unavailable")
@@ -1016,6 +1066,7 @@ end
 local function fitCard()
   local fit = st and st.fit_test or {}
   local running = fit.running == true
+  local err = fit.error or ""
   local children = {
     ui.row({ align = "center", gap = 8 }, {
       ui.label({
@@ -1035,12 +1086,40 @@ local function fitCard()
         end,
       }),
     }),
+    -- Panel previo (como Nothing X): dos tarjetas informativas + botón iniciar
+    ui.column({ gap = 6, padding = 10, radius = 10, fill = "surface_variant/0.3" }, {
+      ui.row({ gap = 8, align = "center" }, {
+        ui.glyph({ name = "sparkles", size = 14, color = "primary" }),
+        ui.column({ gap = 0, flexGrow = 1 }, {
+          ui.label({ text = tr("fit.intro_audio"), fontSize = 11, color = "on_surface" }),
+          ui.label({ text = tr("fit.intro_audio_desc"), fontSize = 9, color = "on_surface_variant", maxLines = 2 }),
+        }),
+      }),
+      ui.row({ gap = 8, align = "center" }, {
+        ui.glyph({ name = "wave-sine", size = 14, color = "primary" }),
+        ui.column({ gap = 0, flexGrow = 1 }, {
+          ui.label({ text = tr("fit.intro_anc"), fontSize = 11, color = "on_surface" }),
+          ui.label({ text = tr("fit.intro_anc_desc"), fontSize = 9, color = "on_surface_variant", maxLines = 2 }),
+        }),
+      }),
+    }),
   }
 
   if running then
     table.insert(children, ui.row({ gap = 6, align = "center" }, {
       ui.glyph({ name = "loader", size = 13, color = "primary" }),
       ui.label({ text = tr("fit.running"), fontSize = 10, color = "on_surface_variant" }),
+    }))
+  elseif err ~= "" then
+    table.insert(children, ui.row({
+      gap = 6,
+      padding = 8,
+      radius = 8,
+      fill = "error/0.12",
+      align = "center",
+    }, {
+      ui.glyph({ name = "alert-triangle", size = 13, color = "error" }),
+      ui.label({ text = tr("fit.not_worn"), fontSize = 9, color = "error", flexGrow = 1, maxLines = 2 }),
     }))
   else
     local function resultChip(labelKey, value)
@@ -1128,6 +1207,65 @@ local function connectionCard()
 end
 
 local function systemTab()
+  local dualPending = st ~= nil and st.dual_restart_pending == true
+  local dualChildren = {
+    toggleRow("devices", "system.dual", "system.dual_desc", "dual_connection", st and st.dual_connection),
+    ui.label({
+      text = tr("system.dual_note"),
+      fontSize = 9,
+      color = "on_surface_variant",
+      maxLines = 3,
+    }),
+  }
+  if dualPending then
+    table.insert(dualChildren, ui.row({
+      gap = 6,
+      padding = 8,
+      radius = 8,
+      fill = "warning/0.12",
+      align = "center",
+    }, {
+      ui.glyph({ name = "alert-triangle", size = 13, color = "warning" }),
+      ui.label({ text = tr("system.dual_restart"), fontSize = 9, color = "warning", flexGrow = 1, maxLines = 3 }),
+      ui.button({
+        text = tr("system.dual_restart_ack"),
+        variant = "ghost",
+        controlSize = "sm",
+        onClick = function()
+          rpc({ cmd = "dual_ack" })
+        end,
+      }),
+    }))
+  end
+
+  -- Panel de dispositivos: lista Nothing/CMF emparejados (máx. 2)
+  local deviceRows = {}
+  for _, dev in ipairs(localDevices) do
+    table.insert(deviceRows, ui.row({ gap = 8, align = "center" }, {
+      ui.glyph({ name = dev.connected and "bluetooth" or "bluetooth-off", size = 13, color = dev.connected and "primary" or "on_surface_variant" }),
+      ui.column({ gap = 0, flexGrow = 1 }, {
+        ui.label({ text = tostring(dev.name or dev.mac), fontSize = 10, color = "on_surface", maxLines = 1 }),
+        ui.label({ text = tostring(dev.mac), fontSize = 8, color = "on_surface_variant", maxLines = 1 }),
+      }),
+      ui.button({
+        text = dev.connected and tr("button.disconnect") or tr("button.connect"),
+        variant = "ghost",
+        controlSize = "sm",
+        onClick = function()
+          if dev.connected then
+            rpc({ cmd = "device_disconnect", mac = dev.mac }, function() rpc({ cmd = "devices" }) end)
+          else
+            rpc({ cmd = "device_connect", mac = dev.mac }, function() rpc({ cmd = "devices" }) end)
+          end
+        end,
+      }),
+    }))
+  end
+  if #deviceRows == 0 then
+    table.insert(deviceRows, ui.label({ text = tr("system.devices_none"), fontSize = 9, color = "on_surface_variant" }))
+  end
+  table.insert(deviceRows, ui.label({ text = tr("system.devices_note"), fontSize = 9, color = "on_surface_variant", maxLines = 3 }))
+
   return {
     section("system.title", "adjustments"),
     card({
@@ -1139,6 +1277,8 @@ local function systemTab()
       ui.separator({ thickness = 1, color = "outline/0.25", spacing = 6 }),
       toggleRow("devices", "system.dual", "system.dual_desc", "dual_connection", st and st.dual_connection),
     }),
+    card(dualChildren),
+    card(deviceRows),
     fitCard(),
     section("info.title", "info-circle"),
     infoCard(),
@@ -1175,17 +1315,24 @@ function M.setup(defaultTab, ownPanelId, height)
 end
 
 function M.switchTab(key)
-  local target = C.panel_id(key)
-  if target == nil then
+  if key ~= "sound" and key ~= "controls" and key ~= "actions" and key ~= "system" then
     return
   end
-  if target == panelId then
+  if tab == key then
     return
   end
-  noctalia.togglePanel(target)
+  tab = key
+  C.set_last_tab(key)
+  -- Transición "burbuja"
+  anim.from = anim.scale
+  anim.to = (key == "controls" or key == "system") and 0.95 or 1.0
+  anim.t = 0
+  anim.active = true
+  panel.setNeedsFrameTick(true)
+  render()
 end
 
--- ── render ───────────────────────────────────────────────────────────────────
+-- ── render con animación ─────────────────────────────────────────────────────
 
 render = function()
   if statePath == nil then
@@ -1210,10 +1357,12 @@ render = function()
     else
       rows = soundTab()
     end
-    -- El scroll evita que el contenido se recorte si una seccion crece
-    -- (por ejemplo al anadir reglas de atajo). Con la ventana bien dimensionada
-    -- no aparece barra de desplazamiento.
-    body = ui.scroll({ gap = 12, align = "stretch", flexGrow = 1 }, rows)
+    local inner = ui.scroll({ gap = 12, align = "stretch", flexGrow = 1 }, rows)
+    local opacity = anim.active and (0.4 + 0.6 * anim.t) or 1
+    local padH = math.floor((1 - anim.scale) * 286)
+    body = ui.column({ flexGrow = 1, align = "center", opacity = opacity }, {
+      ui.column({ width = 600 - 28 - padH * 2, flexGrow = 1, align = "stretch" }, { inner }),
+    })
   end
 
   local rootProps = { gap = 10, padding = 14, align = "stretch" }
@@ -1233,21 +1382,35 @@ function M.onOpen(_context)
   M.setup(tab, panelId)
   ensurePaths()
   loadFonts()
-  noctalia.setUpdateInterval(3000)
+  C.loadTranslations()
+  noctalia.setUpdateInterval(1000)
   panel.setWantsSecondTicks(false)
   loading = true
   errorText = ""
   readState()
   render()
   refresh()
+  rpc({ cmd = "configure", poll = tonumber(noctalia.getConfig("poll_seconds")) or 60, device_mac = noctalia.getConfig("device_mac") or "", device_name = noctalia.getConfig("device_name") or "" })
+  rpc({ cmd = "devices" })
 end
 
 function M.onClose()
 end
 
 function M.update()
-  if dragging then
+  local now = os.clock()
+  if now < dragUntil then
     return
+  end
+  if pendingVolume ~= nil then
+    local target = pendingVolume
+    pendingVolume = nil
+    rpc({ cmd = "volume", percent = target, mute = "off" })
+  end
+  if pendingEq ~= nil then
+    local c = pendingEq
+    pendingEq = nil
+    rpc({ cmd = "custom_eq", bass = c.bass, mid = c.mid, treble = c.treble })
   end
   if readState() then
     render()
@@ -1258,9 +1421,11 @@ function M.onConfigChanged()
   ensurePaths()
   loadFonts()
   C.loadTranslations()
+  wheelAdjust = noctalia.getConfig("wheel_adjust") ~= false
   readState()
   render()
   refresh()
+  rpc({ cmd = "configure", poll = tonumber(noctalia.getConfig("poll_seconds")) or 60, device_mac = noctalia.getConfig("device_mac") or "", device_name = noctalia.getConfig("device_name") or "" })
 end
 
 function M.onIpc(event, payload)
@@ -1270,6 +1435,24 @@ function M.onIpc(event, payload)
     if payload == "sound" or payload == "controls" or payload == "actions" or payload == "system" then
       M.switchTab(payload)
     end
+  end
+end
+
+function M.onFrameTick(deltaMs)
+  if anim.active then
+    anim.t = anim.t + (tonumber(deltaMs) or 16) / 1000 / anim.duration
+    if anim.t >= 1 then
+      anim.t = 1
+      anim.active = false
+      anim.scale = anim.to
+      panel.setNeedsFrameTick(false)
+    else
+      local e = 1 - (1 - anim.t) ^ 3
+      anim.scale = anim.from + (anim.to - anim.from) * e
+    end
+    render()
+  else
+    panel.setNeedsFrameTick(false)
   end
 end
 

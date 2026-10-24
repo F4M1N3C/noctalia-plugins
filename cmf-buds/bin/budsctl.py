@@ -560,8 +560,9 @@ def empty_state():
         "in_ear": None,
         "low_latency": None,
         "dual_connection": None,
+        "dual_restart_pending": False,
         "gestures": {},
-        "fit_test": {"running": False, "left": None, "right": None},
+        "fit_test": {"running": False, "left": None, "right": None, "error": ""},
         "ring": {"left": False, "right": False},
         "volume": {"percent": None, "muted": False, "sink": "", "description": ""},
         "model": "B172",
@@ -596,6 +597,7 @@ class BudsDaemon:
         self.last_connect_attempt = 0.0
         self.connect_backoff = 5.0
         self.ring_until = {"left": 0.0, "right": 0.0}
+        self.fit_started = 0.0
         self.dirty = True
         self._lock_file = None
         self._server = None
@@ -607,6 +609,10 @@ class BudsDaemon:
                 self.local = LocalActionEngine(
                     os.path.dirname(self.state_path), log=self.log
                 )
+                # Cambios de volumen hechos desde el movil o con el dial: el
+                # demonio los publica en state.json para que el panel los vea en
+                # vivo (antes solo se refrescaban al pulsar Actualizar).
+                self.local.on_volume = self._external_volume
             except Exception as exc:
                 self.log("No se pudo crear el motor de acciones locales: %s" % exc)
 
@@ -692,6 +698,73 @@ class BudsDaemon:
             dev["model"] = model
             self.state["model"] = model
             return True
+
+    def _external_volume(self, value, sink):
+        try:
+            with self.lock:
+                vol = self.state.setdefault("volume", {})
+                changed = vol.get("percent") != int(value) or vol.get("sink") != sink
+                vol["percent"] = int(value)
+                vol["sink"] = sink
+                vol.setdefault("muted", False)
+            if changed:
+                self.save()
+        except Exception as exc:
+            self.log("No se pudo publicar el volumen externo: %s" % exc)
+
+    def _es_dispositivo_nothing(self, name):
+        n = (name or "").lower()
+        return any(
+            key in n
+            for key in ("cmf buds", "cmf headphone", "nothing ear", "nothing headphone", "ear (")
+        )
+
+    def list_devices(self):
+        """Dispositivos Nothing/CMF emparejados en el PC.
+        La app Nothing X muestra los dos huecos de la conexion dual. Desde
+        Linux solo podemos ver y conectar los dispositivos que el PC conoce
+        por Bluetooth; el segundo hueco lo gestiona el movil. Se muestran
+        ambos estados para que quede claro quien tiene la conexion.
+        """
+        actual = self.state.get("device", {}).get("mac", "")
+        salida = []
+        for dev in bt_devices():
+            if not self._es_dispositivo_nothing(dev.get("name")):
+                continue
+            info = bt_info(dev["mac"])
+            salida.append(
+                {
+                    "mac": dev["mac"],
+                    "name": info.get("name") or dev.get("name") or dev["mac"],
+                    "connected": bool(info.get("connected")),
+                    "battery": info.get("battery"),
+                    "current": dev["mac"] == actual,
+                }
+            )
+        salida.sort(key=lambda d: (not d["connected"], not d["current"], d["name"]))
+        return salida
+
+    def device_connect(self, mac):
+        if not mac:
+            raise ValueError("Falta la dirección del dispositivo")
+        self.log("Conectando dispositivo %s" % mac)
+        res = run(["bluetoothctl", "connect", mac], 20)
+        if res.returncode != 0:
+            msg = (res.stderr or res.stdout or "").strip() or "No se pudo conectar"
+            raise RuntimeError(msg)
+        time.sleep(1.0)
+        return self.list_devices()
+
+    def device_disconnect(self, mac):
+        if not mac:
+            raise ValueError("Falta la dirección del dispositivo")
+        self.log("Desconectando dispositivo %s" % mac)
+        res = run(["bluetoothctl", "disconnect", mac], 20)
+        if res.returncode != 0:
+            msg = (res.stderr or res.stdout or "").strip() or "No se pudo desconectar"
+            raise RuntimeError(msg)
+        time.sleep(0.5)
+        return self.list_devices()
 
     @staticmethod
     def _cerrar_enlace_anterior(anterior):
@@ -930,6 +1003,8 @@ class BudsDaemon:
                     st["fit_test"]["left"] = payload[0]
                     st["fit_test"]["right"] = payload[1]
                     st["fit_test"]["running"] = False
+                    st["fit_test"]["error"] = ""
+                    self.fit_started = 0.0
                     changed = True
             elif cmd == CMD_ANC_SET:
                 # ACK del set; el evento 0xE003 llegará luego
@@ -1064,6 +1139,11 @@ class BudsDaemon:
             raise ValueError("ajuste desconocido")
         with self.lock:
             self.state[key] = bool(value)
+            if key == "dual_connection":
+                # La app Nothing X avisa de que el cambio no se aplica hasta
+                # reiniciar los auriculares; se recuerda en el estado para que
+                # el panel lo muestre hasta que el usuario los reinicie.
+                self.state["dual_restart_pending"] = True
         time.sleep(0.15)
         self.save()
         return self.state
@@ -1127,9 +1207,11 @@ class BudsDaemon:
         self.link.send(CMD_FIT_TEST_SET, bytes([1 if start else 0]), 1.2)
         with self.lock:
             self.state["fit_test"]["running"] = bool(start)
+            self.state["fit_test"]["error"] = ""
             if start:
                 self.state["fit_test"]["left"] = None
                 self.state["fit_test"]["right"] = None
+        self.fit_started = time.time() if start else 0.0
         self.save()
         return self.state
 
@@ -1244,6 +1326,28 @@ class BudsDaemon:
                 else:
                     if now - self.last_full >= self.poll:
                         self.query_all()
+                    else:
+                        # El volumen tambien se refresca entre sondeos: los
+                        # cambios hechos desde el movil no siempre generan una
+                        # notificacion RFCOMM. Cada 5 s basta (pactl es caro) y
+                        # el watcher de volumen ya publica los cambios al
+                        # instante.
+                        if not hasattr(self, "_last_volume_check"):
+                            self._last_volume_check = 0
+                        if now - self._last_volume_check >= 5:
+                            self._last_volume_check = now
+                            self.refresh_volume()
+                # Test de ajuste que nunca devuelve resultado (auricular mal
+                # puesto, firmware que no notifica): se cierra con un aviso en
+                # vez de quedarse "midiendo" para siempre.
+                if self.state["fit_test"].get("running") and self.fit_started:
+                    if now - self.fit_started > 30:
+                        with self.lock:
+                            self.state["fit_test"]["running"] = False
+                            self.state["fit_test"]["error"] = "timeout"
+                        self.fit_started = 0.0
+                        self.log("Test de ajuste sin respuesta: se cancela")
+                        self.save()
                 # apagar anillos automáticamente
                 self._apagar_anillos(now)
                 if self.link is None or not self.link.connected:
@@ -1265,6 +1369,33 @@ class BudsDaemon:
         cmd = (req or {}).get("cmd", "status")
         self.last_client = time.time()
         if cmd == "ping":
+            return {"ok": True, "state": self.snapshot()}
+        if cmd == "configure":
+            # Los ajustes del plugin (sondeo, nombre y MAC) llegan tambien al
+            # demonio ya arrancado: antes solo se aplicaban al crearlo.
+            poll = req.get("poll")
+            if poll is not None:
+                try:
+                    self.poll = max(15, min(3600, int(poll)))
+                except (TypeError, ValueError):
+                    pass
+            if req.get("device_mac") is not None:
+                self.preferred_mac = str(req.get("device_mac") or "").strip()
+            if req.get("device_name") is not None:
+                self.preferred_name = str(req.get("device_name") or "").strip()
+            return {"ok": True, "state": self.snapshot()}
+        if cmd == "devices":
+            return {"ok": True, "state": self.snapshot(), "devices": self.list_devices()}
+        if cmd == "device_connect":
+            devices = self.device_connect(req.get("mac", ""))
+            return {"ok": True, "state": self.snapshot(), "devices": devices}
+        if cmd == "device_disconnect":
+            devices = self.device_disconnect(req.get("mac", ""))
+            return {"ok": True, "state": self.snapshot(), "devices": devices}
+        if cmd == "dual_ack":
+            with self.lock:
+                self.state["dual_restart_pending"] = False
+            self.save()
             return {"ok": True, "state": self.snapshot()}
         if cmd == "status":
             self.refresh_volume()

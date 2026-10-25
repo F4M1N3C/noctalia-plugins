@@ -41,5 +41,9 @@
     "phone": "Teléfono",
     "push": "Enviar a móvil",
     "settings": "Configuración"
-  }
+  },
+  "tooltip_offline": "Notas: el servidor no responde",
+  "tooltip_pending": "Notas: {count} mensaje(s) en cola para el celular",
+  "tooltip_online": "Notas: el celular está conectado",
+  "tooltip_disconnected": "Notas: el celular no está conectado"
 }

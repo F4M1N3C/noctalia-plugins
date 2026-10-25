@@ -58,10 +58,8 @@ end
 -- ------------------------------------------------------------------ ajustes
 
 local function notesPluginId()
-  local id = noctalia.getConfig("notes_plugin")
-  if type(id) == "string" and id ~= "" then
-    return id
-  end
+  -- El plugin fusionado es siempre notes-plus; la clave antigua
+  -- `notes_plugin` ya no existe y provocaba un aviso de ajuste no declarado.
   return "faminec/notes-plus"
 end
 

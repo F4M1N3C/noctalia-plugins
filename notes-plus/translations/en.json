@@ -41,5 +41,9 @@
     "phone": "Phone",
     "push": "Push to mobile",
     "settings": "Settings"
-  }
+  },
+  "tooltip_offline": "Notes: the server is not responding",
+  "tooltip_pending": "Notes: {count} message(s) queued for the phone",
+  "tooltip_online": "Notes: the phone is connected",
+  "tooltip_disconnected": "Notes: the phone is not connected"
 }

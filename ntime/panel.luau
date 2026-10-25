@@ -2,8 +2,6 @@
 -- Panel de ntime: panel completo con timer/clock, seleccion de modo y fuente,
 -- y controles para COUNTDOWN, COUNTUP y CLOCK.
 
-local noctalia = noctalia
-
 local STATE_FILE = noctalia.pluginDataDir() .. "/ntime_state.json"
 
 local default_mode = "clock"

@@ -2,8 +2,6 @@
 -- Servicio headless para ntime: asegura que el estado esté disponible
 -- y expone comandos IPC para controlar el timer/clock.
 
-local noctalia = noctalia
-
 local function loadConfig()
   -- Cargar configuración del plugin
   -- No config fija necesaria para ntime, pero aquí por coherencia

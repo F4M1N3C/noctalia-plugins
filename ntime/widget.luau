@@ -2,8 +2,6 @@
 -- Widget de ntime: timer/clock con modos COUNTDOWN, COUNTUP y CLOCK,
 -- con fuentes seleccionables incluyendo el estilo tty-clock (cuadrados coloreados).
 
-local noctalia = noctalia
-
 local STATE_FILE = noctalia.pluginDataDir() .. "/ntime_state.json"
 
 local default_mode = "clock"

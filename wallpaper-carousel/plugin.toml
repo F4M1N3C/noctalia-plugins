@@ -5,7 +5,7 @@
 
 id = "faminec/wallpaper-carousel"
 name = "Wallpaper Carousel"
-version = "2.1.0"
+version = "2.2.0"
 plugin_api = 34
 author = "faminec"
 license = "MIT"
@@ -34,19 +34,18 @@ key = "card_width"
 type = "int"
 label_key = "settings.card_width.label"
 description_key = "settings.card_width.description"
-default = 300
-min = 140
-max = 640
-advanced = true
+default = 320
+min = 160
+max = 720
 
 [[setting]]
 key = "card_height"
 type = "int"
 label_key = "settings.card_height.label"
 description_key = "settings.card_height.description"
-default = 400
-min = 180
-max = 900
+default = 440
+min = 200
+max = 1000
 
 [[setting]]
 key = "card_shape"
@@ -95,7 +94,7 @@ key = "selected_scale"
 type = "double"
 label_key = "settings.selected_scale.label"
 description_key = "settings.selected_scale.description"
-default = 1.08
+default = 1.12
 min = 1.0
 max = 1.6
 
@@ -104,8 +103,8 @@ key = "base_scale"
 type = "double"
 label_key = "settings.base_scale.label"
 description_key = "settings.base_scale.description"
-default = 0.88
-min = 0.4
+default = 0.92
+min = 0.5
 max = 1.0
 advanced = true
 
@@ -114,9 +113,19 @@ key = "hover_boost"
 type = "double"
 label_key = "settings.hover_boost.label"
 description_key = "settings.hover_boost.description"
-default = 0.2
+default = 0.18
 min = 0.0
 max = 0.6
+advanced = true
+
+[[setting]]
+key = "gap"
+type = "int"
+label_key = "settings.gap.label"
+description_key = "settings.gap.description"
+default = 0
+min = -40
+max = 40
 advanced = true
 
 [[setting]]
@@ -156,6 +165,7 @@ type = "bool"
 label_key = "settings.show_filenames.label"
 description_key = "settings.show_filenames.description"
 default = true
+visible_when = { key = "chrome", values = [true] }
 
 [[setting]]
 key = "wheel"
@@ -171,6 +181,19 @@ label_key = "settings.chrome.label"
 description_key = "settings.chrome.description"
 default = false
 
+[[setting]]
+key = "panel_mode"
+type = "select"
+label_key = "settings.panel_mode.label"
+description_key = "settings.panel_mode.description"
+default = "attached"
+  [[setting.options]]
+  value = "attached"
+  label_key = "settings.panel_mode.options.attached"
+  [[setting.options]]
+  value = "floating"
+  label_key = "settings.panel_mode.options.floating"
+
 [[widget]]
 id = "button"
 entry = "widget.luau"
@@ -180,7 +203,7 @@ id = "panel"
 entry = "panel.luau"
 width = 1720
 height = 1000
-placement = "floating"
+placement = "attached"
 position = "center"
 keyboard_focus = "exclusive"
 capture_keys = ["Escape", "Left", "Right", "Return", "space", "Home", "End", "h", "l", "j", "k", "r"]

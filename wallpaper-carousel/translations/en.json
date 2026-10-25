@@ -69,6 +69,18 @@
       "label": "Scroll with the mouse wheel",
       "description": "Move the carousel with the mouse wheel. Off disables the wheel."
     },
+    "gap": {
+      "label": "Card gap",
+      "description": "Horizontal gap between cards. Negative values make cards overlap for a continuous ribbon look."
+    },
+    "panel_mode": {
+      "label": "Panel mode",
+      "description": "How the carousel panel opens. Attached opens near the bar button; floating opens as a centered resizable window.",
+      "options": {
+        "attached": "Attached near trigger",
+        "floating": "Floating window"
+      }
+    },
     "card_shape": {
       "description": "Shape of every card. The preview is masked, so the ribbon keeps a continuous look.",
       "label": "Card shape",

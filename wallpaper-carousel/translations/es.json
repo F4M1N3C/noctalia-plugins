@@ -69,6 +69,18 @@
       "label": "Desplazar con la rueda",
       "description": "Mueve el carrusel con la rueda del ratón. Desactivado la rueda no hace nada."
     },
+    "gap": {
+      "label": "Espacio entre tarjetas",
+      "description": "Espacio horizontal entre tarjetas. Valores negativos hacen que se solapen para una cinta continua."
+    },
+    "panel_mode": {
+      "label": "Modo del panel",
+      "description": "Cómo se abre el panel del carrusel. Adjunto abre junto al botón de la barra; flotante abre como ventana redimensionable centrada.",
+      "options": {
+        "attached": "Adjunto al botón",
+        "floating": "Ventana flotante"
+      }
+    },
     "card_shape": {
       "description": "Forma de todas las tarjetas. La miniatura se recorta, así que la cinta sigue viéndose continua.",
       "label": "Forma de las tarjetas",

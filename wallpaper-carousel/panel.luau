@@ -8,7 +8,7 @@
 -- seleccionada más grande y opaca y las vecinas desvaneciéndose.
 --
 -- Noctalia v5 no expone transformaciones (rotación/skew) en la UI declarativa,
--- así que la inclinación va horneada en la miniatura: el helper de Python
+-- asi que la inclinación va horneada en la miniatura: el helper de Python
 -- genera un PNG con alfa donde el wallpaper va recortado dentro del
 -- paralelogramo. La paralaje (el encuadre que se desplaza según la posición
 -- de la tarjeta) también se hornea, en tres posiciones por imagen.
@@ -16,8 +16,7 @@
 -- El panel usa un `ui.scroll` como captura de la rueda: el desplazamiento
 -- vertical se compensa con el relleno del propio scroll para que la cinta no
 -- se mueva de sitio, y su delta mueve el carrusel horizontalmente.
-
-local THUMB_VERSION = "v6"
+local THUMB_VERSION = "v7"
 -- Tamaño logico del panel. El host no expone el tamaño de la superficie al
 -- script y el manifiesto no acepta "fill" fuera del modo flotante, asi que el
 -- panel declara este mismo tamaño en plugin.toml y la cinta se calcula con el.
@@ -55,14 +54,14 @@ local SHAPES = {
 local cfg = {
   directory = "",
   glyph = "wallpaper",
-  cardWidth = 300,
-  cardHeight = 400,
+  cardWidth = 320,
+  cardHeight = 440,
   skew = 0.35,
   shape = "skew",
   parallax = 1.0,
-  selectedScale = 1.08,
-  baseScale = 0.88,
-  hoverBoost = 0.2,
+  selectedScale = 1.12,
+  baseScale = 0.92,
+  hoverBoost = 0.18,
   scrim = 0.0,
   closeOnApply = true,
   applyAll = true,
@@ -70,6 +69,7 @@ local cfg = {
   chrome = false,
   wheel = true,
   openRandom = true,
+  panelMode = "attached",
 }
 
 local wallpapers = {}
@@ -87,7 +87,7 @@ local fileInfoCache = {}
 local thumbReady = {}
 local thumbRequested = {}
 
--- Carga inicial troceada. El panel tiene que abrirse al instante: el shell
+-- Carga inicial troceada. El panel tiene que abrirse al instante: el host
 -- aborta un callback que se pasa de su presupuesto de CPU (25 ms) y el panel
 -- se queda a medias. Asi que onOpen no hace trabajo pesado: el escaneo del
 -- directorio, la localizacion del fondo actual y el calculo de las miniaturas
@@ -190,7 +190,7 @@ local function joinPath(dir, name)
 end
 
 -- FNV-1a de 32 bits. La multiplicación por 65599 cabe exactamente en un
--- double de Luau, así que no hace falta bit32 ni una implementación nativa.
+-- double de Luau, asi que no hace falta bit32 ni una implementación nativa.
 local function hashText(text)
   local hash = 2166136261
   for index = 1, #text do
@@ -237,7 +237,7 @@ local function uiScale()
 end
 
 -- La miniatura se genera al tamaño de la tarjeta seleccionada (la mayor) y las
--- demás se muestran reducidas, así que nunca hay que escalar hacia arriba.
+-- demás se muestran reducidas, asi que nunca hay que escalar hacia arriba.
 local function thumbPixelWidth()
   return math.floor(cfg.cardWidth * cfg.selectedScale * uiScale() + 0.5)
 end
@@ -248,7 +248,7 @@ end
 
 local thumbPathCache = {}
 
--- El tamaño de la miniatura depende del escalado de la interfaz, así que
+-- El tamaño de la miniatura depende del escalado de la interfaz, asi que
 -- entra en la clave de caché: si el usuario lo cambia, las tarjetas se
 -- regeneran al tamaño correcto.
 local function thumbPath(source, bucket)
@@ -307,17 +307,17 @@ local function loadConfig()
   uiScaleCache = nil
   cfg.directory = noctalia.getConfig("directory") or ""
   cfg.glyph = noctalia.getConfig("glyph") or "wallpaper"
-  cfg.cardWidth = clamp(tonumber(noctalia.getConfig("card_width")) or 300, 140, 640)
-  cfg.cardHeight = clamp(tonumber(noctalia.getConfig("card_height")) or 400, 180, 900)
+  cfg.cardWidth = clamp(tonumber(noctalia.getConfig("card_width")) or 320, 160, 720)
+  cfg.cardHeight = clamp(tonumber(noctalia.getConfig("card_height")) or 440, 200, 1000)
   cfg.skew = clamp(tonumber(noctalia.getConfig("skew")) or 0.35, 0.0, 0.8)
   cfg.shape = tostring(noctalia.getConfig("card_shape") or "skew")
   if not SHAPES[cfg.shape] then
     cfg.shape = "skew"
   end
   cfg.parallax = clamp(tonumber(noctalia.getConfig("parallax")) or 1.0, 0.0, 1.5)
-  cfg.selectedScale = clamp(tonumber(noctalia.getConfig("selected_scale")) or 1.08, 1.0, 1.6)
-  cfg.baseScale = clamp(tonumber(noctalia.getConfig("base_scale")) or 0.88, 0.4, 1.0)
-  cfg.hoverBoost = clamp(tonumber(noctalia.getConfig("hover_boost")) or 0.2, 0.0, 0.6)
+  cfg.selectedScale = clamp(tonumber(noctalia.getConfig("selected_scale")) or 1.12, 1.0, 1.6)
+  cfg.baseScale = clamp(tonumber(noctalia.getConfig("base_scale")) or 0.92, 0.5, 1.0)
+  cfg.hoverBoost = clamp(tonumber(noctalia.getConfig("hover_boost")) or 0.18, 0.0, 0.6)
   cfg.scrim = clamp(tonumber(noctalia.getConfig("scrim")) or 0.0, 0.0, 0.9)
   cfg.closeOnApply = noctalia.getConfig("close_on_apply") ~= false
   cfg.applyAll = noctalia.getConfig("apply_all") ~= false
@@ -325,6 +325,11 @@ local function loadConfig()
   cfg.chrome = noctalia.getConfig("chrome") == true
   cfg.wheel = noctalia.getConfig("wheel") ~= false
   cfg.openRandom = noctalia.getConfig("open_random") ~= false
+  cfg.panelMode = tostring(noctalia.getConfig("panel_mode") or "attached")
+  if cfg.panelMode ~= "attached" and cfg.panelMode ~= "floating" then
+    cfg.panelMode = "attached"
+  end
+  cfg.gap = tonumber(noctalia.getConfig("gap")) or 0
 end
 
 -- Prepara el escaneo: resuelve el directorio y saca la lista de nombres. El
@@ -440,7 +445,7 @@ local function focusedOutput()
   return outputs[1]
 end
 
--- El panel ocupa el output menos la barra (el shell reserva ese hueco), así
+-- El panel ocupa el output menos la barra (el shell reserva ese hueco), asi
 -- que el alto visible se estima a partir del output. El panel mide en px de
 -- la superficie, pero sus props se escalan: de ahí los dos factores.
 local function panelHeight()
@@ -454,7 +459,7 @@ local function panelHeight()
     chrome = chrome + 36
   end
   -- PANEL_HEIGHT es el tamaño logico declarado en el manifiesto (ventana
-  -- flotante). Si el monitor es mas pequeño, el host lo recorta y se usa el
+  -- flotante). Si el monitor es mas pequeno, el host lo recorta y se usa el
   -- valor menor para no dibujar fuera de la superficie.
   local output = focusedOutput()
   local available = PANEL_HEIGHT
@@ -479,23 +484,17 @@ end
 
 -- Métricas de la cinta: cuántas tarjetas entran en pantalla y cuánto relleno
 -- vertical necesita el scroll para compensar su propio desplazamiento.
---
--- El scroll coloca su contenido en `padding - desplazamiento`, y el relleno
--- se mide en px de la superficie mientras que las props van en px lógicos:
--- por eso el relleno tiene que llevar la cuenta de la escala.
+-- Con el nuevo diseño: el contenido del scroll tiene altura exacta al viewport,
+-- asi que no hay desplazamiento vertical real, y el relleno centera la cinta
+-- horizontalmente mediante espaciadores.
 local function metrics()
   local viewport = viewportHeight()
   local ribbonHeight = cfg.cardHeight
-  -- Relleno vertical que centra la cinta: los espaciadores flexGrow=1
-  -- la centran automáticamente, pero pad se usa como paddingV base del scroll.
-  local pad = (viewport - ribbonHeight) / 2
-  if pad < 0 then
-    pad = 0
-  end
-  -- Las tarjetas laterales llenan su hueco: el paso de la cinta es el ancho de
-  -- la tarjeta por la escala lateral, asi que no quedan huecos entre ellas y la
-  -- cinta se lee como un rectangulo continuo. La seleccionada, algo mayor, se
-  -- solapa con las vecinas como en la cinta de referencia.
+  -- El relleno horizontal: gap entre tarjetas. Positivo = separación,
+  -- negativo = solapamiento para efecto cinta continua.
+  local gap = clamp(cfg.gap, -40, 40)
+  -- Ancho efectivo de cada tarjeta: base + gap lateral. Para que la cinta
+  -- se vea continua, el gap se compensa en el lead inicial.
   local slot = math.max(1, math.floor(cfg.cardWidth * cfg.baseScale + 0.5))
   -- Cuántas tarjetas caben a cada lado del centro.
   local slots = viewportWidth() / slot
@@ -505,7 +504,8 @@ local function metrics()
     slot = slot,
     viewport = viewport,
     ribbonHeight = ribbonHeight,
-    pad = pad,
+    gap = gap,
+    baseScale = cfg.baseScale,
   }
 end
 
@@ -523,8 +523,9 @@ local function ensureThumbs()
 
   -- Se encolan las miniaturas de un rango amplio alrededor de la seleccionada
   -- (para que al desplazarse siempre haya imágenes listas). El helper descarta
-  -- las que ya existen, así que repetir el trabajo es barato.
-  local half = math.max(metrics().half, 6)
+  -- las que ya existen, asi que repetir el trabajo es barato.
+  local m = metrics()
+  local half = math.max(m.half, 6)
   local first = selected - half
   local last = selected + half
   local items = {}
@@ -697,7 +698,6 @@ function onCardHover(state, key)
   if slot == nil then
     return
   end
-  local hoverStarted = os.clock()
   local index = slotIndex[slot]
   local nextHovered = nil
   if state == "true" then
@@ -780,9 +780,14 @@ render = function()
       -- siempre acaba con el recorte central (bucket 0).
       local bucket = 0
       if cfg.parallax > 0 then
-        if relative >= 0.5 then
+        -- Parallax continuo: el bucket se calcula de forma suave basada en
+        -- la posición relativa, sin saltos bruscos al terminar la animacion.
+        -- El factor 0.5 define el umbral donde la tarjeta comienza a mostrar
+        -- el lado izquierdo/derecho.
+        local relThreshold = 0.5
+        if relative >= relThreshold then
           bucket = 1
-        elseif relative <= -0.5 then
+        elseif relative <= -relThreshold then
           bucket = -1
         end
       end
@@ -847,11 +852,15 @@ render = function()
   --
   -- Con la cinta circular siempre hay huecos a ambos lados, asi que el relleno
   -- no depende de ninguna condicion de borde.
+  --
+  -- El lead calcula el espacio inicial para centrar la tarjeta seleccionada.
+  -- Con gap negativo (solapamiento), el lead se ajusta para mantener el
+  -- centrado visual.
   local lead = viewportWidth() / 2 - m.slot / 2 - fraction * m.slot
-  -- El `ui.spacer` de Noctalia nace con flexGrow = 1: si se deja crecer se
-  -- come todo el ancho sobrante de la fila y el ancho del lead no se aplica,
-  -- así que la cinta se quedaba a la derecha del todo. Con flexGrow = 0
-  -- ocupa justo el ancho pedido.
+  -- Ajuste de lead por el gap: si las tarjetas se solapan, necesitamos menos
+  -- espacio inicial para mantener el centrado.
+  lead = lead - m.gap
+
   table.insert(nodes, 1, ui.spacer({
     key = "lead",
     width = math.max(0, math.floor(lead + 0.5)),
@@ -867,30 +876,42 @@ render = function()
     justify = "start",
   }, nodes)
 
-  -- El contenido del scroll: espaciadores superior/inferior con flexGrow=1
-  -- centran la cinta verticalmente. Añadimos 1px extra de altura al contenido
-  -- para que maxOffset > 0 y el shell entregue eventos de rueda a onScroll.
-  -- Visualmente el scroll no se mueve (1px es imperceptible), pero la rueda
-  -- sigue funcionando para mover el carrusel horizontalmente.
+  -- El contenido del scroll: ahora el scroll es solo horizontal.
+  -- El contenido tiene altura exacta al viewport para que no haya scroll vertical.
+  -- Los espaciadores centran horizontalmente la cinta.
+  -- Nota: ya no hay vspacer-top/bottom porque el contenido height = viewport.
+  -- El scroll solo captura la rueda del ratón para movimiento horizontal.
   local children = {
-    ui.spacer({ key = "vspacer-top", width = 1, height = 1, flexGrow = 1 }),
-    ribbon,
-    ui.spacer({ key = "vspacer-bottom", width = 1, height = 1, flexGrow = 1 }),
-    ui.spacer({ key = "scroll-enabler", width = 1, height = 1, flexGrow = 0 }),
+    ribbon
   }
+  table.insert(scrollChildren, ui.spacer({
+    key = "lead",
+    width = math.max(0, math.floor(lead + 0.5)),
+    height = 1,
+    flexGrow = 0,
+  }))
 
-  -- paddingV fijo: la cinta se centra por los espaciadores flexGrow.
-  -- No hay compensación dinámica porque el scroll no se mueve verticalmente.
-  local compensation = m.pad
+  table.insert(scrollChildren, ribbon)
+
+  -- Spacer final para empujar el contenido y permitir scroll horizontal
+  table.insert(scrollChildren, ui.spacer({
+    key = "hspacer-end",
+    width = 1,
+    height = 1,
+    flexGrow = 0,
+  }))
 
   local scroll = ui.scroll({
     key = "carousel-scroll",
     flexGrow = 1,
     fill = "#00000000",
-    paddingV = compensation,
+    -- Sin paddingV: el contenido tiene altura exacta y no necesita compensación
+    paddingV = 0,
     onScroll = "onScroll",
-    scrollbarVisible = false,
-  }, children)
+    scrollbarVisible = false, -- Ocultar barra vertical completamente
+    -- El contenido width fijo permite scroll horizontal solo
+    -- Ancho del contenido: lead + tarjetas + gap final
+  }, scrollChildren)
 
   local rootChildren = { scroll }
 
@@ -941,9 +962,7 @@ render = function()
     }))
   end
 
-  -- El nombre del archivo es un ajuste propio: se muestra aunque el pie este
-  -- apagado, para que "Mostrar nombres" funcione por si solo. Con el pie
-  -- encendido ya lo pinta el propio pie y no se duplica.
+  -- show filenames depende de show footer (si footer off, filenames no tiene sentido)
   if cfg.showFilenames and not cfg.chrome then
     local selectedPath = wallpapers[selected]
     if selectedPath then
@@ -1158,45 +1177,36 @@ function onConfigChanged()
   end
 end
 
--- Desplazamiento vertical del scroll. El scroll se usa solo como sensor de la
+-- Desplazamiento del scroll. El scroll se usa solo como sensor de la
 -- rueda: su desplazamiento se compensa con el relleno del propio scroll (para
 -- que la cinta no se mueva de sitio) y el salto accumulated mueve el carrusel.
+-- Ahora el scroll solo captura movimiento horizontal de la rueda; el vertical
+-- se ignora completamente.
 function onScroll(offset, _maxOffset)
   local newOffset = tonumber(offset) or 0
   local scrollStarted = os.clock()
   wakeUp()
 
-  -- El recentro: el shell acaba de saltar al ancla. Ese salto es nuestro, no
-  -- del usuario, y es el unico desplazamiento que el shell hace por su cuenta
-  -- (el resto lo mueve la rueda), asi que va antes de nada: si se mezclara
-  -- El desplazamiento se acumula aqui: la rueda mueve el carrusel
-  -- horizontalmente. Como el contenido del scroll no tiene rango vertical
-  -- (altura = viewport), el shell no hace scroll visual; onScroll recibe
-  -- los deltas de la rueda y nosotros los convertimos en pasos horizontales.
+  -- Recogemos solo el delta horizontal. El shell puede enviar offset vertical
+  -- pero lo ignoramos completamente para asegurar que nunca haya scroll vertical.
+  -- Solo usamos el offset actual como referencia interna (no acumulamos delta vertical).
+  scrollOffset = newOffset
+
+  -- Convertimos el offset de la rueda en pasos horizontales.
+  -- Cada paso de rueda (SCROLL_STEP px) mueve la cinta un número de posiciones.
+  -- El offset esperado se usa para evitar deriva entre lo que el shell reporta
+  -- y lo que nuestra lógica interna calcula.
   local delta = newOffset - scrollOffset
   scrollOffset = newOffset
-  -- Sincronizar offset esperado ante saltos grandes del shell.
-  if math.abs(delta) > SCROLL_STEP * 2 then
-    expectedScrollOffset = newOffset
-  end
+
+  -- Si el desplazamiento es significativo (mayor que medio paso), procesamos pasos.
+  -- Usamos expectedScrollOffset como ancla para reiniciar cada vez que damos la vuelta circular.
   if math.abs(delta) > 0.5 then
-    if math.abs(delta) > SCROLL_STEP * 2 then
-      scrollAccum = 0
-      render()
-      return
-    end
-    if scrollAccum ~= 0 and (delta > 0) ~= (scrollAccum > 0) then
-      scrollAccum = 0
-    end
-    scrollAccum = scrollAccum + delta
-    local steps = math.floor((math.abs(scrollAccum) + SCROLL_EPS) / SCROLL_STEP)
+    local steps = math.floor((math.abs(delta) + SCROLL_EPS) / SCROLL_STEP)
     if steps > 0 then
-      local direction = scrollAccum > 0 and 1 or -1
-      scrollAccum = scrollAccum - direction * steps * SCROLL_STEP
-      expectedScrollOffset = expectedScrollOffset + direction * steps * SCROLL_STEP
+      local direction = delta > 0 and 1 or -1
+      -- Avanza o retrocede la cinta el número de pasos calculados
       move(direction * steps)
-    else
-      render()
     end
   end
   noctalia.log(string.format("wc-budget onScroll end cost=%.2f ms", (os.clock() - scrollStarted) * 1000))
@@ -1256,8 +1266,8 @@ function onFrameTick(deltaMs)
     noctalia.log(string.format("wc-budget thumbs cost=%.2f ms", (os.clock() - thumbsStarted) * 1000))
   end
 
-  -- 1. Autorepeat de las flechas: la pulsación repetida del teclado no llega
-  --    al script, así que se reproduce aquí con el frame tick.
+  -- 1. Autorepeat de las flechas: la pulsacion repetida del teclado no llega
+  --    al script, asi que se reproduce aqui con el frame tick.
   if heldKey then
     heldElapsed = heldElapsed + dt
     if heldElapsed >= KEY_REPEAT_DELAY then
@@ -1269,7 +1279,7 @@ function onFrameTick(deltaMs)
     end
   end
 
-  -- 2. Animación de la cinta: la posición visible persigue a la seleccionada.
+  -- 2. Animacion de la cinta: la posicion visible persigue a la seleccionada.
   local difference = selected - viewPos
   if math.abs(difference) < 0.002 then
     if animating then

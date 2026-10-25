@@ -63,6 +63,7 @@ local state = {
   form = { name = "", command = "", layout = "" },
   lastLaunch = {},
   launching = {},
+  rotating = false,
   open = false,
 }
 
@@ -380,21 +381,43 @@ end
 -- Si otra ventana la tapa, la captura mostraría otra cosa y es mejor no
 -- capturar.
 local function isCovered(window, clients, layers)
-  local rect = { x = window.x, y = window.y, w = window.w, h = window.h }
-  local targetMonitor = window.monitor and window.monitor.name or ""
+  local monitor = window.monitor or { x = 0, y = 0, id = "", name = "" }
+  local originX = tonumber(monitor.x) or 0
+  local originY = tonumber(monitor.y) or 0
+  -- Coordenadas globales de la ventana (el resto de los clientes ya vienen
+  -- en coordenadas globales).
+  local rect = {
+    x = (tonumber(window.x) or 0) + originX,
+    y = (tonumber(window.y) or 0) + originY,
+    w = tonumber(window.w) or 0,
+    h = tonumber(window.h) or 0,
+  }
+  local targetMonitorId = tostring(monitor.id or monitor.name or "")
   local targetWorkspace = window.workspace
 
-  -- Otras ventanas por encima (misma salida y espacio de trabajo).
-  for _, other in ipairs(clients or {}) do
+  -- `hyprctl clients` devuelve las ventanas de la más baja a la más alta, así
+  -- que solo las que van DESPUÉS de esta en la lista pueden taparla. Una
+  -- ventana por debajo no cuenta como cobertura.
+  local windowIndex = nil
+  for index, client in ipairs(clients or {}) do
+    if client.address == window.address then
+      windowIndex = index
+      break
+    end
+  end
+
+  for index, other in ipairs(clients or {}) do
     if other.mapped ~= false and not other.hidden then
       if other.address ~= window.address then
-        local otherMonitor = other.monitor
-        if (targetMonitor == "" or otherMonitor == targetMonitor or otherMonitor == window.monitorId) then
-          if targetWorkspace == nil or other.workspace == nil or other.workspace == targetWorkspace then
-            local overlapX = math.min(rect.x + rect.w, other.x + other.w) - math.max(rect.x, other.x)
-            local overlapY = math.min(rect.y + rect.h, other.y + other.h) - math.max(rect.y, other.y)
-            if overlapX > 0 and overlapY > 0 then
-              return true
+        if windowIndex == nil or index > windowIndex then
+          local otherMonitorId = tostring(other.monitor or "")
+          if targetMonitorId == "" or otherMonitorId == targetMonitorId then
+            if targetWorkspace == nil or other.workspace == nil or other.workspace == targetWorkspace then
+              local overlapX = math.min(rect.x + rect.w, other.x + other.w) - math.max(rect.x, other.x)
+              local overlapY = math.min(rect.y + rect.h, other.y + other.h) - math.max(rect.y, other.y)
+              if overlapX > 0 and overlapY > 0 then
+                return true
+              end
             end
           end
         end
@@ -620,9 +643,10 @@ end
 
 -- Rota las ventanas abiertas entre sí.
 rotateWindows = function()
-  if win.rotating then
+  if state.rotating or win.rotating then
     return
   end
+  state.rotating = true
   win.list(function(clients)
     win.monitors(function(monitors)
       local map = classMap()
@@ -632,13 +656,16 @@ rotateWindows = function()
 
       if #windows < 2 then
         noctalia.notify(tr("title"), tr("nothing_to_rotate"))
+        state.rotating = false
         return
       end
 
       local started = win.rotate(windows, cfg.rotation, cfg.rotationSizes, function()
+        state.rotating = false
         refresh()
       end)
       if started == false then
+        state.rotating = false
         return
       end
     end)
@@ -672,9 +699,17 @@ openAll = function()
 
       if #missing == 0 then
         if #windows >= 2 then
-          win.rotate(windows, cfg.rotation, cfg.rotationSizes, function()
+          if state.rotating or win.rotating then
+            return
+          end
+          state.rotating = true
+          local started = win.rotate(windows, cfg.rotation, cfg.rotationSizes, function()
+            state.rotating = false
             refresh()
           end)
+          if started == false then
+            state.rotating = false
+          end
         else
           noctalia.notify(tr("title"), tr("nothing_to_rotate"))
         end
@@ -1089,7 +1124,7 @@ editorCard = function()
 
   return ui.column({
     key = "editor",
-    flexGrow = 1,
+    width = cardWidth(),
     gap = 6,
     padding = CARD_PADDING,
     radius = 12,
@@ -1273,9 +1308,18 @@ function onConfigChanged()
   loadWidgets(true)
   if state.open then
     render()
-    -- Los indicadores de "abierta" y las miniaturas se refrescan también.
+    -- Los indicadores de "abierta" y las miniaturas se refrescan también, y
+    -- si cambió una posición/tamaño en Ajustes se reaplica a la ventana
+    -- abierta en vez de dejarla donde estaba.
     refreshWindows(function()
       if state.open then
+        for _, name in ipairs(widgetNames()) do
+          local window = state.windows[name]
+          if window ~= nil then
+            local geometry = resolveGeometry(name)
+            win.focusExisting(util.classFor(name), geometry, function() end)
+          end
+        end
         render()
       end
     end)

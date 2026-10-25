@@ -21,8 +21,8 @@ import tempfile
 
 PLUGIN_ID = "faminec/floating-term"
 SECTION = f'[plugin_settings."{PLUGIN_ID}"]'
-SUB_COMMANDS = f'{SECTION}.commands'
-SUB_LAYOUTS = f'{SECTION}.layouts'
+SUB_COMMANDS = f'[plugin_settings."{PLUGIN_ID}".commands]'
+SUB_LAYOUTS = f'[plugin_settings."{PLUGIN_ID}".layouts]'
 
 
 def settings_path() -> str:
@@ -85,18 +85,24 @@ def plugin_section_index(sections):
     return None
 
 
-def remove_subtables(sections):
-    """Elimina las sub-tablas commands/layouts del plugin del listado."""
+def remove_subtables(sections, commands=False, layouts=False):
+    """Elimina las sub-tablas commands/layouts del plugin del listado.
+
+    Solo se borran las que se van a reescribir, para no perder la otra cuando
+    la sincronizacion es parcial.
+    """
     out = []
     for header, body in sections:
-        if header == SUB_COMMANDS or header == SUB_LAYOUTS:
+        if commands and header == SUB_COMMANDS:
+            continue
+        if layouts and header == SUB_LAYOUTS:
             continue
         out.append((header, body))
     return out
 
 
 def upsert_plugin_section(sections, commands, layouts):
-    sections = remove_subtables(sections)
+    sections = remove_subtables(sections, commands is not None, layouts is not None)
     index = plugin_section_index(sections)
     if index is None:
         sections.append((SECTION, []))

@@ -27,29 +27,31 @@ end
 
 M.lastTab = "sound"
 
+local PANEL_ID = "faminec/cmf-buds:panel"
+
 local PANEL_IDS = {
-  sound = "faminec/cmf-buds:panel-sound",
-  controls = "faminec/cmf-buds:panel-controls",
-  actions = "faminec/cmf-buds:panel-actions",
-  system = "faminec/cmf-buds:panel-system",
+  sound = PANEL_ID,
+  controls = PANEL_ID,
+  actions = PANEL_ID,
+  system = PANEL_ID,
 }
 
 function M.panel_id(tab)
-  return PANEL_IDS[tab or "sound"] or PANEL_IDS.sound
+  return PANEL_ID
 end
 
 -- Las entradas (widget, panel, servicio) viven en VMs distintas: el estado
 -- compartido se pasa por noctalia.state.
 function M.last_tab()
   local value = noctalia.state.get("last_tab")
-  if type(value) == "string" and PANEL_IDS[value] ~= nil then
+  if type(value) == "string" and (value == "sound" or value == "controls" or value == "actions" or value == "system") then
     return value
   end
   return "sound"
 end
 
 function M.set_last_tab(tab)
-  if PANEL_IDS[tab] ~= nil then
+  if tab == "sound" or tab == "controls" or tab == "actions" or tab == "system" then
     noctalia.state.set("last_tab", tab)
   end
 end

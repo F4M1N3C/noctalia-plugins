@@ -65,36 +65,14 @@ id = "widget"
 entry = "widget.luau"
 
 [[panel]]
-id = "panel-sound"
-entry = "panel_sound.luau"
+id = "panel"
+entry = "panel.luau"
 width = 600
-height = 960
+height = 1000
 placement = "floating"
 position = "top_center"
-
-[[panel]]
-id = "panel-controls"
-entry = "panel_controls.luau"
-width = 600
-height = 610
-placement = "floating"
-position = "top_center"
-
-[[panel]]
-id = "panel-actions"
-entry = "panel_actions.luau"
-width = 600
-height = 1040
-placement = "floating"
-position = "top_center"
-
-[[panel]]
-id = "panel-system"
-entry = "panel_system.luau"
-width = 600
-height = 950
-placement = "floating"
-position = "top_center"
+layer = "overlay"
+open_near_click = false
 
 [[service]]
 id = "service"

@@ -34,7 +34,8 @@
     "connect": "Conectar",
     "reconnect": "Reconectar",
     "refresh": "Actualizar",
-    "settings": "Ajustes del plugin"
+    "settings": "Ajustes del plugin",
+    "disconnect": "Desconectar"
   },
   "controls": {
     "case": "Dial del estuche",
@@ -77,7 +78,12 @@
     "running": "Midiendo el sellado…",
     "start": "Iniciar test",
     "stop": "Detener test",
-    "title": "Test de ajuste"
+    "title": "Test de ajuste",
+    "intro_audio": "Mejora la calidad de audio",
+    "intro_audio_desc": "Ajusta el sellado de los auriculares para una reproduccion mas fiel.",
+    "intro_anc": "Cancelación de ruido optimizada",
+    "intro_anc_desc": "Un buen sellado mejora la eficacia de la cancelacion de ruido.",
+    "not_worn": "No se pudo medir. Ponte los auriculares y vuelve a intentarlo."
   },
   "gesture": {
     "double": "Doble pulsación",
@@ -138,7 +144,8 @@
     "delete": "Eliminar regla",
     "gesture": {
       "dial_down": "Rueda del dial ↓",
-      "dial_up": "Rueda del dial ↑"
+      "dial_up": "Rueda del dial ↑",
+      "knob": "Pulsar el knob"
     },
     "gesture_label": "Gesto",
     "hint": "El dial del estuche sendseñala al PC como un cambio de volumen. Aquí decides qué hace esa señal: con SUPER pulsado, por ejemplo, cambiar de workspace en lugar de tocar el volumen. Las pulsaciones repetidas se agrupan para detectar dobles y triples.",
@@ -185,7 +192,12 @@
     "low_latency_desc": "Modo juego; reduce el retardo Bluetooth.",
     "spatial": "Audio espacial",
     "spatial_desc": "Sonido envolvente para música y vídeo.",
-    "title": "Ajustes del dispositivo"
+    "title": "Ajustes del dispositivo",
+    "dual_note": "El PC se queda con la conexion cuando controlas desde aqui. El movil puede reconectar y quitarle el audio.",
+    "dual_restart": "Reinicia los auriculares (guardalos en el estuche y vuelvelos a sacar) para aplicar el cambio.",
+    "dual_restart_ack": "Ya los reinicie",
+    "devices_none": "No hay dispositivos Nothing/CMF emparejados en este PC.",
+    "devices_note": "Conexion dual: hasta 2 dispositivos a la vez. El segundo hueco lo gestiona el movil."
   },
   "tab": {
     "actions": "Atajos",

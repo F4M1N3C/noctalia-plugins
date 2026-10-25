@@ -571,6 +571,9 @@ class LocalActionEngine:
         # Gancho del demonio: asi el panel ve en vivo los cambios de volumen
         # hechos con el dial o desde la app Nothing.
         self.on_volume = None
+        # Gancho para que el demonio persista cambios de estado (ultimo evento,
+        # ultima accion) en state.json y el panel los vea en vivo.
+        self.on_event = None
 
     # -- persistencia --------------------------------------------------------
     def load(self):
@@ -753,6 +756,15 @@ class LocalActionEngine:
         self._register("knob_press", None, None)
         self.log("Knob: pulsacion detectada (%s)" % member)
 
+    def _publish(self):
+        cb = getattr(self, "on_event", None)
+        if cb is None:
+            return
+        try:
+            cb()
+        except Exception as exc:
+            self.log("No se pudo publicar el estado local: %s" % exc)
+
     # -- agrupacion de pulsaciones -----------------------------------------
     def _register(self, trigger, sink=None, previous_volume=None):
         now = time.time()
@@ -827,6 +839,7 @@ class LocalActionEngine:
                     "modifiers": modifiers,
                     "at": int(time.time() * 1000),
                 }
+                self._publish()
                 self._run_rule(chosen, trigger, count, modifiers, previous_volume)
                 return
 
@@ -961,6 +974,7 @@ class LocalActionEngine:
                 "modifiers": modifiers,
                 "at": int(time.time() * 1000),
             }
+            self._publish()
             return
         self._run_rule(
             rule, pending["trigger"], pending["count"], modifiers, pending.get("volume")
@@ -983,6 +997,7 @@ class LocalActionEngine:
         if rule.get("restore_volume") and previous_volume is not None:
             self._restore_volume_delayed(previous_volume)
         self.last_action = info
+        self._publish()
         self.log(
             "Accion local: %s | %s | mods=%s | vol=%s | -> %s"
             % (

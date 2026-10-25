@@ -613,6 +613,7 @@ class BudsDaemon:
                 # demonio los publica en state.json para que el panel los vea en
                 # vivo (antes solo se refrescaban al pulsar Actualizar).
                 self.local.on_volume = self._external_volume
+                self.local.on_event = lambda: self.save()
             except Exception as exc:
                 self.log("No se pudo crear el motor de acciones locales: %s" % exc)
 

@@ -3,13 +3,13 @@
 -- internas, asi la posicion del panel se mantiene al cambiar de seccion y hay
 -- una sola opcion global de posicion/capa.
 
+local C = require("./lib/common.luau")
 local P = require("./lib/panel_ui.luau")
 
-local TAB = "sound"
 local PANEL = "faminec/cmf-buds:panel"
 
 function onOpen(context)
-  P.setup(TAB, PANEL, 1000)
+  P.setup(C.last_tab(), PANEL, 1000)
   P.onOpen(context)
 end
 

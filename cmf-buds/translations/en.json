@@ -34,7 +34,8 @@
     "connect": "Connect",
     "reconnect": "Reconnect",
     "refresh": "Refresh",
-    "settings": "Plugin settings"
+    "settings": "Plugin settings",
+    "disconnect": "Disconnect"
   },
   "controls": {
     "case": "Case dial",
@@ -77,7 +78,12 @@
     "running": "Measuring the seal…",
     "start": "Start test",
     "stop": "Stop test",
-    "title": "Ear tip fit test"
+    "title": "Ear tip fit test",
+    "intro_audio": "Improve audio quality",
+    "intro_audio_desc": "Tunes the earbud seal for more faithful playback.",
+    "intro_anc": "Optimized noise cancellation",
+    "intro_anc_desc": "A good seal improves noise cancellation effectiveness.",
+    "not_worn": "Could not measure. Put the earbuds on and try again."
   },
   "gesture": {
     "double": "Double press",
@@ -138,7 +144,8 @@
     "delete": "Delete rule",
     "gesture": {
       "dial_down": "Dial wheel down",
-      "dial_up": "Dial wheel up"
+      "dial_up": "Dial wheel up",
+      "knob": "Press the knob"
     },
     "gesture_label": "Gesture",
     "hint": "El dial del estuche sendseñala al PC como un cambio de volumen. Aquí decides qué hace esa señal: con SUPER pulsado, por ejemplo, cambiar de workspace en lugar de tocar el volumen. Las pulsaciones repetidas se agrupan para detectar dobles y triples.",
@@ -185,7 +192,12 @@
     "low_latency_desc": "Game mode; reduces Bluetooth delay.",
     "spatial": "Spatial audio",
     "spatial_desc": "Immersive sound for music and video.",
-    "title": "Device settings"
+    "title": "Device settings",
+    "dual_note": "The PC keeps the connection when you control from here. The phone can reconnect and take audio away.",
+    "dual_restart": "Restart the earbuds (put them in the case and take them out) to apply the change.",
+    "dual_restart_ack": "I restarted them",
+    "devices_none": "No Nothing/CMF devices paired on this PC.",
+    "devices_note": "Dual connection: up to 2 devices at once. The second slot is managed by the phone."
   },
   "tab": {
     "actions": "Shortcuts",

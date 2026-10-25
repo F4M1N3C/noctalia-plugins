@@ -1086,8 +1086,8 @@ local function fitCard()
         end,
       }),
     }),
-    -- Panel previo (como Nothing X): dos tarjetas informativas + botón iniciar
-    ui.column({ gap = 6, padding = 10, radius = 10, fill = "surface_variant/0.3" }, {
+    -- Panel introductorio (como Nothing X): dos tarjetas informativas + botón iniciar
+    ui.column({ gap = 8, padding = 10, radius = 10, fill = "surface_variant/0.3" }, {
       ui.row({ gap = 8, align = "center" }, {
         ui.glyph({ name = "sparkles", size = 14, color = "primary" }),
         ui.column({ gap = 0, flexGrow = 1 }, {
@@ -1101,6 +1101,15 @@ local function fitCard()
           ui.label({ text = tr("fit.intro_anc"), fontSize = 11, color = "on_surface" }),
           ui.label({ text = tr("fit.intro_anc_desc"), fontSize = 9, color = "on_surface_variant", maxLines = 2 }),
         }),
+      }),
+      ui.button({
+        text = tr("fit.start"),
+        glyph = "ear",
+        variant = "secondary",
+        controlSize = "sm",
+        onClick = function()
+          rpc({ cmd = "fit_test", start = true })
+        end,
       }),
     }),
   }
@@ -1240,7 +1249,11 @@ local function systemTab()
 
   -- Panel de dispositivos: lista Nothing/CMF emparejados (máx. 2)
   local deviceRows = {}
-  for _, dev in ipairs(localDevices) do
+  local shownDevices = {}
+  for i = 1, math.min(2, #localDevices) do
+    table.insert(shownDevices, localDevices[i])
+  end
+  for _, dev in ipairs(shownDevices) do
     table.insert(deviceRows, ui.row({ gap = 8, align = "center" }, {
       ui.glyph({ name = dev.connected and "bluetooth" or "bluetooth-off", size = 13, color = dev.connected and "primary" or "on_surface_variant" }),
       ui.column({ gap = 0, flexGrow = 1 }, {
@@ -1274,8 +1287,6 @@ local function systemTab()
       toggleRow("ear", "system.in_ear", "system.in_ear_desc", "in_ear", st and st.in_ear),
       ui.separator({ thickness = 1, color = "outline/0.25", spacing = 6 }),
       toggleRow("bolt", "system.low_latency", "system.low_latency_desc", "low_latency", st and st.low_latency),
-      ui.separator({ thickness = 1, color = "outline/0.25", spacing = 6 }),
-      toggleRow("devices", "system.dual", "system.dual_desc", "dual_connection", st and st.dual_connection),
     }),
     card(dualChildren),
     card(deviceRows),
@@ -1379,7 +1390,7 @@ end
 -- ── ciclo de vida ────────────────────────────────────────────────────────────
 
 function M.onOpen(_context)
-  M.setup(tab, panelId)
+  M.setup(tab, panelId, panelHeight)
   ensurePaths()
   loadFonts()
   C.loadTranslations()

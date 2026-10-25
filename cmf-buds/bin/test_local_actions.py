@@ -939,11 +939,11 @@ def test_contrato_luau_motor():
         niveles_ui == set(_budsctl.ANC_LEVELS),
         (sorted(niveles_ui), sorted(_budsctl.ANC_LEVELS)),
     )
-    paneles_ui = re.findall(r'(\w+) = "(faminec/cmf-buds:panel-[\w-]+)"', comun)
+    paneles_ui = re.findall(r'PANEL_ID\s*=\s*"(faminec/cmf-buds:[\w-]+)"', comun)
     paneles_manifiesto = {p["id"] for p in manifiesto["panel"]}
     r.check(
         "los paneles de la UI son los del manifiesto",
-        {v for k, v in paneles_ui} == {"faminec/cmf-buds:" + p for p in paneles_manifiesto},
+        set(paneles_ui) == {"faminec/cmf-buds:" + p for p in paneles_manifiesto},
         (paneles_ui, paneles_manifiesto),
     )
     return r.failures

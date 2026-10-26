@@ -16,7 +16,7 @@
 -- El panel usa un `ui.scroll` como captura de la rueda: el desplazamiento
 -- vertical se compensa con el relleno del propio scroll para que la cinta no
 -- se mueva de sitio, y su delta mueve el carrusel horizontalmente.
-local THUMB_VERSION = "v7"
+local THUMB_VERSION = "v6"
 -- Tamaño logico del panel. El host no expone el tamaño de la superficie al
 -- script y el manifiesto no acepta "fill" fuera del modo flotante, asi que el
 -- panel declara este mismo tamaño en plugin.toml y la cinta se calcula con el.
@@ -300,7 +300,24 @@ local function imagePathFor(source, bucket)
   if ready then
     return path
   end
-  return nil
+  -- La miniatura de este bucket aun se esta generando. Antes de dejar un
+  -- hueco vacio se usa la del centro (ya inclinada) o, en ultimo caso, la
+  -- imagen original: la tarjeta se ve al instante y se cambia sola cuando
+  -- termina el lote (el callback de generacion limpia thumbReady y repinta).
+  if bucket ~= 0 then
+    local center = thumbPath(source, 0)
+    if center ~= source then
+      local centerReady = thumbReady[center]
+      if centerReady == nil then
+        centerReady = noctalia.fileExists(center)
+        thumbReady[center] = centerReady
+      end
+      if centerReady then
+        return center
+      end
+    end
+  end
+  return source
 end
 
 local function loadConfig()
@@ -325,10 +342,6 @@ local function loadConfig()
   cfg.chrome = noctalia.getConfig("chrome") == true
   cfg.wheel = noctalia.getConfig("wheel") ~= false
   cfg.openRandom = noctalia.getConfig("open_random") ~= false
-  cfg.panelMode = tostring(noctalia.getConfig("panel_mode") or "attached")
-  if cfg.panelMode ~= "attached" and cfg.panelMode ~= "floating" then
-    cfg.panelMode = "attached"
-  end
   cfg.gap = tonumber(noctalia.getConfig("gap")) or 0
 end
 
@@ -470,7 +483,7 @@ local function panelHeight()
 end
 
 local function viewportHeight()
-  return (panelHeight() - VIEWPORT_PADDING * 2) / uiScale()
+  return math.max(240, panelHeight() - VIEWPORT_PADDING * 2)
 end
 
 local function viewportWidth()
@@ -479,7 +492,7 @@ local function viewportWidth()
   if output and tonumber(output.width) and tonumber(output.width) > 0 then
     available = math.min(available, tonumber(output.width) - 32)
   end
-  return math.max(320, available / uiScale())
+  return math.max(320, available)
 end
 
 -- Métricas de la cinta: cuántas tarjetas entran en pantalla y cuánto relleno
@@ -490,6 +503,12 @@ end
 local function metrics()
   local viewport = viewportHeight()
   local ribbonHeight = cfg.cardHeight
+  -- Relleno vertical que centra la cinta: los espaciadores flexGrow=1
+  -- la centran automáticamente, pero pad se usa como paddingV base del scroll.
+  local pad = (viewport - ribbonHeight) / 2
+  if pad < 0 then
+    pad = 0
+  end
   -- El relleno horizontal: gap entre tarjetas. Positivo = separación,
   -- negativo = solapamiento para efecto cinta continua.
   local gap = clamp(cfg.gap, -40, 40)
@@ -504,6 +523,7 @@ local function metrics()
     slot = slot,
     viewport = viewport,
     ribbonHeight = ribbonHeight,
+    pad = pad,
     gap = gap,
     baseScale = cfg.baseScale,
   }
@@ -525,7 +545,7 @@ local function ensureThumbs()
   -- (para que al desplazarse siempre haya imágenes listas). El helper descarta
   -- las que ya existen, asi que repetir el trabajo es barato.
   local m = metrics()
-  local half = math.max(m.half, 6)
+  local half = m.half + 1
   local first = selected - half
   local last = selected + half
   local items = {}
@@ -694,6 +714,7 @@ end
 
 -- ¿Está el puntero sobre esta tarjeta?
 function onCardHover(state, key)
+  local hoverStarted = os.clock()
   local slot = tonumber(key)
   if slot == nil then
     return
@@ -856,7 +877,7 @@ render = function()
   -- El lead calcula el espacio inicial para centrar la tarjeta seleccionada.
   -- Con gap negativo (solapamiento), el lead se ajusta para mantener el
   -- centrado visual.
-  local lead = viewportWidth() / 2 - m.slot / 2 - fraction * m.slot
+  local lead = viewportWidth() / 2 - m.slot / 2 - half * m.slot - fraction * m.slot
   -- Ajuste de lead por el gap: si las tarjetas se solapan, necesitamos menos
   -- espacio inicial para mantener el centrado.
   lead = lead - m.gap
@@ -876,42 +897,29 @@ render = function()
     justify = "start",
   }, nodes)
 
-  -- El contenido del scroll: ahora el scroll es solo horizontal.
-  -- El contenido tiene altura exacta al viewport para que no haya scroll vertical.
-  -- Los espaciadores centran horizontalmente la cinta.
-  -- Nota: ya no hay vspacer-top/bottom porque el contenido height = viewport.
-  -- El scroll solo captura la rueda del ratón para movimiento horizontal.
+  -- El contenido del scroll: espaciadores superior/inferior con flexGrow=1
+  -- centran la cinta verticalmente. Añadimos 1px extra de altura al contenido
+  -- para que maxOffset > 0 y el shell entregue eventos de rueda a onScroll.
+  -- Visualmente el scroll no se mueve (1px es imperceptible), pero la rueda
+  -- sigue funcionando para mover el carrusel horizontalmente.
   local children = {
-    ribbon
+    ui.spacer({ key = "vspacer-top", width = 1, height = 1, flexGrow = 1 }),
+    ribbon,
+    ui.spacer({ key = "vspacer-bottom", width = 1, height = 1, flexGrow = 1 }),
+    ui.spacer({ key = "scroll-enabler", width = 1, height = 1, flexGrow = 0 }),
   }
-  table.insert(scrollChildren, ui.spacer({
-    key = "lead",
-    width = math.max(0, math.floor(lead + 0.5)),
-    height = 1,
-    flexGrow = 0,
-  }))
 
-  table.insert(scrollChildren, ribbon)
-
-  -- Spacer final para empujar el contenido y permitir scroll horizontal
-  table.insert(scrollChildren, ui.spacer({
-    key = "hspacer-end",
-    width = 1,
-    height = 1,
-    flexGrow = 0,
-  }))
+  -- paddingV fijo: la cinta se centra por los espaciadores flexGrow.
+  -- No hay compensación dinámica porque el scroll no se mueve verticalmente.
+  local compensation = m.pad
 
   local scroll = ui.scroll({
     key = "carousel-scroll",
     flexGrow = 1,
     fill = "#00000000",
-    -- Sin paddingV: el contenido tiene altura exacta y no necesita compensación
-    paddingV = 0,
+    paddingV = compensation,
     onScroll = "onScroll",
-    scrollbarVisible = false, -- Ocultar barra vertical completamente
-    -- El contenido width fijo permite scroll horizontal solo
-    -- Ancho del contenido: lead + tarjetas + gap final
-  }, scrollChildren)
+  }, children)
 
   local rootChildren = { scroll }
 
@@ -962,28 +970,8 @@ render = function()
     }))
   end
 
-  -- show filenames depende de show footer (si footer off, filenames no tiene sentido)
-  if cfg.showFilenames and not cfg.chrome then
-    local selectedPath = wallpapers[selected]
-    if selectedPath then
-      table.insert(rootChildren, ui.row({
-        key = "filename",
-        paddingH = 16,
-        paddingV = 10,
-        align = "center",
-        justify = "center",
-      }, {
-        ui.label({
-          text = basename(selectedPath),
-          fontSize = 12,
-          color = "on_surface",
-          textAlign = "center",
-          maxLines = 1,
-        }),
-      }))
-    end
-  end
-
+  -- El nombre del archivo vive solo en el pie: sin pie (chrome) no hay
+  -- nombres, tal como pide el ajuste "mostrar nombres" dependiente del pie.
   local scrim = cfg.scrim
   local fill = "#00000000"
   if scrim > 0 then
@@ -1187,26 +1175,34 @@ function onScroll(offset, _maxOffset)
   local scrollStarted = os.clock()
   wakeUp()
 
-  -- Recogemos solo el delta horizontal. El shell puede enviar offset vertical
-  -- pero lo ignoramos completamente para asegurar que nunca haya scroll vertical.
-  -- Solo usamos el offset actual como referencia interna (no acumulamos delta vertical).
-  scrollOffset = newOffset
-
-  -- Convertimos el offset de la rueda en pasos horizontales.
-  -- Cada paso de rueda (SCROLL_STEP px) mueve la cinta un número de posiciones.
-  -- El offset esperado se usa para evitar deriva entre lo que el shell reporta
-  -- y lo que nuestra lógica interna calcula.
+  -- El desplazamiento se acumula aqui: la rueda mueve el carrusel
+  -- horizontalmente. Como el contenido del scroll no tiene rango vertical
+  -- (altura = viewport), el shell no hace scroll visual; onScroll recibe
+  -- los deltas de la rueda y nosotros los convertimos en pasos horizontales.
   local delta = newOffset - scrollOffset
   scrollOffset = newOffset
-
-  -- Si el desplazamiento es significativo (mayor que medio paso), procesamos pasos.
-  -- Usamos expectedScrollOffset como ancla para reiniciar cada vez que damos la vuelta circular.
+  -- Sincronizar offset esperado ante saltos grandes del shell.
+  if math.abs(delta) > SCROLL_STEP * 2 then
+    expectedScrollOffset = newOffset
+  end
   if math.abs(delta) > 0.5 then
-    local steps = math.floor((math.abs(delta) + SCROLL_EPS) / SCROLL_STEP)
+    if math.abs(delta) > SCROLL_STEP * 2 then
+      scrollAccum = 0
+      render()
+      return
+    end
+    if scrollAccum ~= 0 and (delta > 0) ~= (scrollAccum > 0) then
+      scrollAccum = 0
+    end
+    scrollAccum = scrollAccum + delta
+    local steps = math.floor((math.abs(scrollAccum) + SCROLL_EPS) / SCROLL_STEP)
     if steps > 0 then
-      local direction = delta > 0 and 1 or -1
-      -- Avanza o retrocede la cinta el número de pasos calculados
+      local direction = scrollAccum > 0 and 1 or -1
+      scrollAccum = scrollAccum - direction * steps * SCROLL_STEP
+      expectedScrollOffset = expectedScrollOffset + direction * steps * SCROLL_STEP
       move(direction * steps)
+    else
+      render()
     end
   end
   noctalia.log(string.format("wc-budget onScroll end cost=%.2f ms", (os.clock() - scrollStarted) * 1000))

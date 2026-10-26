@@ -207,5 +207,19 @@ placement = "attached"
 position = "center"
 keyboard_focus = "exclusive"
 capture_keys = ["Escape", "Left", "Right", "Return", "space", "Home", "End", "h", "l", "j", "k", "r"]
-dismiss_on_outside_click = true
+dismiss_on_outside_click = false
+layer = "overlay"
+
+# Misma entrada, pero como ventana flotante. El widget elige una u otra según
+# el ajuste `panel_mode`; así el panel se puede usar pegado a la barra o suelto.
+[[panel]]
+id = "panel_floating"
+entry = "panel.luau"
+width = 1720
+height = 1000
+placement = "floating"
+position = "center"
+keyboard_focus = "exclusive"
+capture_keys = ["Escape", "Left", "Right", "Return", "space", "Home", "End", "h", "l", "j", "k", "r"]
+dismiss_on_outside_click = false
 layer = "overlay"

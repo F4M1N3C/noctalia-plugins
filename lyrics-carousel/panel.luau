@@ -38,6 +38,19 @@ local IMAGE_ONLY_FONTS = {
 
 local ACCENT_CHOICES = { "primary", "green", "yellow", "blue", "magenta", "cyan", "red", "custom" }
 
+-- Claves completas: el validador de recursos necesita verlas literales, no
+-- concatenadas ("accent_" .. name), o las marca como inexistentes.
+local ACCENT_KEYS = {
+  primary = "accent_primary",
+  green = "accent_green",
+  yellow = "accent_yellow",
+  blue = "accent_blue",
+  magenta = "accent_magenta",
+  cyan = "accent_cyan",
+  red = "accent_red",
+  custom = "accent_custom",
+}
+
 -- Las funciones se llaman entre sí (un ajuste lanza la ventana, la ventana
 -- avisa al panel, el panel vuelve a dibujar). En Luau un `local function`
 -- solo existe desde su declaración: sin estas declaraciones, las llamadas
@@ -554,20 +567,32 @@ end
 
 local function countChips(key, label)
   local current = math.floor(numberOf(key))
-  local items = {}
-  for _, value in ipairs({ 0, 2, 4, 6, 8, 12 }) do
-    table.insert(items, {
+  local values = { 0, 2, 4, 6, 8, 12 }
+  local rows = {}
+  local row = {}
+  local index = 0
+  for _, value in ipairs(values) do
+    index = index + 1
+    table.insert(row, ui.button({
       key = key .. "-" .. value,
       text = tostring(value),
-      selected = value == current,
+      variant = value == current and "secondary" or "ghost",
+      fontSize = 11,
       onClick = function()
         setSetting(key, value)
       end,
-    })
+    }))
+    if index % 3 == 0 then
+      table.insert(rows, ui.row({ gap = 6 }, row))
+      row = {}
+    end
+  end
+  if #row > 0 then
+    table.insert(rows, ui.row({ gap = 6 }, row))
   end
   return ui.column({ gap = 4 }, {
     ui.label({ text = label, fontSize = 11, color = "on_surface_variant" }),
-    chipRow(items),
+    ui.column({ gap = 6 }, rows),
   })
 end
 
@@ -577,7 +602,7 @@ local function accentChips()
   for _, name in ipairs(ACCENT_CHOICES) do
     table.insert(items, {
       key = "accent-" .. name,
-      text = tr("accent_" .. name),
+      text = tr(ACCENT_KEYS[name]),
       selected = name == current,
       onClick = function()
         setSetting("accent", name)
@@ -596,6 +621,19 @@ local ANCHOR_CHOICES = {
   "custom",
 }
 
+local ANCHOR_KEYS = {
+  ["top-left"] = "anchor_top_left",
+  ["top-center"] = "anchor_top_center",
+  ["top-right"] = "anchor_top_right",
+  ["left-center"] = "anchor_left_center",
+  center = "anchor_center",
+  ["right-center"] = "anchor_right_center",
+  ["bottom-left"] = "anchor_bottom_left",
+  ["bottom-center"] = "anchor_bottom_center",
+  ["bottom-right"] = "anchor_bottom_right",
+  custom = "anchor_custom",
+}
+
 local function anchorChips()
   local current = normalizeAnchor(valueOf("anchor"))
   local rows = {}
@@ -605,7 +643,7 @@ local function anchorChips()
     index = index + 1
     table.insert(row, ui.button({
       key = "anchor-" .. name,
-      text = tr("anchor_" .. name:gsub("-", "_")),
+      text = tr(ANCHOR_KEYS[name]),
       variant = name == current and "secondary" or "ghost",
       fontSize = 10,
       onClick = function()
@@ -627,7 +665,7 @@ local function anchorSelect()
   local current = tostring(valueOf("anchor"))
   local options = {}
   for _, name in ipairs(ANCHOR_CHOICES) do
-    table.insert(options, tr("anchor_" .. name:gsub("-", "_")))
+    table.insert(options, tr(ANCHOR_KEYS[name]))
   end
   local selectedIndex = 1
   for i, name in ipairs(ANCHOR_CHOICES) do
@@ -651,8 +689,6 @@ end
 
 local function sizeStepper(key, label, min, max, step)
   local current = math.floor(numberOf(key))
-  local dec = math.max(min, current - step)
-  local inc = math.min(max, current + step)
   return ui.row({ align = "center", gap = 6 }, {
     ui.button({
       key = key .. "-dec",
@@ -661,11 +697,13 @@ local function sizeStepper(key, label, min, max, step)
       fontSize = 12,
       onHover = function(state)
         if state == "true" then
-          setSetting(key, dec, { geometry = true })
+          local new_val = math.max(min, math.floor(numberOf(key)) - step)
+          setSetting(key, new_val, { geometry = true })
         end
       end,
       onClick = function()
-        setSetting(key, dec, { geometry = true })
+        local new_val = math.max(min, math.floor(numberOf(key)) - step)
+        setSetting(key, new_val, { geometry = true })
       end,
     }),
     ui.label({ text = tostring(current), fontSize = 12, color = "on_surface", flexGrow = 1 }),
@@ -676,11 +714,13 @@ local function sizeStepper(key, label, min, max, step)
       fontSize = 12,
       onHover = function(state)
         if state == "true" then
-          setSetting(key, inc, { geometry = true })
+          local new_val = math.min(max, math.floor(numberOf(key)) + step)
+          setSetting(key, new_val, { geometry = true })
         end
       end,
       onClick = function()
-        setSetting(key, inc, { geometry = true })
+        local new_val = math.min(max, math.floor(numberOf(key)) + step)
+        setSetting(key, new_val, { geometry = true })
       end,
     }),
   })

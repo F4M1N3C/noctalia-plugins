@@ -7,15 +7,16 @@ nunca se asigna → en tiempo de ejecución es `nil` y salta un
 "attempt to call a nil value".
 
 Para detectarlo sin adivinar, este revisor compila cada fichero con `luac -l`
-y mira el código byte a laella: los globales LEÍDOS (GETTABUP ... _ENV "x") que
-nunca se ESCRIBEN (SETTABUP ... _ENV "x") son suspectos.
+y mira el código byte a byte: los globales LEÍDOS (GETTABUP ... _ENV "x") que
+nunca se ESCRIBEN (SETTABUP ... _ENV "x") son sospechosos.
 
-Uso:  python3 tools/check-luau-globals.py [carpeta ...]
+Uso:  python3 tools/check-luau-globals.py [--json] [carpeta ...]
 Devuelve 1 si encuentra algo.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -137,7 +138,8 @@ def textual_check(path: str):
 
 
 def main(argv):
-    roots = argv[1:] or ["."]
+    json_mode = "--json" in argv[1:]
+    roots = [arg for arg in argv[1:] if arg != "--json"] or ["."]
     luac = compiler()
     if not luac:
         print("no se encontró luac: no se puede revisar", file=sys.stderr)
@@ -154,35 +156,67 @@ def main(argv):
                 if name.endswith(".luau"):
                     files.append(os.path.join(current, name))
 
-    problems = 0
-    total_problems = 0
+    findings = []
     skipped = 0
     for path in sorted(files):
         data, errors = globals_of(path, luac)
         if data is None:
             # Sintaxis específica de Luau: se revisa con el análisis textual.
             problems = textual_check(path)
-            if problems:
-                print(path)
-                for number, name, reason in problems:
-                    print("  línea %-5d %-22s %s" % (number, name, reason))
-                total_problems += len(problems)
+            for number, name, reason in problems:
+                findings.append(
+                    {
+                        "fichero": path,
+                        "linea": number,
+                        "nombre": name,
+                        "mensaje": reason,
+                        "nivel": "error",
+                    }
+                )
             skipped += 1
             continue
         reads, writes = data
         suspects = sorted(reads - writes - ALLOWED)
-        if suspects:
-            print(path)
-            for name in suspects:
-                print("  global leído y nunca escrito: %s" % name)
-            problems += len(suspects)
-            total_problems += len(suspects)
-    print("---")
-    print(
-        "%d fichero(s) revisados, %d aviso(s), %d revisados solo con texto"
-        % (len(files), total_problems, skipped)
-    )
-    return 1 if total_problems else 0
+        for name in suspects:
+            findings.append(
+                {
+                    "fichero": path,
+                    "linea": 0,
+                    "nombre": name,
+                    "mensaje": "global leído y nunca escrito",
+                    "nivel": "error",
+                }
+            )
+
+    if json_mode:
+        print(
+            json.dumps(
+                {
+                    "herramienta": "check-luau-globals.py",
+                    "ficheros_revisados": len(files),
+                    "revisados_solo_texto": skipped,
+                    "hallazgos": findings,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        current = None
+        for item in findings:
+            if item["fichero"] != current:
+                current = item["fichero"]
+                print(current)
+            if item["linea"]:
+                print("  línea %-5d %-22s %s" % (item["linea"], item["nombre"], item["mensaje"]))
+            else:
+                print("  %s" % item["mensaje"])
+        print("---")
+        print(
+            "%d fichero(s) revisados, %d aviso(s), %d revisados solo con texto"
+            % (len(files), len(findings), skipped)
+        )
+    return 1 if findings else 0
 
 
 if __name__ == "__main__":

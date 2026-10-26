@@ -1225,6 +1225,8 @@ DEFAULTS = {
     "width": 1200,
     "height": 820,
     "anchor": "center",
+    "custom_x": 100,
+    "custom_y": 100,
     "accent": "primary",
     "custom_color": "#e46767",
     "active_scale": 1.35,
@@ -1235,7 +1237,7 @@ DEFAULTS = {
 BOOL_KEYS = ("marker", "karaoke", "equalizer", "footer", "hints", "header", "ghost")
 INT_KEYS = (
     "font_size", "spacing", "animation_ms", "offset_ms", "width", "height",
-    "visible_above", "visible_below",
+    "custom_x", "custom_y", "visible_above", "visible_below",
 )
 FLOAT_KEYS = ("active_scale",)
 
@@ -1320,6 +1322,14 @@ def load_settings() -> dict:
     cfg["height"] = max(200, min(3000, cfg["height"]))
     cfg["visible_above"] = max(0, min(20, cfg["visible_above"]))
     cfg["visible_below"] = max(0, min(20, cfg["visible_below"]))
+    try:
+        cfg["custom_x"] = max(0, min(10000, int(cfg["custom_x"])))
+    except (TypeError, ValueError):
+        cfg["custom_x"] = 100
+    try:
+        cfg["custom_y"] = max(0, min(10000, int(cfg["custom_y"])))
+    except (TypeError, ValueError):
+        cfg["custom_y"] = 100
     cfg["active_scale"] = max(1.0, min(2.5, cfg["active_scale"]))
     if cfg["direction"] not in ("down", "up"):
         cfg["direction"] = "down"
@@ -1410,6 +1420,7 @@ def normalize_anchor(value) -> str:
     if key in (
         "top-left", "top-center", "top-right", "left-center", "center",
         "right-center", "bottom-left", "bottom-center", "bottom-right",
+        "custom",
     ):
         return key
     return ANCHOR_ALIASES.get(key, "center")
@@ -1448,18 +1459,28 @@ def apply_geometry(cfg):
     height = int(cfg["height"])
     anchor = normalize_anchor(cfg.get("anchor", "center"))
     margin = 16
-    if anchor in ("top-left", "left-center", "bottom-left"):
-        x = margin
-    elif anchor in ("top-right", "right-center", "bottom-right"):
-        x = screen_w - width - margin
+    if anchor == "custom":
+        try:
+            x = int(cfg.get("custom_x", 100))
+        except (TypeError, ValueError):
+            x = 100
+        try:
+            y = int(cfg.get("custom_y", 100))
+        except (TypeError, ValueError):
+            y = 100
     else:
-        x = (screen_w - width) // 2
-    if anchor in ("top-left", "top-center", "top-right"):
-        y = margin
-    elif anchor in ("bottom-left", "bottom-center", "bottom-right"):
-        y = screen_h - height - margin
-    else:
-        y = (screen_h - height) // 2
+        if anchor in ("top-left", "left-center", "bottom-left"):
+            x = margin
+        elif anchor in ("top-right", "right-center", "bottom-right"):
+            x = screen_w - width - margin
+        else:
+            x = (screen_w - width) // 2
+        if anchor in ("top-left", "top-center", "top-right"):
+            y = margin
+        elif anchor in ("bottom-left", "bottom-center", "bottom-right"):
+            y = screen_h - height - margin
+        else:
+            y = (screen_h - height) // 2
     window = "class:^noctalia-lyrics-carousel$"
     expressions = (
         f"hl.dsp.window.resize({{ x = {width}, y = {height}, window = \"{window}\" }})",
@@ -1688,7 +1709,13 @@ class LyricsCarousel:
             cfg["active_scale"] = self.args.active_scale
         if self.args.accent:
             cfg["accent"] = self.args.accent
-        if cfg == self.cfg:
+        # Compara clave a clave: la igualdad de diccionarios puede fallar
+        # por tipos (int vs float) y entonces los cambios se ignoran.
+        if all(
+            cfg.get(key) == self.cfg.get(key)
+            for key in cfg
+            if key in self.cfg
+        ) and set(cfg.keys()) == set(self.cfg.keys()):
             return
         previous = self.cfg
         if previous.get("render_mode") != cfg.get("render_mode"):
@@ -1696,14 +1723,17 @@ class LyricsCarousel:
             self.image_failures = 0
         # Invalida la cache de fuentes si cambio la familia o el tamaño.
         if (
-            previous.get("font_family") != cfg.get("font_family")
-            or previous.get("font_size") != cfg.get("font_size")
+            str(previous.get("font_family")) != str(cfg.get("font_family"))
+            or int(previous.get("font_size", 0)) != int(cfg.get("font_size", 0))
         ):
             if self.image is not None:
                 try:
                     self.image.invalidate_fonts()
                 except Exception:  # noqa: BLE001
                     pass
+            # En modo texto la tipografía es fija de kitty: se avisa para que
+            # el usuario reinicie si hace falta, pero no se cierra la ventana.
+            self.need_clear = True
         self.cfg = cfg
         self.direction = 1 if cfg["direction"] == "down" else -1
         self.karaoke = bool(cfg["karaoke"])
@@ -1722,7 +1752,7 @@ class LyricsCarousel:
 
     def _poll_data(self):
         # Recarga de ajustes: vale tanto en modo demo como en modo real.
-        if time.monotonic() - self.last_cfg > 1.2:
+        if time.monotonic() - self.last_cfg > 0.5:
             self.last_cfg = time.monotonic()
             self._reload_config()
 

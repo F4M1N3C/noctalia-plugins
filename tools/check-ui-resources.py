@@ -9,7 +9,7 @@ registran como aviso en el log ("missing glyph: x", "unknown button variant
 Este revisor extrae los literales de `ui.glyph({ name = "..." })` y de
 `variant = "..."` y los contrasta con las listas reales.
 
-Uso:  python3 tools/check-ui-resources.py [carpeta ...]
+Uso:  python3 tools/check-ui-resources.py [--json] [carpeta ...]
 """
 
 from __future__ import annotations
@@ -35,7 +35,8 @@ TR_RE = re.compile(r'\btr\(\s*"([^"]+)"')
 
 
 def main(argv):
-    roots = argv[1:] or ["."]
+    json_mode = "--json" in argv[1:]
+    roots = [arg for arg in argv[1:] if arg != "--json"] or ["."]
     if not os.path.isfile(TABLER):
         print("no se encontró la lista de iconos (%s)" % TABLER, file=sys.stderr)
         return 0
@@ -52,7 +53,7 @@ def main(argv):
                 if name.endswith(".luau"):
                     files.append(os.path.join(current, name))
 
-    problems = 0
+    findings = []
     for path in sorted(files):
         src = open(path, encoding="utf-8", errors="replace").read()
         found = []
@@ -76,11 +77,11 @@ def main(argv):
             if value not in VARIANTS:
                 line = src[: match.start()].count("\n") + 1
                 found.append((line, "variante de botón no válida: %s" % value))
-        if found:
-            print(path)
-            for line, reason in found:
-                print("  línea %-5d %s" % (line, reason))
-            problems += len(found)
+        for line, reason in found:
+            findings.append(
+                {"fichero": path, "linea": line, "mensaje": reason, "nivel": "error"}
+            )
+
     # Claves de traducción: cada plugin declara sus claves en
     # translations/en.json; si el panel pide una que no existe, Noctalia
     # avisa en el log y muestra la clave en vez del texto.
@@ -127,13 +128,37 @@ def main(argv):
                 if key.startswith("settings.") and key.count(".") > 1:
                     continue  # claves de la página de ajustes
                 line = body[: match.start()].count("\n") + 1
-                print("%s" % path)
-                print("  línea %-5d clave de traducción inexistente: %s" % (line, key))
-                problems += 1
+                findings.append(
+                    {
+                        "fichero": path,
+                        "linea": line,
+                        "mensaje": "clave de traducción inexistente: %s" % key,
+                        "nivel": "error",
+                    }
+                )
 
-    print("---")
-    print("%d fichero(s) revisados, %d aviso(s)" % (len(files), problems))
-    return 1 if problems else 0
+    if json_mode:
+        print(
+            json.dumps(
+                {
+                    "herramienta": "check-ui-resources.py",
+                    "ficheros_revisados": len(files),
+                    "hallazgos": findings,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        current = None
+        for item in findings:
+            if item["fichero"] != current:
+                current = item["fichero"]
+                print(current)
+            print("  línea %-5d %s" % (item["linea"], item["mensaje"]))
+        print("---")
+        print("%d fichero(s) revisados, %d aviso(s)" % (len(files), len(findings)))
+    return 1 if findings else 0
 
 
 if __name__ == "__main__":

@@ -52,7 +52,8 @@ ALLOWED = {
     "font_family", "font_size", "render_mode", "direction", "marker",
     "karaoke", "equalizer", "footer", "hints", "header", "spacing",
     "animation_ms", "ghost", "offset_ms", "width", "height", "anchor",
-    "accent", "custom_color", "active_scale", "visible_above", "visible_below",
+    "custom_x", "custom_y", "accent", "custom_color", "active_scale",
+    "visible_above", "visible_below",
 }
 
 BOOL_KEYS = {
@@ -60,7 +61,7 @@ BOOL_KEYS = {
 }
 INT_KEYS = {
     "font_size", "spacing", "animation_ms", "offset_ms", "width", "height",
-    "visible_above", "visible_below",
+    "custom_x", "custom_y", "visible_above", "visible_below",
 }
 FLOAT_KEYS = {"active_scale"}
 

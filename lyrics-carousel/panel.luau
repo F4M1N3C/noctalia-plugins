@@ -867,7 +867,7 @@ render = function()
           }),
         })
       end
-      return nil
+      return ui.column({})
     end)(),
     ui.row({ gap = 10 }, {
       ui.column({ flexGrow = 1, gap = 4 }, {

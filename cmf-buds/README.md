@@ -14,12 +14,7 @@ batería, "ring my buds" y test de ajuste.
 - **ID del manifiesto**: `faminec/cmf-buds`
 - **Widget de barra**: `widget` (icono de auriculares; clic abre el panel, rueda
   ajusta el volumen, clic derecho cicla el ANC)
-- **Paneles** (uno por pestaña, para que la ventana se ajuste al contenido):
-  - `panel-sound`: ANC, volumen y ecualizador
-  - `panel-controls`: gestos de toque y "ring my buds"
-  - `panel-actions`: atajos locales ejecutados al mover el dial del estuche
-  - `panel-system`: audio espacial, detección in-ear, baja latencia, conexión
-    dual, test de ajuste e información del dispositivo
+- **Panel**: `panel` (panel único con pestañas internas para sonido, controles, acciones y sistema)
 - **Servicio**: `service` (arranca y mantiene vivo el demonio que habla
   RFCOMM con los auriculares)
 
@@ -44,14 +39,10 @@ Con el plugin habilitado, el widget aparece en la barra y el panel se puede
 abrir desde el icono o desde la línea de órdenes:
 
 ```bash
-noctalia msg panel-toggle faminec/cmf-buds:panel-sound
-noctalia msg panel-toggle faminec/cmf-buds:panel-controls
-noctalia msg panel-toggle faminec/cmf-buds:panel-actions
-noctalia msg panel-toggle faminec/cmf-buds:panel-system
+noctalia msg panel-toggle faminec/cmf-buds:panel
 ```
 
-Los paneles se abren arriba y centrados, y la ventana cambia de alto según la
-pestaña.
+El panel se abre arriba y centrado.
 
 ## Widget de barra
 
@@ -74,18 +65,15 @@ color = "on_surface"
 
 ## Panel
 
-Cuatro pestañas, cada una en su propia entrada `[[panel]]` para que la ventana
-se ajuste al tamaño del contenido de la sección (sin barras de desplazamiento):
+Panel único con pestañas internas para sonido, controles, acciones y sistema
+(con desplazamiento interno cuando el contenido de una pestaña no cabe en el alto del panel):
 
-| Pestaña | Entrada | Tamaño | Contenido |
-|---|---|---|---|
-| Sonido | `panel-sound` | 600×910 | ANC (apagado / transparencia / cancelación + nivel adaptativo, alto, medio, bajo), volumen del sistema y EQ (Balanced, Rock, Electronic, Pop, Vocals, Classical, Custom con graves/medios/agudos de -6 a +6, Ultra Bass con 5 niveles) |
-| Controles | `panel-controls` | 600×560 | Gestos de toque de cada auricular y del estuche (doble, triple, mantener, doble mantener y dial), búsqueda "ring my buds" por auricular |
-| Atajos | `panel-actions` | 600×1010 | Atajos locales: qué comando se ejecuta al mover el dial del estuche |
-| Sistema | `panel-system` | 600×930 | Audio espacial, detección in-ear, baja latencia, conexión dual, test de ajuste, información del dispositivo y reconexión |
-
-Al cambiar de pestaña, el panel cierra y se abre el de la sección nueva, así que
-la ventana cambia de alto.
+| Pestaña | Contenido |
+|---|---|
+| Sonido | ANC (apagado / transparencia / cancelación + nivel adaptativo, alto, medio, bajo), volumen del sistema y EQ (Balanced, Rock, Electronic, Pop, Vocals, Classical, Custom con graves/medios/agudos de -6 a +6, Ultra Bass con 5 niveles) |
+| Controles | Gestos de toque de cada auricular y del estuche (doble, triple, mantener, doble mantener y dial), búsqueda "ring my buds" por auricular |
+| Atajos | Atajos locales: qué comando se ejecuta al mover el dial del estuche |
+| Sistema | Audio espacial, detección in-ear, baja latencia, conexión dual, test de ajuste, información del dispositivo y reconexión |
 
 ## Settings
 

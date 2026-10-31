@@ -784,9 +784,27 @@ for _ in pairs(config.commands) do
   widgetCount = widgetCount + 1
 end
 
+-- Para que el simulador pueda ejecutar la ruta de captura (y con ella la
+-- poda de miniaturas) hace falta que las herramientas estén disponibles:
+-- `preview.toolsAvailable()` comprueba el script de captura.
+files[(DIR:gsub("/+$", "")) .. "/bin/snapshot.py"] = "#!/usr/bin/env python3\n"
+
+-- Regresión: la poda no puede borrar el fichero que una tarjeta está
+-- pintando. Con el widget cerrado la tarjeta muestra su miniatura "current",
+-- y si la poda la borra el host avisa "image failed to load" y sale en negro.
+fs["cava-v2-current.png"] = true
+mock.fileInfo = function(path)
+  local name = path:match("([^/]+)$")
+  if name == "cava-v2-current.png" or name == "btop-ccc.png" then
+    return { size = 10, mtime = os.time() - 7200, isDir = false }
+  end
+  return { size = 10, mtime = os.time(), isDir = false }
+end
+
 env.onOpen("")
 check("el panel abre y renderiza", true, rendered > 0)
 check("hay una tarjeta por widget", widgetCount, countKeys(lastTree, "card-"))
+check("la poda no borra la miniatura que se está pintando", true, fs["cava-v2-current.png"])
 
 -- El manifiesto se analiza una vez, pero al abrir el panel se relee: si el
 -- .toml cambia en caliente y no hay config de usuario, se usan los nuevos defaults.

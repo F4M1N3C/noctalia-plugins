@@ -599,37 +599,14 @@ captureThumbs = function(force)
     noctalia.log(string.format("terminal-widgets: captureThumbs: %d entries, capturing=%s", #entries, tostring(state.capturing)))
 
     local function cleanup()
+      -- Rutas en uso: las de las ventanas abiertas y las que el árbol está
+      -- pintando ahora mismo (`state.thumbUsed`). La poda solo borra lo que
+      -- no está en uso y es antiguo.
       local used = preview.currentPaths(state.windows)
       for path in pairs(state.thumbUsed or {}) do
         used[path] = true
       end
-      -- Inline pruneUnused to avoid module call issues
-      local dir = preview.cacheDir()
-      if dir ~= nil then
-        local files = noctalia.listDir(dir)
-        if files ~= nil then
-          local maxAgeSeconds = 1800
-          local now = os.time()
-          local checked = 0
-          local maxChecks = 10
-          for _, file in ipairs(files) do
-            if checked >= maxChecks then
-              break
-            end
-            checked = checked + 1
-            if file:sub(1, 6) == "batch-" or file == "batch.json" then
-              pcall(noctalia.removeFile, dir .. "/" .. file)
-            elseif file:sub(-4) == ".png" and not used[dir .. "/" .. file] then
-              local path = dir .. "/" .. file
-              local info = noctalia.fileInfo(path)
-              local mtime = type(info) == "table" and tonumber(info.mtime) or nil
-              if mtime == nil or (now - mtime) >= maxAgeSeconds then
-                pcall(noctalia.removeFile, path)
-              end
-            end
-          end
-        end
-      end
+      preview.pruneUnused(used, 1800)
       state.capturing = false
     end
 
@@ -1198,6 +1175,11 @@ local function mockPreview(name)
 end
 
 local function previewImage(path, width)
+  -- La ruta queda marcada como "en uso": la poda de miniaturas no puede
+  -- borrar un fichero que el host está pintando.
+  if path ~= nil then
+    state.thumbUsed[path] = true
+  end
   return ui.image({
     path = path,
     width = width,
@@ -1267,6 +1249,12 @@ local function cardPreview(name)
   if cfg.cardPreview == "gif" or (cfg.cardPreview == "auto" and window == nil) then
     local frames = captureFrames(name, 8)
     if #frames > 0 then
+      -- La animación va a recorrer todos estos fotogramas, no solo el que se
+      -- pinta ahora: se protegen todos para que la poda no borre el
+      -- siguiente fotograma de la animación.
+      for _, framePath in ipairs(frames) do
+        state.thumbUsed[framePath] = true
+      end
       local anim = state.captureAnim[name]
       if anim == nil then
         anim = { index = 1, elapsed = 0 }
@@ -1607,6 +1595,16 @@ render = function()
     return
   end
 
+  -- Las rutas de las miniaturas del árbol se recalculan en cada render: solo
+  -- se pueden borrar los ficheros que ninguna tarjeta está usando. Antes se
+  -- estimaban a partir de las ventanas abiertas, y eso dejaba fuera a los
+  -- widgets cerrados, cuya miniatura ("current" o la animación) seguía
+  -- pintándose: la poda la borraba y el host avisaba "image failed to load".
+  --
+  -- El conjunto se conserva después del render para que la poda no borre un
+  -- fichero que el host pueda volver a aplicar al reabrir el panel.
+  state.thumbUsed = {}
+
   local cards = {}
   local names = widgetNames()
 
@@ -1663,10 +1661,8 @@ render = function()
     ui.scroll({ flexGrow = 1, gap = CARD_GAP, justify = "center" }, rows),
   }))
 
-  -- Rutas de las miniaturas que acaba de referenciar este árbol. Se guardan
-  -- para no borrar un fichero que el host pueda volver a aplicar al
-  -- reabrir el panel.
-  state.thumbUsed = preview.currentPaths(state.windows)
+  -- Las rutas en uso las ha ido rellenando `previewImage` al construir las
+  -- tarjetas: son las que el árbol acaba de referenciar.
 end
 
 -- ------------------------------------------------------------- ciclo de vida --

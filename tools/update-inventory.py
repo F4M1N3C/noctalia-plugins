@@ -54,9 +54,9 @@ def main() -> int:
         count=1,
     )
     text = text.replace(
-        "> trabajando en paralelo sobre `floating-term`, `wallpaper-carousel`, `cmf-buds`,\n"
+        "> trabajando en paralelo sobre `terminal-widgets`, `wallpaper-carousel`, `cmf-buds`,\n"
         "> `lyrics-carousel`, `notes` y la app móvil).",
-        "> trabajando en paralelo sobre `floating-term`, `wallpaper-carousel`, `cmf-buds`,\n"
+        "> trabajando en paralelo sobre `terminal-widgets`, `wallpaper-carousel`, `cmf-buds`,\n"
         "> `lyrics-carousel`, `notes`, `notes-sync` y la app móvil).",
     )
 

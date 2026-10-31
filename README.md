@@ -7,7 +7,7 @@ one can be contributed with a single pull request.
 
 | Plugin | Id | What it does |
 | --- | --- | --- |
-| [floating-term](floating-term/) | `faminec/floating-term` | Launches terminal apps in floating windows with a per-command size, anchor and position. |
+| [terminal-widgets](terminal-widgets/) | `faminec/terminal-widgets` | Launches terminal apps in floating windows with a per-command size, anchor and position. |
 | [equalizer](equalizer/) | `faminec/equalizer` | A 10-band graphic equalizer with preamp, bypass and presets on top of EasyEffects. |
 | [wallpaper-carousel](wallpaper-carousel/) | `faminec/wallpaper-carousel` | A full-screen wallpaper carousel with vertical cards and a parallax crop. |
 | [notes](notes/) | `faminec/notes` | Quick text notes in a side panel, with live sync from outside the panel. |
@@ -38,7 +38,7 @@ Add the checkout as a plugin source and enable the plugins you want:
 
 ```sh
 noctalia msg plugins source add dev path ~/noctalia-plugins
-noctalia msg plugins enable faminec/floating-term
+noctalia msg plugins enable faminec/terminal-widgets
 noctalia msg plugins enable faminec/equalizer
 noctalia msg plugins enable faminec/wallpaper-carousel
 noctalia msg plugins enable faminec/notes
@@ -68,7 +68,7 @@ other locales are handled by the Noctalia translation platform.
 ## Layout
 
 ```
-floating-term/
+terminal-widgets/
   plugin.toml            # manifest: id, metadata, entries, settings
   panel.luau             # panel entry
   widget.luau            # bar widget entry

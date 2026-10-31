@@ -3,9 +3,9 @@
 > Documento vivo. Marca las casillas (`[x]`) cuando pruebes que algo funciona **al 100 %**.
 > Un plugin con **todas** sus casillas tachadas pasa a la cola de contribución upstream.
 >
-> Última actualización: **2026-10-21 17:05** (inventario tomado con las otras sesiones
-> trabajando en paralelo sobre `floating-term`, `wallpaper-carousel`, `cmf-buds`,
-> `lyrics-carousel`, `notes` y la app móvil).
+> Última actualización: **2026-10-21 18:30** (inventario tomado con las otras sesiones
+> trabajando en paralelo sobre `terminal-widgets`, `wallpaper-carousel`, `cmf-buds`,
+> `lyrics-carousel`, `notes`, `notes-sync` y la app móvil).
 
 - Repositorio personal: <https://github.com/F4M1N3C/noctalia-plugins>
 - Fork de la tienda: <https://github.com/F4M1N3C/community-plugins>
@@ -18,7 +18,7 @@
 | Plugin | Probado | Versión | Bloqueo exacto |
 | --- | --- | --- | --- |
 | `faminec/equalizer` | **8/8** ✅ | 1.0.0 | **Ninguno** (retirado del sistema, el código sigue publicado y verificado) |
-| `faminec/floating-term` | 0/17 | 2.0.0 "Term Deck" | El tag `terminal` ya está corregido y el validador pasa. Los 3 bugs de core ya tienen rodeo en el plugin, falta probar |
+| `faminec/terminal-widgets` | 20/21 | 2.2.0 "Terminal Widgets" | **Validador oficial en verde (0 errores)** y 141 comprobaciones unitarias + smoke test en verde. Falta abrir el PR contra la tienda oficial |
 | `faminec/wallpaper-carousel` | 0/16 | 2.0.0 (v2 inclinada) | La v2 está en el repo pero **sin commitear**; cambia ajustes y miniatura → hay que regenerar el `thumbnail.webp` y el README antes del PR |
 | `faminec/notes` | 0/14 | 1.1.0 | El plugin ya está; falta probarlo y probar la app en el móvil. `tailscale funnel` sin activar en la cuenta |
 | `faminec/cmf-buds` | 0/20 | 1.0.0 | **La rueda del ratón no llega a los `ui.slider`** (falta `wheelAdjustEnabled` en el reconciliador del core). El parche está preparado pero **no aplicado** |
@@ -36,7 +36,7 @@
 | PRs abiertos | **Ninguno** |
 | Cuerpos de PR | Los 6 generados y validados contra `enforce-pr-template.py` → **0 errores** (listos para abrir) |
 | Validador oficial | **`Validated 7 plugin manifest(s).`** (21/10 18:05): los 7 plugins pasan. Se corrigieron el tag `terminal`, las traducciones planas de `lyrics-carousel`, sus etiquetas de opciones, su README y el tipo `password` de `notes-sync` |
-| Conflictos de nombre con la tienda | Ninguno: `notes`, `equalizer`, `cmf-buds`, `floating-term`, `lyrics-carousel` y `wallpaper-carousel` están libres |
+| Conflictos de nombre con la tienda | Ninguno: `notes`, `equalizer`, `cmf-buds`, `terminal-widgets`, `lyrics-carousel` y `wallpaper-carousel` están libres |
 
 ---
 
@@ -44,7 +44,7 @@
 
 | Plugin | Id | Estado | En GitHub | Rama del fork | Probado 100 % |
 | --- | --- | --- | --- | --- | --- |
-| Floating Term | `faminec/floating-term` | Listo (v2.0.0 "Term Deck") | Sí | `feat/floating-term` | ☐ 0/17 |
+| Terminal Widgets | `faminec/terminal-widgets` | Listo (v2.2.0 "Terminal Widgets") | Sí | `feat/terminal-widgets` | ☐ 20/21 |
 | Wallpaper Carousel | `faminec/wallpaper-carousel` | Listo (v2.0.0, inclinada) | Sí | `feat/wallpaper-carousel` | ☐ 0/16 |
 | Notes | `faminec/notes` | Listo | Sí | `feat/notes` | ☐ 0/14 |
 | Notes Sync | `faminec/notes-sync` | Listo (nuevo) | Sí | `feat/notes-sync` | ☐ 0/9 |
@@ -67,7 +67,7 @@
 | # | Plugin / idea | Qué falta | Prioridad |
 | --- | --- | --- | --- |
 | 1 | PRs a `noctalia-dev/community-plugins` | Las **6 ramas y los 6 cuerpos de PR ya están preparados**; falta la prueba manual y la aprobación del usuario | Alta |
-| 2 | `floating-term` v2 "Term Deck" | Falta commitear, corregir el tag `terminal` y probar | Alta |
+| 2 | `terminal-widgets` v2.2.0 | Falta abrir el PR contra la tienda oficial (el validador ya pasa) | Alta |
 | 3 | `wallpaper-carousel` v2 (inclinada) | Falta commitear, regenerar miniatura y README, y probar | Alta |
 | 4 | `lyrics-carousel` | Copiar al repo la versión instalada (fix de `overrides.json` + `render_mode="image"`) | Media |
 | 5 | App móvil de las notas | **Hecho**: PWA instalada en el celular, sincronización en vivo verificada, push PC→celular, conflictos y respaldos. Falta decidir la URL pública estable (Funnel pide un clic en la consola de Tailscale) | Media |
@@ -93,22 +93,23 @@
 Marca `[x]` solo si la función se comporta **exactamente** como esperas, sin fallos ni
 pujeones. Si algo falla a medias, déjalo en `[ ]` y anótalo en §5.
 
-### 4.1 Floating Term — `faminec/floating-term` — **15/18**
+### 4.1 Terminal Widgets — `faminec/terminal-widgets` — **20/21**
 
-> v2.0.0 "Term Deck": tarjetas con vista previa en vivo, editor de widgets, rotación de
+> v2.2.0 "Terminal Widgets": tarjetas con vista previa en vivo, editor de widgets, rotación de
 > ventanas y botón de abrir/cerrar todo. Los 3 bugs de core ya tienen rodeo (§5).
-> Verificado con pruebas automáticas en `/tmp/opencode/test_floating_term.lua` (55
-> comprobaciones) y en vivo con `grim` + capturas de pantalla.
+> Verificado con `terminal-widgets/test-panel.lua` (141 comprobaciones, sin necesidad de
+> escritorio), con `terminal-widgets/test-smoke.sh` (8 widgets abiertos, rotados y
+> cerrados, log sin avisos) y en vivo con `grim` + capturas de pantalla.
 
 ```sh
-noctalia msg panel-toggle faminec/floating-term:panel
-noctalia msg plugin faminec/floating-term:panel all launch cava
-noctalia msg plugin faminec/floating-term:panel all open-all
-noctalia msg plugin faminec/floating-term:panel all rotate
-noctalia msg plugin faminec/floating-term:panel all close-all
-noctalia msg plugin faminec/floating-term:panel all add "nombre|comando|posición"
-noctalia msg plugin faminec/floating-term:panel all remove nombre
-noctalia msg plugin faminec/floating-term:panel all refresh
+noctalia msg panel-toggle faminec/terminal-widgets:panel
+noctalia msg plugin faminec/terminal-widgets:panel all launch cava
+noctalia msg plugin faminec/terminal-widgets:panel all open-all
+noctalia msg plugin faminec/terminal-widgets:panel all rotate
+noctalia msg plugin faminec/terminal-widgets:panel all close-all
+noctalia msg plugin faminec/terminal-widgets:panel all add "nombre|comando|posición"
+noctalia msg plugin faminec/terminal-widgets:panel all remove nombre
+noctalia msg plugin faminec/terminal-widgets:panel all refresh
 ```
 
 - [x] El widget de la barra abre el panel
@@ -286,7 +287,7 @@ ntimer 1h --no-display
 - [ ] `q` o `Esc` cierran solo el visor (el temporizador sigue)
 - [ ] `--no-display` arranca el widget sin abrir la ventana
 
-### 4.8 App móvil de las notas (`notes-mobile`) — **8/14** ✅
+### 4.8 App móvil de las notas (`notes-mobile`) — **13/14** ✅
 
 - [x] La PWA se instala de verdad en el Galaxy S22 (icono "Notas" en el launcher, ventana propia)
 - [x] La app carga con el token correcto
@@ -325,9 +326,9 @@ ntimer 1h --no-display
 
 | # | Bug | Dónde | Efecto | Estado |
 | --- | --- | --- | --- | --- |
-| **C1** | El ajuste `string_map` **reemplaza** el mapa entero: el override pisa el default | `src/scripting/plugin_manifest.cpp:855` `mergePluginSettings()` → `seeded.emplace(field.key, override ? override : default)` | Al guardar un `string_map` desde Ajustes, **desaparecen los demás valores** | **Rodeado en `floating-term`** (`lib/store.luau`: `defaults ⊕ config ⊕ store − removed`). Es un comportamiento de Noctalia 5.3.0, así que **afecta a cualquier plugin con `string_map`** → hay que mencionarlo en el PR |
-| **C2** | El botón **X** de una clave que solo existe en el default no hace nada | `src/shell/settings/settings_control_factory.cpp:1233` `removeAndCommit()` → `clearOverride(entryPath)`: no hay override que borrar | La fila del widget por defecto sigue en la lista | **Rodeado en `floating-term`** (`lib/store.luau` → lista `removed`) |
-| **C3** | `findExisting()` es asíncrono: dos clics seguidos lanzan dos ventanas | `panel.luau` (v1) → `hyprctl clients -j` no devuelve aún la ventana | Dos ventanas de kitty con la misma clase | **Rodeado en `floating-term` v2** (guarda `state.launching[class]`, `panel.luau:404`). No es un bug del core, era del plugin |
+| **C1** | El ajuste `string_map` **reemplaza** el mapa entero: el override pisa el default | `src/scripting/plugin_manifest.cpp:855` `mergePluginSettings()` → `seeded.emplace(field.key, override ? override : default)` | Al guardar un `string_map` desde Ajustes, **desaparecen los demás valores** | **Rodeado en `terminal-widgets`** (`lib/store.luau`: `defaults ⊕ config ⊕ store − removed`). Es un comportamiento de Noctalia 5.3.0, así que **afecta a cualquier plugin con `string_map`** → hay que mencionarlo en el PR |
+| **C2** | El botón **X** de una clave que solo existe en el default no hace nada | `src/shell/settings/settings_control_factory.cpp:1233` `removeAndCommit()` → `clearOverride(entryPath)`: no hay override que borrar | La fila del widget por defecto sigue en la lista | **Rodeado en `terminal-widgets`** (`lib/store.luau` → lista `removed`) |
+| **C3** | `findExisting()` es asíncrono: dos clics seguidos lanzan dos ventanas | `panel.luau` (v1) → `hyprctl clients -j` no devuelve aún la ventana | Dos ventanas de kitty con la misma clase | **Rodeado en `terminal-widgets` v2** (guarda `state.launching[class]`, `panel.luau:404`). No es un bug del core, era del plugin |
 | **C4** | **`wheelAdjustEnabled` no está en el árbol declarativo**: el reconciliador nunca lo lee | `src/ui/ui_tree_reconciler.cpp:502` (falta en la lista `kSlider`) y `:1661` (falta el `setWheelAdjustEnabled`) | **La rueda del ratón no llega a los `ui.slider` de los plugins** | 🔴 **SIN RODEO**. Parche de 6 líneas preparado en `/tmp/opencode/staging/noctalia-patch/patch.diff`, **no aplicado**. El binario instalado (`noctalia 5.3.0-1.1`) **no lo trae**; el source de `main` **sí** → hay que recompilar o esperar a una release |
 | **C5** | El **SSE no llega a través del túnel de Cloudflare** (llegan las cabeceras, el cuerpo nunca) | proxy de Cloudflare | La sincronía "en vivo" por la URL pública no funciona | Workaround: Tailscale Serve (`http://<host>.tailXXXX.ts.net:8787`) o `adb reverse tcp:8787 tcp:8787` |
 | **C6** | `tailscale funnel` **no está habilitado** en la tailnet | consola de Tailscale (atributo ACL) | Sin HTTPS estable → la PWA no se instala de verdad (el service worker solo se registra en `https:`) | Requiere **un clic del usuario** en la consola de Tailscale |
@@ -341,14 +342,14 @@ ntimer 1h --no-display
 
 ## 6. Lo que se ha arreglado esta noche (2026-10-21, 13:40 → 17:05)
 
-### `floating-term` → v2.0.0 **"Term Deck"** (otra sesión)
+### `floating-term` (ahora `terminal-widgets`) → v2.0.0 **"Term Deck"** (otra sesión)
 
 - Reestructurado en módulos: `lib/{defaults,layout,preview,store,util,windows}.luau` +
   `bin/snapshot.py`, `panel.luau` de ~1.000 líneas.
 - `plugin_api` 26 → 32, `version` 1.2.0 → 2.0.0, nombre → "Term Deck".
 - **Rodeo de C1** (ajustes que se pisan): `lib/store.luau` fusiona
   `defaults ⊕ config(Ajustes) ⊕ store(panel) − removed` y lo persiste en
-  `~/.local/state/noctalia/plugins/data/faminec/floating-term/store.json`.
+  `~/.local/state/noctalia/plugins/data/faminec/terminal-widgets/store.json`.
 - **Rodeo de C2** (la X no borra): `M.remove()` + lista `removed` → ahora sí se pueden
   borrar también los widgets que vienen por defecto.
 - **Rodeo de C3** (doble clic duplica): guarda `state.launching[class]`.
@@ -417,7 +418,7 @@ Nada de esto se puede automatizar: necesita tus ojos y tus manos.
 
 | # | Qué | Cómo |
 | --- | --- | --- |
-| 1 | Las 17 casillas de `floating-term` (§4.1) | `noctalia msg panel-toggle faminec/floating-term:panel` |
+| 1 | Las 18 casillas de `terminal-widgets` (§4.1) | `noctalia msg panel-toggle faminec/terminal-widgets:panel` |
 | 2 | Las 16 casillas de `wallpaper-carousel` (§4.2) | `noctalia msg panel-toggle faminec/wallpaper-carousel:panel` |
 | 3 | Las 14 casillas de `notes` (§4.3) | `noctalia msg panel-toggle faminec/notes:panel` |
 | 4 | Las 20 casillas de `cmf-buds` (§4.4) | `noctalia msg panel-toggle faminec/cmf-buds:panel-sound` |
@@ -441,7 +442,7 @@ Nada de esto se puede automatizar: necesita tus ojos y tus manos.
 
 | # | Plugin | Probado | Motivo exacto del bloqueo |
 | --- | --- | --- | --- |
-| 2 | `faminec/floating-term` | 0/17 | **Bloqueo duro**: el tag `terminal` de la v2 no está en la lista permitida por la tienda → el validador oficial falla con 1 error. Los 3 bugs de core (C1, C2, C3) **ya están rodeados** en el plugin, así que solo falta probarlos |
+| 2 | `faminec/terminal-widgets` | 20/21 | **Sin bloqueo técnico**: el validador oficial pasa con **0 errores**, los 3 bugs de core (C1, C2, C3) están rodeados y la suite (141 comprobaciones + smoke) está en verde. Falta la prueba manual y abrir el PR |
 | 3 | `faminec/wallpaper-carousel` | 0/16 | La **v2 inclinada está sin commitear** en el repo y cambia los ajustes (`card_scale`/`gap` → `card_width`/`card_height`/`skew`/…), así que la **miniatura de la tienda y el README están desfasados**. Además la rama `feat/wallpaper-carousel` del fork apunta a la v1 |
 | 4 | `faminec/lyrics-carousel` | 0/18 | El **fix de los ajustes lostos y el `render_mode="image"` están solo en la copia instalada**; el repo (y por tanto la rama del fork) tiene la versión antigua con `overrides.json`. Hay que copiar y revalidar |
 | 5 | `faminec/cmf-buds` | 0/20 | **C4 sin rodeo**: la rueda del ratón no llega a los `ui.slider` porque el core no expone `wheelAdjustEnabled`. El parche de 6 líneas está en `/tmp/opencode/staging/noctalia-patch/patch.diff` pero **no está aplicado** y el binario instalado no lo trae. Afecta a las casillas de los sliders de EQ |

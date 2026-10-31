@@ -14,7 +14,7 @@ function update()
 end
 
 function onClick()
-  noctalia.togglePanel("faminec/floating-term:panel")
+  noctalia.togglePanel("faminec/terminal-widgets:panel")
 end
 
 function onConfigChanged()

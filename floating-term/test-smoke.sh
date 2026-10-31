@@ -18,12 +18,11 @@
 
 set -u
 
-PLUGIN_ID="faminec/floating-term"
+PLUGIN_ID="faminec/terminal-widgets"
 PANEL="$PLUGIN_ID:panel"
-PLUGIN_DIR="${1:-$HOME/.local/share/noctalia/plugins/floating-term}"
+PLUGIN_DIR="${1:-$HOME/.local/share/noctalia/plugins/terminal-widgets}"
 LOG="${NOCTALIA_LOG:-$HOME/.cache/noctalia/noctalia.log}"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/noctalia"
-SETTINGS="$STATE_DIR/settings.toml"
 STORE="$STATE_DIR/plugins/data/$PLUGIN_ID/store.json"
 
 OPEN_TIMEOUT="${OPEN_TIMEOUT:-45}"
@@ -89,14 +88,18 @@ fi
 [ -f "$PLUGIN_DIR/plugin.toml" ] || fail "no encuentro el manifiesto en $PLUGIN_DIR/plugin.toml"
 
 # Número de widgets que deben acabar abiertos: los comandos no vacíos que
-# resultan de fusionar el manifiesto, los Ajustes y el store del panel, menos
-# los borrados. Es la misma precedencia que usa `lib/store.luau`.
-expected_line=$(python3 - "$PLUGIN_DIR/plugin.toml" "$SETTINGS" "$STORE" <<'PY'
+# resultan de fusionar los defaults (manifiesto o respaldo de lib/defaults.luau)
+# y el store del panel, menos los borrados. Es la misma precedencia que usa
+# `lib/store.luau`; los Ajustes de Noctalia ya no participan.
+expected_line=$(python3 - "$PLUGIN_DIR/plugin.toml" "$STORE" <<'PY'
 import json
+import os
+import re
 import sys
 import tomllib
 
-manifest_path, settings_path, store_path = sys.argv[1:4]
+manifest_path, store_path = sys.argv[1:3]
+plugin_dir = os.path.dirname(manifest_path)
 
 base = {}
 with open(manifest_path, "rb") as handle:
@@ -105,14 +108,18 @@ for setting in manifest.get("setting", []):
     if setting.get("key") == "commands" and isinstance(setting.get("default"), dict):
         base = setting["default"]
 
-config = {}
-try:
-    with open(settings_path, "rb") as handle:
-        settings = tomllib.load(handle)
-    block = settings.get("plugin_settings", {}).get("faminec/floating-term", {})
-    config = block.get("commands", {}) or {}
-except FileNotFoundError:
-    pass
+# Si el manifiesto ya no lleva los comandos, el plugin usa la tabla de respaldo
+# de lib/defaults.luau. Se lee aquí para que la prueba calcule lo mismo.
+if not base:
+    defaults_path = os.path.join(plugin_dir, "lib", "defaults.luau")
+    try:
+        with open(defaults_path, encoding="utf-8") as handle:
+            text = handle.read()
+        block = re.search(r"FALLBACK_COMMANDS\s*=\s*\{(.*?)\}", text, re.S)
+        if block:
+            base = dict(re.findall(r'([A-Za-z0-9_%-]+)\s*=\s*"([^"]*)"', block.group(1)))
+    except FileNotFoundError:
+        pass
 
 store = {}
 try:
@@ -122,7 +129,6 @@ except FileNotFoundError:
     pass
 
 commands = {name: value for name, value in base.items() if isinstance(value, str) and value}
-commands.update({name: value for name, value in config.items() if isinstance(value, str) and value})
 commands.update({name: value for name, value in (store.get("commands") or {}).items() if isinstance(value, str)})
 for name in store.get("removed") or []:
     commands.pop(name, None)
@@ -446,7 +452,7 @@ plugin_ipc() {
 # recarga el script cuando cambia un `.luau`, no cuando cambia el manifiesto.
 # Se toca el mtime del panel instalado (sin cambiar su contenido) para que la
 # prueba arranque con los comandos que hay ahora mismo en disco.
-INSTALLED_PANEL="$HOME/.local/share/noctalia/plugins/floating-term/panel.luau"
+INSTALLED_PANEL="$HOME/.local/share/noctalia/plugins/terminal-widgets/panel.luau"
 if [ -f "$INSTALLED_PANEL" ]; then
   touch "$INSTALLED_PANEL"
   sleep 1.5

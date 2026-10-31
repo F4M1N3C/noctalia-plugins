@@ -92,4 +92,15 @@ function M.contains(list, value)
   return false
 end
 
+function M.tableToString(t)
+  if type(t) ~= "table" then
+    return tostring(t)
+  end
+  local parts = {}
+  for k, v in pairs(t) do
+    table.insert(parts, string.format("%s=%s", tostring(k), tostring(v)))
+  end
+  return "{" .. table.concat(parts, ", ") .. "}"
+end
+
 return M

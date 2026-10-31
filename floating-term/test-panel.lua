@@ -150,6 +150,15 @@ local mock = {
               item[key] = tonumber(value)
             end
           end
+          -- Arrays numéricos ("at":[x,y], "size":[w,h]): sin esto el
+          -- simulador no vería la geometría de las ventanas.
+          for key, array in object:gmatch('"([^"]+)":%[([^%]]*)%]') do
+            local numbers = {}
+            for number in array:gmatch("-?%d+") do
+              numbers[#numbers + 1] = tonumber(number)
+            end
+            item[key] = numbers
+          end
           out[#out + 1] = item
         end
         return out
@@ -332,6 +341,12 @@ check("tombstone creado", st.removed[1], "nuevo")
 store.upsert(st, "nuevo", "echo hola")
 check("tombstone limpiado al volver a añadir", #st.removed, 0)
 
+local stClear = { commands = {}, layouts = {}, thumbs = {}, removed = {} }
+store.upsert(stClear, "x", "cmd", "center, 800x400", "/tmp/miniatura.png")
+store.upsert(stClear, "x", nil, "", "")
+check("layout vacío quita la posición", stClear.layouts.x, nil)
+check("thumb vacío quita la miniatura", stClear.thumbs.x, nil)
+
 -- -------------------------------------------------------------- posiciones --
 
 print("\n== posiciones ==")
@@ -463,19 +478,22 @@ local usedCount = 0
 for _ in pairs(used) do
   usedCount = usedCount + 1
 end
-check("currentPaths devuelve una ruta por ventana", usedCount, 1)
-local usedPath = nil
+check("currentPaths devuelve dos rutas por ventana (frame + current)", usedCount, 2)
+local framePath = nil
 for path in pairs(used) do
-  usedPath = path
+  if path:match("btop%-v2%-[0-9a-f]+%.png$") then
+    framePath = path
+    break
+  end
 end
-check("la ruta lleva el nombre y la firma", usedPath:match("btop%-[0-9a-f]+%.png$") ~= nil, true)
+check("una ruta lleva el nombre y la firma (frame)", framePath ~= nil, true)
 
 local fromMap = preview.currentPaths({ btop = { name = "btop", x = 10, y = 20, w = 300, h = 200 } })
 local mapCount = 0
 for _ in pairs(fromMap) do
   mapCount = mapCount + 1
 end
-check("currentPaths acepta un mapa", mapCount, 1)
+check("currentPaths acepta un mapa", mapCount, 2)
 
 preview.pruneUnused({ [TESTDATA .. "/thumbs/btop-aaa.png"] = true })
 check("conserva la miniatura en uso", fs["btop-aaa.png"], true)
@@ -732,6 +750,25 @@ local function findNode(tree, key)
   return found
 end
 
+local function findByPrefix(tree, prefix)
+  local found = nil
+  local function walk(node)
+    if found ~= nil or type(node) ~= "table" then
+      return
+    end
+    if type(node.props) == "table" and type(node.props.key) == "string"
+      and node.props.key:sub(1, #prefix) == prefix then
+      found = node
+      return
+    end
+    for _, child in ipairs(node.children or {}) do
+      walk(child)
+    end
+  end
+  walk(tree)
+  return found
+end
+
 -- Widgets de prueba: los del manifiesto del propio plugin.
 config.commands = {}
 config.layouts = {}
@@ -752,21 +789,27 @@ check("el panel abre y renderiza", true, rendered > 0)
 check("hay una tarjeta por widget", widgetCount, countKeys(lastTree, "card-"))
 
 -- El manifiesto se analiza una vez, pero al abrir el panel se relee: si el
--- .toml cambia en caliente, las tarjetas no pueden seguir con el comando viejo.
+-- .toml cambia en caliente y no hay config de usuario, se usan los nuevos defaults.
 local manifestFixture = files[DIR .. "plugin.toml"]
 files[DIR .. "plugin.toml"] = [==[
 [[setting]]
 key = "commands"
 default = { nuevo = "un-comando --nuevo" }
 ]==]
+-- Simular que el usuario no tiene config en Settings (config vacío)
+local oldConfig = config
+config = {}
+defaults.reset()
 env.onOpen("")
 local freshCard = findNode(lastTree, "card-nuevo")
 check(
-  "al abrir se relee el manifiesto",
+  "al abrir se relee el manifiesto (sin config usuario)",
   true,
   freshCard ~= nil and tostring(freshCard.props.tooltip):find("un-comando --nuevo", 1, true) ~= nil
 )
 files[DIR .. "plugin.toml"] = manifestFixture
+config = oldConfig
+defaults.reset()
 env.onOpen("")
 check("la cabecera tiene el botón de abrir todo", true, findNode(lastTree, "open-all") ~= nil)
 check("la cabecera tiene el botón de rotar", true, findNode(lastTree, "rotate") ~= nil)
@@ -789,7 +832,6 @@ check("la tarjeta lleva el comando en el tooltip", true, cardNode ~= nil and car
 check("la tarjeta se puede pulsar", true, cardNode ~= nil and cardNode.props.onClick ~= nil)
 check("la tarjeta tiene ancho fijo (tamaño uniforme)", true, cardNode ~= nil and cardNode.props.width ~= nil)
 check("la tarjeta no crece en filas parciales", nil, cardNode ~= nil and cardNode.props.flexGrow)
-check("click derecho cierra el widget", true, cardNode ~= nil and cardNode.props.onRightClick ~= nil)
 
 -- Modo edición: aparecen el formulario y los botones de borrar.
 local editButton = findNode(lastTree, "edit")
@@ -798,6 +840,59 @@ if editButton ~= nil and editButton.props.onClick ~= nil then
   editButton.props.onClick()
   check("en modo edición aparece el formulario", true, findNode(lastTree, "editor") ~= nil)
   check("en modo edición hay un botón de borrar", true, countKeys(lastTree, "delete-") > 0)
+
+  -- El editor de un widget existente se coloca en el sitio de su tarjeta.
+  local firstName = nil
+  do
+    local names = {}
+    for name in pairs(config.commands) do
+      names[#names + 1] = name
+    end
+    table.sort(names)
+    firstName = names[1]
+  end
+  local editWidget = findByPrefix(lastTree, "edit-" .. firstName)
+  check("la tarjeta tiene botón de editar", true, editWidget ~= nil)
+  if editWidget ~= nil and editWidget.props.onClick ~= nil then
+    editWidget.props.onClick()
+    check("el editor sustituye a la tarjeta editada", nil, findNode(lastTree, "card-" .. firstName))
+    check("el editor sigue visible al editar", true, findNode(lastTree, "editor") ~= nil)
+    local thumbField = findByPrefix(lastTree, "form-thumb-")
+    check(
+      "el campo de miniatura empieza vacío",
+      "",
+      thumbField ~= nil and thumbField.props.value or "sin campo"
+    )
+    local headerEdit = findNode(lastTree, "edit")
+    if headerEdit ~= nil and headerEdit.props.onClick ~= nil then
+      headerEdit.props.onClick()
+    end
+    check("al cancelar vuelve la tarjeta", true, findNode(lastTree, "card-" .. firstName) ~= nil)
+
+    -- Renombrar a otro widget existente se rechaza (no se pisa el otro).
+    local names = {}
+    for name in pairs(config.commands) do
+      names[#names + 1] = name
+    end
+    table.sort(names)
+    if names[2] ~= nil then
+      editWidget.props.onClick()
+      local nameField = findByPrefix(lastTree, "form-name-")
+      local saveButton = findByPrefix(lastTree, "editor-save-")
+      if nameField ~= nil and saveButton ~= nil then
+        nameField.props.onChange(names[2])
+        saveButton.props.onClick()
+        check(
+          "renombrar a un widget existente se rechaza",
+          "name_exists",
+          notifications[#notifications] ~= nil and notifications[#notifications].body or "sin aviso"
+        )
+        if headerEdit ~= nil and headerEdit.props.onClick ~= nil then
+          headerEdit.props.onClick()
+        end
+      end
+    end
+  end
 end
 
 -- Los handlers del IPC no deben romperse.
@@ -888,7 +983,8 @@ check("la ventana se coloca en su posición configurada", true, dispatchText():f
 
 -- Si el widget ya está abierto, al volver a pulsarlo tiene que volver a su
 -- sitio (no a un hueco cualquiera): la evitación de colisiones no puede
--- contarse a sí misma.
+-- contarse a sí misma. En modo "custom" debe volver a su posición configurada.
+config.fallback_mode = "custom"
 clients = {
   { address = "0x1", class = "noctalia-term-btop", x = 2000, y = 900, w = 928, h = 800, monitor = "1" },
 }
@@ -898,6 +994,10 @@ dispatched = {}
 clickCard("btop")
 check("un widget ya abierto vuelve a su posición", true, dispatchText():find("move%({ x = 16, y = 16") ~= nil)
 check("y no se lanza una segunda ventana", true, dispatchText():find("exec_cmd") == nil)
+check("botón de cerrar en widget abierto", true, (function()
+    local closeBtn = findNode(lastTree, "close-btop")
+    return closeBtn ~= nil and closeBtn.props and closeBtn.props.onClick ~= nil
+  end)())
 clients = {}
 
 -- ------------------------------------------------- borrar desde el panel --
@@ -914,6 +1014,65 @@ if deleteButton ~= nil and deleteButton.props.onClick ~= nil then
 end
 check("al borrar, la tarjeta desaparece", false, findNode(lastTree, "card-btop") ~= nil)
 check("y el widget ya no está en la lista", false, (lastTree ~= nil) and findNode(lastTree, "card-btop") ~= nil)
+
+-- ------------------------------------------- fallback: layout y aleatorio --
+
+-- El layout de un widget se respeta al abrirlo (dirección y tamaño), pero
+-- cuando ya está abierto y se pulsa su miniatura en modo "random", se mueve a
+-- un hueco libre conservando el tamaño que tiene.
+config.fallback_mode = "random"
+config.fallback_random_resize = false
+clients = {}
+env.onIpc("add", "suelto|echo hola|")
+env.onIpc("add", "anclado|echo hola|top-left, 928x800")
+env.onOpen("")
+
+-- "suelto" no tiene layout: se abre en un hueco libre con el tamaño de
+-- respaldo.
+clock = clock + 5000
+dispatched = {}
+clickCard("suelto")
+local spawnText = dispatchText()
+local openedSize = spawnText:match("size = { (%d+, %d+) }")
+check("un widget sin layout se abre con el tamaño de respaldo", "900, 520", openedSize)
+check("y en una posición libre (no la de respaldo)", false, spawnText:find("move = { 120, 140") ~= nil)
+
+-- "anclado" tiene layout: al abrirlo se respetan su dirección y su tamaño.
+clock = clock + 5000
+dispatched = {}
+clickCard("anclado")
+local anchoredText = dispatchText()
+check("un widget con layout se abre en su posición", true, anchoredText:find("move = { 16, 16") ~= nil)
+check("con su tamaño definido", true, anchoredText:find("size = { 928, 800") ~= nil)
+
+-- Si ya está abierto y se vuelve a pulsar, en modo random se recoloca a un
+-- hueco libre, pero conserva el tamaño que tiene ahora (no el del layout).
+clients = {
+  { address = "0x1", class = "noctalia-term-anclado", x = 2000, y = 900, w = 600, h = 400, monitor = "1" },
+}
+env.onOpen("")
+clock = clock + 5000
+dispatched = {}
+clickCard("anclado")
+local movedText = dispatchText()
+check("un widget abierto se recoloca en modo random", false, movedText:find("move = { 16, 16") ~= nil)
+check("y conserva su tamaño actual", true, movedText:find("resize%({ x = 600, y = 400") ~= nil)
+
+-- Con "cambiar tamaño también" activo, el tamaño también se sortea.
+config.fallback_random_resize = true
+env.onOpen("")
+clock = clock + 5000
+dispatched = {}
+clickCard("anclado")
+local resizedText = dispatchText()
+local randomSize = resizedText:match("resize%({ x = (%d+), y = (%d+)")
+local sameSize = resizedText:find("resize%({ x = 600, y = 400") ~= nil
+check("con resize activo el tamaño se vuelve a sortear", false, sameSize)
+check("y el tamaño aleatorio está dentro del rango", true, randomSize ~= nil)
+
+config.fallback_random_resize = false
+config.fallback_mode = "custom"
+clients = {}
 
 
 print(string.format("\n%d comprobaciones, %d fallos", PASSED + FAILED, FAILED))

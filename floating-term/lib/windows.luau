@@ -60,6 +60,9 @@ function M.list(callback)
           end
           table.insert(clients, {
             address = tostring(client.address or ""),
+            -- Hyprland >= 0.5x: identificador estable del toplevel. grim -T lo
+            -- usa para capturar SOLO esa ventana, aunque haya capas encima.
+            stableId = tostring(client.stableId or ""),
             class = tostring(client.class or ""),
             title = tostring(client.title or ""),
             x = tonumber(at[1]) or 0,
@@ -123,10 +126,15 @@ function M.pluginWindows(clients, monitors, nameForClass)
       end
       table.insert(windows, {
         address = client.address,
+        stableId = client.stableId,
         class = client.class,
         name = nameForClass(client.class),
         x = client.x - monitor.x,
         y = client.y - monitor.y,
+        -- Coordenadas globales (grim -g trabaja en coordenadas de escritorio,
+        -- no del monitor).
+        screenX = client.x,
+        screenY = client.y,
         w = client.w,
         h = client.h,
         monitor = monitor,
@@ -295,7 +303,7 @@ spawnExpression = function(params)
   )
 end
 
--- Lanza una lista de ventanas en paralelo (una sola espera de 0.6 s). 
+-- Lanza una lista de ventanas en paralelo (una sola espera de 0.6 s).
 function M.spawnMany(paramsList, callback)
   if #paramsList == 0 then
     if callback ~= nil then

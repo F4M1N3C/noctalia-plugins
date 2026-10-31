@@ -1,12 +1,12 @@
 --!nonstrict
--- Defaults del manifiesto.
+-- Defaults integrados.
 --
--- La lista de widgets vive en `plugin.toml` (para que Ajustes → Plugins la
--- muestre) y aquí se lee en runtime para tener una única fuente de verdad: si
--- el manifiesto cambia, el plugin lo sigue sin tocar código.
+-- La lista de widgets vive en el `store.json` del plugin y se edita desde el
+-- panel. Estas tablas solo rellenan la lista inicial y sirven de respaldo si
+-- el manifiesto no declara `commands`/`layouts`.
 --
 -- El manifiesto se analiza una sola vez y se guarda en memoria: el parser es
--- comparatively caro y Noctalia da a cada callback solo 25 ms de CPU.
+-- relativamente caro y Noctalia da a cada callback solo 25 ms de CPU.
 --
 -- Si el manifiesto no se puede leer (formato inesperado, plugin copiado sin
 -- el .toml) se usa la tabla de respaldo para no dejar al usuario sin widgets.
@@ -32,6 +32,8 @@ local FALLBACK_LAYOUTS = {
   btop = "top-left, 928x800",
   lavat = "bottom-left, 802x582",
 }
+
+local FALLBACK_THUMBS = {}
 
 local cached = nil
 
@@ -264,11 +266,12 @@ function M.load()
     layouts = util.copyMap(FALLBACK_LAYOUTS)
   end
 
-  cached = { commands = commands, layouts = layouts }
+  cached = { commands = commands, layouts = layouts, thumbs = util.copyMap(FALLBACK_THUMBS) }
 
   return {
     commands = util.copyMap(commands),
     layouts = util.copyMap(layouts),
+    thumbs = util.copyMap(FALLBACK_THUMBS),
   }
 end
 

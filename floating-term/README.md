@@ -1,4 +1,4 @@
-# Term Deck
+# Terminal Widgets
 
 A launcher for terminal apps that live in floating windows. Every command gets its own
 card, its own size and anchor, and the whole set can be re-arranged with one click.
@@ -7,7 +7,7 @@ card, its own size and anchor, and the whole set can be re-arranged with one cli
 
 | Field | Value |
 | --- | --- |
-| ID | `faminec/floating-term` |
+| ID | `faminec/terminal-widgets` |
 | Entries | Bar widget: `launcher`; panel: `panel` |
 
 ## Requirements
@@ -53,32 +53,32 @@ moves the new one to the closest free slot.
 
 ### Editing the widget list
 
-The **pencil button** in the panel header switches to edit mode: every card grows a
-rename and a delete button, and an extra card at the end opens a small form with the
-name, the command and the layout of a new widget.
+The **pencil button** in the panel header switches to edit mode. Editing an existing
+widget replaces its card with the editor, so the fields appear where that widget is;
+the "add widget" editor is the first card. The editor has save, cancel and delete
+buttons, plus a button to clear a custom thumbnail.
 
 The list is stored in the plugin's own data directory
-(`noctalia.pluginDataDir()/store.json`), not in the plugin settings, and it is merged
-with them at runtime:
+(`noctalia.pluginDataDir()/store.json`), which is the only source of truth. The
+built-in defaults are merged on load so a fresh install has widgets:
 
 ```
-defaults (plugin.toml)  ⊕  settings (Ajustes → Plugins)  ⊕  store (this panel)
-−  removed (deleted from the panel)
+defaults (lib/defaults.luau)  ⊕  store (panel)  −  removed (deleted from the panel)
 ```
 
-That is why adding a widget from the settings never removes the others, and why the
-built-in widgets can be deleted as well: a deleted name is remembered as a tombstone in
-the store.
+Adding widgets from the settings page is no longer possible: Noctalia's plugin
+settings only configure appearance and behaviour. The built-in widgets can be
+deleted as well: a deleted name is remembered as a tombstone in the store. New
+widgets start with an empty thumbnail, so they show the auto-captured preview (or
+the mock card), never an unrelated image.
 
 ## Settings
 
-Configure the plugin in **Settings → Plugins → Term Deck** (the gear button in the panel
+Configure the plugin in **Settings → Plugins → Terminal Widgets** (the gear button in the panel
 opens the same page).
 
 | Setting | Type | Default | Description |
 | --- | --- | --- | --- |
-| `commands` | `string_map` | `cava`, `cbonsai`, `unimatrix`, `pipes`, `lavat`, `btop` | Name = shell command. Every entry becomes a card. |
-| `layouts` | `string_map` | see below | Size, anchor and optional offset for every command. |
 | `margin` | `int` | `16` | Margin in pixels from the monitor edges for anchored layouts. |
 | `output` | `string` | empty | Monitor connector the windows open on (for example `DP-1`). Empty = focused monitor. |
 | `reuse_existing` | `bool` | `true` | Focus the existing window instead of opening another one. |
@@ -91,15 +91,15 @@ opens the same page).
 | `close_on_launch` | `bool` | `false` | Close the panel as soon as a command is launched. |
 | `preview_interval` | `int` | `3` | Seconds between live preview refreshes (1 to 60). |
 | `rotation` | `select` | `clockwise` | How the windows are rotated: `clockwise`, `counterclockwise`, `opposite`, `pairs` or `shuffle`. |
-| `rotation_sizes` | `bool` | `false` | Swap the sizes between the windows when rotating. |
+| `rotation_sizes` | `bool` | `true` | Swap the sizes between the windows when rotating. |
 | `columns` | `int` | `2` | Columns of the card grid (1 to 3). |
-| `card_preview` | `select` | `auto` | Card preview: `auto`, `screenshot`, `live` (auto-refreshing screenshots) or `mock`. |
-| `avoid_collisions` | `bool` | `true` | Move a window to the closest free slot when its layout collides with another one. |
+| `card_preview` | `select` | `auto` | Card preview: `auto`, `screenshot`, `live` (auto-refreshing screenshots), `gif` or `mock`. |
 
 ### Layout format
 
+Each widget stores its layout in `store.json` (edit it from the panel). The format is:
+
 ```toml
-[plugin_settings."faminec/floating-term".layouts]
 cava      = "bottom-center, 1610x584"
 cbonsai   = "top-center, 801x582"
 unimatrix = "right-center, 869x1424"
@@ -151,8 +151,8 @@ runtime is created on demand.
 - `close_on_launch` now defaults to `false` (panel stays open after launching).
 - Card previews can be `live` (refreshed every `preview_interval` seconds) and the
   closed-card preview animates with the last captured frames.
-- Thumbnails are only captured when the widget window is fully visible, so a
-  window on top no longer leaks into another card's preview.
+- Window captures use Hyprland's `stableId` + `grim -T`, so the preview shows only
+  that widget window even if the Noctalia panel, another window or a bar is on top.
 - `opposite` rotation now pairs windows by their real geometry, so it works for
   any layout (including four windows clustered in one corner).
 - Rotation is atomic: rapid presses are ignored while a rotation is running, so
@@ -161,9 +161,11 @@ runtime is created on demand.
   one.
 - Right-clicking an open card closes its window.
 - Cards keep a uniform size even in a partial last row.
-- Panel edits are flushed to `settings.toml` on close, so the settings page and
-  the panel share one source of truth; deleting a widget from the panel removes
-  it from the settings too.
+- The panel is the only source of truth for widgets: commands, layouts and
+  custom thumbnails live in the plugin's `store.json`. The Settings page no
+  longer rewrites them.
+- The widget editor opens inside the card being edited (or as the first card
+  when adding one), instead of at the end of the list.
 - Editing a widget's size or position re-applies its geometry instead of
   closing the window.
 
@@ -186,7 +188,7 @@ grid, the edit mode and every IPC handler work (this is what catches the
 It exits with a non-zero code if a case fails.
 
 `test-smoke.sh` needs Hyprland and Noctalia with the plugin enabled. It works
-out how many widgets should be open (manifest ⊕ settings ⊕ panel store, minus
+out how many widgets should be open (manifest defaults ⊕ panel store, minus
 the removed ones), opens them all and waits until **exactly** that many windows
 exist (a fixed sleep is not enough: `open-all` launches them one by one). It
 then rotates and checks that the positions are a permutation of the previous
@@ -206,11 +208,10 @@ lines are still reviewed before exiting.
 ## Notes
 
 - The plugin parses `plugin.toml` once and keeps it in memory (the parser is
-  comparatively expensive and each callback only gets 25 ms of CPU). It is
-  re-read whenever the panel opens or the settings change, so editing
-  `plugin.toml` needs no restart. Noctalia only watches the `.luau` files:
-  after a code change, reload the script (touch `panel.luau`), which
-  `test-smoke.sh` does itself.
+  relatively expensive and each callback only gets 25 ms of CPU). After editing
+  the manifest, reload the script (touch `panel.luau`). Noctalia only watches
+  the `.luau` files: after a code change, reload the script (touch
+  `panel.luau`), which `test-smoke.sh` does itself.
 - The geometry uses the Hyprland 0.56 Lua API (`hl.dsp.exec_cmd`), so no
   `windowrules.lua` change is needed.
 - The size is re-applied shortly after the window is created, because the
@@ -218,14 +219,14 @@ lines are still reviewed before exiting.
   and can override the requested one.
 - `kitty` is started with `-o confirm_os_window_close=0` so closing the window does not
   show a confirmation dialog.
-- The list of commands is merged at runtime: the manifest defaults, whatever is set in
-  the plugin settings and whatever is edited in the panel. Adding a command in the
-  settings never removes the others, and the defaults can be removed from the panel.
-- The card previews take a screenshot of the window area with `grim` and crop it with
-  Pillow. `grim` does not accept an output and a geometry at the same time, so the
-  helper captures the whole output and crops it itself. A window that is covered by
-  another one is not captured (the picture would show the wrong thing), so its card
-  keeps the mock thumbnail.
+- The list of widgets lives in the plugin's `store.json`: the manifest defaults are
+  merged with what is edited in the panel, and the panel can also remove the
+  defaults. Noctalia's plugin settings are not used as a second list, so the two
+  views cannot drift apart.
+- The card previews capture the window's toplevel with `grim -T <stableId>`. That
+  grabs only that window, even when the Noctalia panel or another window is above
+  it, and it does not change the window order. The capture is resized with Pillow.
+  If a client has no `stableId`, the old `alterzorder` fallback is used.
 - Clicking a card twice in a row does not open two windows: a short debounce (and the
   `reuse_existing` behaviour) keeps a single window per command.
 - A widget without a command stays in the list (so it is visible and can be fixed)

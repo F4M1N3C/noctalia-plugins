@@ -1,23 +1,21 @@
 --!nonstrict
 -- Almacén propio del plugin.
 --
--- Noctalia guarda los ajustes `string_map` como una tabla que *reemplaza* al
--- valor por defecto del manifiesto: al añadir una entrada desde Ajustes, las
--- demás desaparecen. Por eso el plugin no usa esos mapas como única fuente de
--- verdad, sino como una capa más:
+-- La lista de widgets (nombre, comando, layout y miniatura) vive en
+-- `store.json`, dentro del directorio de datos del plugin. Al cargar se
+-- fusionan los defaults integrados y los borrados se recuerdan en `removed`:
 --
---   defaults (plugin.toml)  ⊕  config (Ajustes)  ⊕  store (este panel)
---   −  removed (borrados desde el panel)
+--   defaults  ⊕  store  −  removed
 --
--- Así se puede añadir un widget sin perder los que ya estaban y se pueden
--- borrar también los que vienen por defecto.
+-- Así se puede añadir un widget sin perder los que ya estaban y también borrar
+-- los que vienen por defecto. Ajustes de Noctalia no participa.
 
 local util = require("./util.luau")
 
 local M = {}
 
 local function emptyStore()
-  return { commands = {}, layouts = {}, removed = {} }
+  return { commands = {}, layouts = {}, thumbs = {}, removed = {} }
 end
 
 function M.path()
@@ -67,6 +65,13 @@ function M.load()
       end
     end
   end
+  if type(decoded.thumbs) == "table" then
+    for key, value in pairs(decoded.thumbs) do
+      if type(value) == "string" then
+        store.thumbs[key] = value
+      end
+    end
+  end
 
   return store
 end
@@ -93,7 +98,7 @@ end
 -- Los valores vacíos de los defaults y de Ajustes se ignoran, pero los del
 -- store se respetan: un comando vacío es una decisión explícita del usuario
 -- (un widget sin comando sigue apareciendo en la lista).
-function M.merge(base, configMap, storeMap, removed)
+function M.merge(base, configMap, storeMap, removed, baseThumbs, configThumbs, storeThumbs)
   local out = {}
 
   for key, value in pairs(base or {}) do
@@ -115,7 +120,28 @@ function M.merge(base, configMap, storeMap, removed)
     out[key] = nil
   end
 
-  return out
+  -- Thumbs merge (same logic)
+  local thumbsOut = {}
+  for key, value in pairs(baseThumbs or {}) do
+    if type(value) == "string" and value ~= "" then
+      thumbsOut[key] = value
+    end
+  end
+  for key, value in pairs(configThumbs or {}) do
+    if type(value) == "string" and value ~= "" then
+      thumbsOut[key] = value
+    end
+  end
+  for key, value in pairs(storeThumbs or {}) do
+    if type(value) == "string" then
+      thumbsOut[key] = value
+    end
+  end
+  for _, key in ipairs(removed or {}) do
+    thumbsOut[key] = nil
+  end
+
+  return out, thumbsOut
 end
 
 -- Marca un widget como borrado (tombstone) y lo quita del store.
@@ -125,12 +151,15 @@ function M.remove(store, name)
   end
   store.commands[name] = nil
   store.layouts[name] = nil
+  if store.thumbs then
+    store.thumbs[name] = nil
+  end
 end
 
 -- Añade o actualiza un widget.
--- `command` y `layout` a "" se guardan tal cual (quitan el valor); a nil no
--- tocan lo que hubiera.
-function M.upsert(store, name, command, layout)
+-- `nil` no toca lo que hubiera; `""` en `layout` o `thumb` borra el valor
+-- (para volver al layout por defecto o quitar la miniatura personalizada).
+function M.upsert(store, name, command, layout, thumb)
   local index = nil
   for position, value in ipairs(store.removed) do
     if value == name then
@@ -146,7 +175,18 @@ function M.upsert(store, name, command, layout)
     store.commands[name] = command
   end
   if layout ~= nil then
-    store.layouts[name] = layout
+    if layout == "" then
+      store.layouts[name] = nil
+    else
+      store.layouts[name] = layout
+    end
+  end
+  if thumb ~= nil then
+    if thumb == "" then
+      store.thumbs[name] = nil
+    else
+      store.thumbs[name] = thumb
+    end
   end
 end
 

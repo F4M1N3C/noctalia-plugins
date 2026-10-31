@@ -1,14 +1,14 @@
 # Lanzador de widgets de terminal en ventanas flotantes de Hyprland.
 #
-# Cada comando del mapa se convierte en una tarjeta del panel; al pulsarla se
-# abre kitty con clase/título propios y, si existe, su geometría en `layouts`.
+# Cada widget (nombre + comando) se convierte en una tarjeta del panel; al
+# pulsarla se abre kitty con clase/título propios y su geometría.
 #
-# La lista de widgets se fusiona en runtime (defaults del manifiesto + lo que
-# haya en Ajustes + lo que se edite en el panel), así que añadir uno desde
-# Ajustes no borra los demás y se pueden borrar también los de por defecto.
+# La lista vive en el `store.json` del plugin y se edita desde el propio panel.
+# Los defaults integrados (lib/defaults.luau) solo rellenan la lista inicial;
+# Ajustes de Noctalia ya no es una segunda fuente de verdad.
 
-id = "faminec/floating-term"
-name = "Term Deck"
+id = "faminec/terminal-widgets"
+name = "Terminal Widgets"
 version = "2.1.0"
 plugin_api = 32
 author = "faminec"
@@ -17,20 +17,6 @@ dependencies = ["kitty", "hyprland"]
 tags = ["utility", "system", "hyprland", "music", "launcher"]
 icon = "terminal-2"
 description = "Launch terminal apps in floating windows, with a card grid, per-command geometry and rotation."
-
-[[setting]]
-key = "commands"
-type = "string_map"
-label_key = "settings.commands.label"
-description_key = "settings.commands.description"
-default = { cava = "cava", cbonsai = "cbonsai -l -i", unimatrix = "unimatrix -s 96 -l o", pipes = "pipes.sh", lavat = "lavat -k green -c black", btop = "btop" }
-
-[[setting]]
-key = "layouts"
-type = "string_map"
-label_key = "settings.layouts.label"
-description_key = "settings.layouts.description"
-default = { cava = "bottom-center, 1610x584", cbonsai = "top-center, 801x582", unimatrix = "right-center, 869x1424", pipes = "bottom-right, 900x520", btop = "top-left, 928x800", lavat = "bottom-left, 802x582" }
 
 [[setting]]
 key = "margin"
@@ -61,42 +47,6 @@ type = "string"
 label_key = "settings.terminal.label"
 description_key = "settings.terminal.description"
 default = "kitty"
-
-[[setting]]
-key = "width"
-type = "int"
-label_key = "settings.width.label"
-description_key = "settings.width.description"
-default = 900
-min = 200
-max = 3000
-
-[[setting]]
-key = "height"
-type = "int"
-label_key = "settings.height.label"
-description_key = "settings.height.description"
-default = 520
-min = 150
-max = 2000
-
-[[setting]]
-key = "x"
-type = "int"
-label_key = "settings.x.label"
-description_key = "settings.x.description"
-default = 120
-min = -3000
-max = 6000
-
-[[setting]]
-key = "y"
-type = "int"
-label_key = "settings.y.label"
-description_key = "settings.y.description"
-default = 140
-min = -2000
-max = 4000
 
 [[setting]]
 key = "glyph"
@@ -131,7 +81,7 @@ key = "rotation_sizes"
 type = "bool"
 label_key = "settings.rotation_sizes.label"
 description_key = "settings.rotation_sizes.description"
-default = false
+default = true
 
 [[setting]]
 key = "columns"
@@ -152,6 +102,7 @@ options = [
   { value = "auto", label_key = "settings.card_preview.options.auto" },
   { value = "screenshot", label_key = "settings.card_preview.options.screenshot" },
   { value = "live", label_key = "settings.card_preview.options.live" },
+  { value = "gif", label_key = "settings.card_preview.options.gif" },
   { value = "mock", label_key = "settings.card_preview.options.mock" },
 ]
 
@@ -160,16 +111,68 @@ key = "preview_interval"
 type = "int"
 label_key = "settings.preview_interval.label"
 description_key = "settings.preview_interval.description"
-default = 3
-min = 1
-max = 60
+default = 3000
+min = 1000
+max = 60000
+visible_when = { key = "card_preview", values = ["auto", "live", "gif"] }
 
 [[setting]]
-key = "avoid_collisions"
+key = "fallback_mode"
+type = "select"
+label_key = "settings.fallback_mode.label"
+description_key = "settings.fallback_mode.description"
+default = "random"
+options = [
+  { value = "random", label_key = "settings.fallback_mode.options.random" },
+  { value = "custom", label_key = "settings.fallback_mode.options.custom" },
+]
+[[setting]]
+key = "width"
+type = "int"
+label_key = "settings.width.label"
+description_key = "settings.width.description"
+default = 900
+min = 200
+max = 3000
+visible_when = { key = "fallback_mode", values = ["custom"] }
+
+[[setting]]
+key = "height"
+type = "int"
+label_key = "settings.height.label"
+description_key = "settings.height.description"
+default = 830
+min = 150
+max = 2000
+visible_when = { key = "fallback_mode", values = ["custom"] }
+
+[[setting]]
+key = "x"
+type = "int"
+label_key = "settings.x.label"
+description_key = "settings.x.description"
+default = 120
+min = -3000
+max = 6000
+visible_when = { key = "fallback_mode", values = ["custom"] }
+
+[[setting]]
+key = "y"
+type = "int"
+label_key = "settings.y.label"
+description_key = "settings.y.description"
+default = 140
+min = -2000
+max = 4000
+visible_when = { key = "fallback_mode", values = ["custom"] }
+
+[[setting]]
+key = "fallback_random_resize"
 type = "bool"
-label_key = "settings.avoid_collisions.label"
-description_key = "settings.avoid_collisions.description"
-default = true
+label_key = "settings.fallback_random_resize.label"
+description_key = "settings.fallback_random_resize.description"
+default = false
+visible_when = { key = "fallback_mode", values = ["random"] }
 
 [[widget]]
 id = "launcher"
@@ -178,7 +181,11 @@ entry = "widget.luau"
 [[panel]]
 id = "panel"
 entry = "panel.luau"
-width = 620
-height = 900
+# El tamaño del panel se mide en píxeles lógicos: Noctalia lo multiplica por
+# `accessibility.ui_scale` y le suma el sangrado de la sombra (~28 px de ancho
+# y ~30 px de alto). Con ui_scale = 1.2, 520x715 se ven como ~652x888 px, justo
+# para cuatro filas de miniaturas sin barra de scroll.
+width = 520
+height = 715
 placement = "attached"
 open_near_click = true

@@ -3,6 +3,19 @@
 A launcher for terminal apps that live in floating windows. Every command gets its own
 card, its own size and anchor, and the whole set can be re-arranged with one click.
 
+![The Terminal Widgets panel](screenshots/panel.webp)
+
+## Install
+
+Add this repository as a plugin source and enable the plugin:
+
+```sh
+noctalia msg plugins source add dev path https://github.com/F4M1N3C/noctalia-plugins
+noctalia msg plugins enable faminec/terminal-widgets
+```
+
+Then add the **launcher** widget from Noctalia's widget picker.
+
 ## Plugin
 
 | Field | Value |
@@ -14,11 +27,13 @@ card, its own size and anchor, and the whole set can be re-arranged with one cli
 
 The following executables must be installed and available on `PATH`:
 
-- `kitty` — the terminal the plugin launches.
+- `kitty` — the terminal the plugin launches (any other terminal can be set instead).
 - `hyprland` — the compositor; the plugin uses the Hyprland 0.56 Lua API to float and
   place every window.
-- `grim` — optional, used to take the preview screenshot of an open window.
-- `python3` with `python-pillow` — optional, used to crop those screenshots.
+- `grim` — used to take the preview screenshot of an open window. Only needed for the
+  card previews; without it the cards fall back to a static or mock preview.
+- `python3` with `python-pillow` — used to crop those screenshots and to extract the
+  frames of an animated preview. Also only needed for the card previews.
 
 ## Usage
 
@@ -29,7 +44,7 @@ card launches the command in a floating terminal window.
 The panel can also be opened directly:
 
 ```sh
-noctalia msg panel-toggle faminec/floating-term:panel
+noctalia msg panel-toggle faminec/terminal-widgets:panel
 ```
 
 ### Opening and re-arranging everything
@@ -83,17 +98,30 @@ opens the same page).
 | `output` | `string` | empty | Monitor connector the windows open on (for example `DP-1`). Empty = focused monitor. |
 | `reuse_existing` | `bool` | `true` | Focus the existing window instead of opening another one. |
 | `terminal` | `string` | `kitty` | Terminal command used to launch the apps. |
-| `width` | `int` | `900` | Fallback width for commands without a `layouts` entry. |
-| `height` | `int` | `520` | Fallback height for commands without a `layouts` entry. |
-| `x` | `int` | `120` | Fallback X position (monitor coordinates). |
-| `y` | `int` | `140` | Fallback Y position (monitor coordinates). |
 | `glyph` | `glyph` | `terminal-2` | Bar icon. |
 | `close_on_launch` | `bool` | `false` | Close the panel as soon as a command is launched. |
-| `preview_interval` | `int` | `3` | Seconds between live preview refreshes (1 to 60). |
+| `preview_interval` | `int` | `3000` | Milliseconds between live preview refreshes (1000 to 60000). Only used by the `auto`, `live` and `gif` preview modes. |
 | `rotation` | `select` | `clockwise` | How the windows are rotated: `clockwise`, `counterclockwise`, `opposite`, `pairs` or `shuffle`. |
 | `rotation_sizes` | `bool` | `true` | Swap the sizes between the windows when rotating. |
 | `columns` | `int` | `2` | Columns of the card grid (1 to 3). |
 | `card_preview` | `select` | `auto` | Card preview: `auto`, `screenshot`, `live` (auto-refreshing screenshots), `gif` or `mock`. |
+| `fallback_mode` | `select` | `random` | How a widget without a layout is placed: `random` picks a free spot, `custom` uses the X/Y/width/height below. |
+| `fallback_random_resize` | `bool` | `false` | In `random` mode, also pick a random size when a widget is moved to another free spot. When off, the widget keeps its current size. |
+| `width` | `int` | `900` | Fallback width for commands without a `layouts` entry (`custom` mode only). |
+| `height` | `int` | `830` | Fallback height for commands without a `layouts` entry (`custom` mode only). |
+| `x` | `int` | `120` | Fallback X position (monitor coordinates, `custom` mode only). |
+| `y` | `int` | `140` | Fallback Y position (monitor coordinates, `custom` mode only). |
+
+### Where a window ends up
+
+- A widget **with a layout** opens exactly where its layout says, at the size its layout
+  says. Clicking it again while it is open moves it to another free spot and keeps its
+  current size.
+- A widget **without a layout** opens in a free spot, using the fallback size.
+- With `fallback_mode` set to `custom`, widgets without a layout open at the fallback
+  X/Y/width/height instead.
+- With `fallback_random_resize` on, moving an open widget also gives it a new random
+  size; with it off, the size the user set by hand is kept.
 
 ### Layout format
 
@@ -129,14 +157,14 @@ btop = "x=8 y=8 w=928 h=800"
 ## IPC
 
 ```sh
-noctalia msg panel-toggle faminec/floating-term:panel
-noctalia msg plugin faminec/floating-term:panel all launch <command>
-noctalia msg plugin faminec/floating-term:panel all open-all
-noctalia msg plugin faminec/floating-term:panel all rotate
-noctalia msg plugin faminec/floating-term:panel all close-all
-noctalia msg plugin faminec/floating-term:panel all add "name|command|layout"
-noctalia msg plugin faminec/floating-term:panel all remove <name>
-noctalia msg plugin faminec/floating-term:panel all refresh
+noctalia msg panel-toggle faminec/terminal-widgets:panel
+noctalia msg plugin faminec/terminal-widgets:panel all launch <command>
+noctalia msg plugin faminec/terminal-widgets:panel all open-all
+noctalia msg plugin faminec/terminal-widgets:panel all rotate
+noctalia msg plugin faminec/terminal-widgets:panel all close-all
+noctalia msg plugin faminec/terminal-widgets:panel all add "name|command|layout"
+noctalia msg plugin faminec/terminal-widgets:panel all remove <name>
+noctalia msg plugin faminec/terminal-widgets:panel all refresh
 ```
 
 The `add` payload is split on `|`, so the command itself cannot contain one.
@@ -146,10 +174,22 @@ runtime is created on demand.
 
 ## Changelog
 
+### 2.2.0
+
+- The panel is attached to the bar by default and sized to show four rows of cards with
+  no scrollbar.
+- A widget with a layout now opens exactly at the position and size its layout defines.
+  Clicking an already open widget moves it to another free spot and keeps its current
+  size; the size the user set by hand is remembered.
+- `preview_interval` now counts milliseconds and actually refreshes the visible previews.
+- Animated (GIF) thumbnails are supported.
+- Cards no longer overflow the panel when the grid is set to one column.
+- The plugin id is now `faminec/terminal-widgets`.
+
 ### 2.1.0
 
 - `close_on_launch` now defaults to `false` (panel stays open after launching).
-- Card previews can be `live` (refreshed every `preview_interval` seconds) and the
+- Card previews can be `live` (refreshed every `preview_interval` milliseconds) and the
   closed-card preview animates with the last captured frames.
 - Window captures use Hyprland's `stableId` + `grim -T`, so the preview shows only
   that widget window even if the Noctalia panel, another window or a bar is on top.
@@ -206,6 +246,21 @@ no-op `log-level-set` before reviewing it. If a step fails early, the new log
 lines are still reviewed before exiting.
 
 ## Notes
+
+### What it touches
+
+- **Network:** none. The plugin makes no network requests.
+- **Files written:** only inside the plugin's own data directory
+  (`noctalia.pluginDataDir()`): `store.json` (the widget list, their layouts and their
+  custom thumbnails) and `thumbs/` (the captured previews and the frames extracted from
+  an animated one). Nothing is written anywhere else.
+- **Processes spawned:** `kitty` (the terminal set in `terminal`), `hyprctl` (to list,
+  move, resize, focus and close windows), `grim` (to capture a window for its card
+  preview) and `python3` (with Pillow: to crop the captures and to extract the frames of
+  an animated preview). `grim` and `python3` are only used for the previews; without them
+  the cards fall back to a static or mock preview and everything else keeps working.
+
+### Implementation notes
 
 - The plugin parses `plugin.toml` once and keeps it in memory (the parser is
   relatively expensive and each callback only gets 25 ms of CPU). After editing

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prueba de humo del plugin `faminec/floating-term` sobre el escritorio.
+# Prueba de humo del plugin `faminec/terminal-widgets` sobre el escritorio.
 #
 # Necesita Hyprland con Noctalia y el plugin activados. Abre el panel, lanza
 # todos los widgets, comprueba que están todos, los rota, comprueba que las
@@ -182,7 +182,7 @@ while [ "$stable" -lt 50 ] && [ "$iters" -lt 300 ]; do
 done
 echo "host inactivo; iniciando la prueba."
 
-tmp=$(mktemp -d /tmp/opencode/floating-term-smoke.XXXXXX) || {
+tmp=$(mktemp -d /tmp/opencode/terminal-widgets-smoke.XXXXXX) || {
   echo "no se pudo crear el directorio temporal" >&2
   exit 2
 }
@@ -294,7 +294,7 @@ review_log() {
   # El conteo estable es el del plugin (líneas propias + panel + recarga +
   # hot-reload); el host añade ruido ajeno que varía entre pasadas. La
   # revisión de [WRN]/[ERR] se hace sobre TODAS las líneas, sin filtrar.
-  plugin_lines=$(grep -c -E "floating-term|panel\.luau'" "$tmp/run.log" 2>/dev/null || true)
+  plugin_lines=$(grep -c -E "terminal-widgets|panel\.luau'" "$tmp/run.log" 2>/dev/null || true)
   [ -n "$plugin_lines" ] || plugin_lines=0
   problems=$(grep -E "\[WRN\]|\[ERR\]" "$tmp/run.log" || true)
   if [ -n "$problems" ]; then

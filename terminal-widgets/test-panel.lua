@@ -1,4 +1,4 @@
--- Banco de pruebas del plugin `faminec/floating-term`.
+-- Banco de pruebas del plugin `faminec/terminal-widgets`.
 --
 --   lua5.4 test-panel.lua                       # prueba la copia de este repo
 --   lua5.4 test-panel.lua /ruta/otras          # prueba otra copia (la instalada)

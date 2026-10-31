@@ -40,7 +40,7 @@ function M.load()
 
   local ok, decoded = pcall(noctalia.json.decode, raw)
   if not ok or type(decoded) ~= "table" then
-    noctalia.log("floating-term: store.json ilegible, se empieza de cero")
+    noctalia.log("terminal-widgets: store.json ilegible, se empieza de cero")
     return store
   end
 

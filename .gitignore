@@ -14,3 +14,6 @@ catalog.toml
 # Python bytecode de los helpers
 __pycache__/
 *.pyc
+
+# Scratch de las skills de superpowers
+.superpowers/

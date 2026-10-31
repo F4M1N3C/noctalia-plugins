@@ -36,7 +36,7 @@ function M.cacheDir()
   -- capturas funcionan también en una instalación nueva.
   local called, created = pcall(noctalia.mkdirAll, path)
   if not called or created == false then
-    noctalia.log("floating-term: no se pudo crear " .. path)
+    noctalia.log("terminal-widgets: no se pudo crear " .. path)
     cachedDir = false
     return nil
   end
@@ -274,7 +274,7 @@ function M.capture(entries, callback)
     pcall(noctalia.removeFile, batchPath)
     if result.exitCode ~= 0 then
       local detail = util.trim(result.stderr or "")
-      noctalia.log("floating-term: captura: " .. detail)
+      noctalia.log("terminal-widgets: captura: " .. detail)
     end
     if callback ~= nil then
       callback()

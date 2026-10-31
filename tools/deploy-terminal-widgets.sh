@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# Deploy script for Terminal Widgets plugin
-# Usage: ./deploy.sh [--restart-noctalia]
+# Deploy script for the Terminal Widgets plugin.
+#
+# Usage: tools/deploy-terminal-widgets.sh [--restart-noctalia]
+#
+# The source is resolved relative to this script, so the monorepo can live
+# anywhere. The destination defaults to Noctalia's plugin directory and can be
+# overridden with DEST.
 
 set -euo pipefail
 
-PLUGIN_SRC="/home/faminec/noctalia-plugins/floating-term"
-PLUGIN_DST="$HOME/.local/share/noctalia/plugins/terminal-widgets"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN_SRC="$SCRIPT_DIR/../terminal-widgets"
+PLUGIN_DST="${DEST:-$HOME/.local/share/noctalia/plugins/terminal-widgets}"
 RESTART=false
 
 if [[ "${1:-}" == "--restart-noctalia" ]]; then
@@ -17,11 +23,9 @@ echo "Source:  $PLUGIN_SRC"
 echo "Target:  $PLUGIN_DST"
 echo ""
 
-# Copy all plugin files
+# Copy all plugin files (tests, docs and assets stay in the repo).
 rsync -av --delete \
     --exclude='.git' \
-    --exclude='.gitignore' \
-    --exclude='deploy.sh' \
     --exclude='test-*' \
     --exclude='*.md' \
     --exclude='screenshots' \

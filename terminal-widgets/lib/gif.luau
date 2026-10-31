@@ -126,7 +126,7 @@ function M.prepare(path, cacheDir, callback)
         detail = util.trim(result.stderr or "")
         code = tostring(result.exitCode)
       end
-      noctalia.log("floating-term: no se pudo extraer el GIF (exit " .. code .. "): " .. detail)
+      noctalia.log("terminal-widgets: no se pudo extraer el GIF (exit " .. code .. "): " .. detail)
     end
     if callback ~= nil then
       callback(frames)

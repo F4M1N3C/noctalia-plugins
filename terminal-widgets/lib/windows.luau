@@ -21,7 +21,7 @@ function M.dispatch(expression, callback)
     if result.exitCode ~= 0 then
       local detail = util.trim(result.stderr or result.stdout or "")
       if detail ~= "" then
-        noctalia.log("floating-term: " .. detail)
+        noctalia.log("terminal-widgets: " .. detail)
       end
     end
     if callback ~= nil then

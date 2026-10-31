@@ -206,7 +206,7 @@ local function loadWidgets()
   end
   state.thumbs = validThumbs
 
-  noctalia.log("floating-term: widgets -> " .. table.concat(widgetNames(), ", "))
+  noctalia.log("terminal-widgets: widgets -> " .. table.concat(widgetNames(), ", "))
 end
 
 local function classMap()
@@ -218,7 +218,7 @@ local function classMap()
       -- confundirían. Se avisa en el log, pero se sigue funcionando.
       noctalia.log(
         string.format(
-          "floating-term: '%s' y '%s' comparten la clase %s",
+          "terminal-widgets: '%s' y '%s' comparten la clase %s",
           map[class],
           name,
           class
@@ -596,7 +596,7 @@ captureThumbs = function(force)
         end
       end
     end
-    noctalia.log(string.format("floating-term: captureThumbs: %d entries, capturing=%s", #entries, tostring(state.capturing)))
+    noctalia.log(string.format("terminal-widgets: captureThumbs: %d entries, capturing=%s", #entries, tostring(state.capturing)))
 
     local function cleanup()
       local used = preview.currentPaths(state.windows)

@@ -248,7 +248,7 @@ function M.load()
     raw = noctalia.readFile(manifestPath)
   end
   noctalia.log(string.format(
-    "floating-term: manifiesto %s (%s bytes)",
+    "terminal-widgets: manifiesto %s (%s bytes)",
     tostring(manifestPath),
     raw ~= nil and tostring(#raw) or "ilegible"
   ))

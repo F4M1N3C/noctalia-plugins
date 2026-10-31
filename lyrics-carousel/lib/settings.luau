@@ -105,7 +105,7 @@ end
 
 --- Valor efectivo de un ajuste: overrides > configuracion > defecto.
 function M.value(key)
-  local override = readOverrides()[key]
+  local override = M.overrides()[key]
   if override ~= nil then
     return override
   end
@@ -128,12 +128,24 @@ function M.kindOf(key)
 end
 
 --- Escribe un ajuste en la capa de overrides (inmediato, sin recargar).
-function M.write(key, value)
+---
+--- El callback recibe true si el helper ha guardado el ajuste y false si no:
+--- sin el, quien llama no puede saber si el cambio se ha perdido.
+function M.write(key, value, callback)
+  local function finish(ok)
+    M.refresh()
+    if callback ~= nil then
+      callback(ok)
+    end
+  end
+
   local dir = noctalia.pluginDir()
   if dir == nil then
+    finish(false)
     return false
   end
-  return noctalia.runAsync({
+
+  local ok, started = pcall(noctalia.runAsync, {
     "python3",
     dir .. "/bin/set-setting.py",
     "override",
@@ -141,7 +153,8 @@ function M.write(key, value)
     tostring(value),
     M.kindOf(key),
   }, function(result)
-    if result == nil or result.exitCode ~= 0 then
+    local guardado = result ~= nil and result.exitCode == 0
+    if not guardado then
       local detail = ""
       if type(result) == "table" then
         detail = tostring(result.stderr or result.stdout or "")
@@ -151,25 +164,41 @@ function M.write(key, value)
           .. (detail ~= "" and (": " .. detail) or "")
       )
     end
-  end) and true or false
+    finish(guardado)
+  end)
+  if not ok then
+    noctalia.log("lyrics-carousel: no se pudo guardar " .. key .. ": " .. tostring(started))
+    finish(false)
+    return false
+  end
+  if started == false then
+    finish(false)
+    return false
+  end
+  return true
 end
 
 --- Vuelca los overrides al settings.toml (para que la pagina de ajustes y el
---- panel muestran lo mismo).
+--- panel muestren lo mismo).
 function M.merge()
   local dir = noctalia.pluginDir()
   if dir == nil then
     return false
   end
-  return noctalia.runAsync({
+  local ok, started = pcall(noctalia.runAsync, {
     "python3",
     dir .. "/bin/set-setting.py",
     "merge",
   }, function(result)
+    M.refresh()
     if result == nil or result.exitCode ~= 0 then
       noctalia.log("lyrics-carousel: no se pudieron volcar los ajustes")
     end
-  end) and true or false
+  end)
+  if not ok then
+    return false
+  end
+  return started == true
 end
 
 --- Interpreta la carga de un IPC: "clave=valor [tipo]" o "clave valor [tipo]".
@@ -199,23 +228,40 @@ function M.parse(payload)
     return nil
   end
   -- El tipo puede ser el ultimo token; el valor es el resto.
-  local kind = "string"
+  local kind = nil
   local pieces = {}
   for piece in rest:gmatch("%S+") do
     pieces[#pieces + 1] = piece
   end
   local last = pieces[#pieces]
-  if last == "bool" or last == "int" or last == "float" or last == "string" then
+  -- Solo se come el token si queda un valor detras: "font_family string"
+  -- significa la fuente "string", no un valor vacio de tipo string.
+  if #pieces > 1 and (last == "bool" or last == "int" or last == "float" or last == "string") then
     kind = last
     table.remove(pieces)
   end
   local value = table.concat(pieces, " ")
+  -- Sin token de tipo se deduce de la clave: "set karaoke true" tiene que
+  -- guardar un booleano, no la cadena "true" (el panel y el script lo
+  -- leian de forma distinta y se contradician).
+  if kind == nil then
+    kind = M.kindOf(key)
+  end
   if kind == "bool" then
-    value = value == "true" or value == "1"
+    local text = value:lower():gsub("%s+", "")
+    value = (text == "true" or text == "1" or text == "yes" or text == "on")
   elseif kind == "int" then
-    value = tonumber(value) or value
+    local number = tonumber(value)
+    if number == nil then
+      return nil
+    end
+    value = math.floor(number)
   elseif kind == "float" then
-    value = tonumber(value) or value
+    local number = tonumber(value)
+    if number == nil then
+      return nil
+    end
+    value = number
   end
   return key, value, kind
 end
@@ -226,6 +272,10 @@ function M.apply(key, value)
     local current = M.value(key)
     if type(current) == "boolean" then
       value = not current
+    elseif current == "true" then
+      value = false
+    elseif current == "false" then
+      value = true
     else
       return nil
     end

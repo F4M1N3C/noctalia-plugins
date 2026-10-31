@@ -898,7 +898,7 @@ local function mergeOverrides(attempts)
     return
   end
   settingsLib.merge()
-  settings = {}
+  refreshSettings()
 end
 
 function onClose()
@@ -907,7 +907,7 @@ function onClose()
 end
 
 function onConfigChanged()
-  settings = {}
+  refreshSettings()
   render()
 end
 
@@ -927,7 +927,7 @@ function onIpc(event, payload)
       setSetting(key, value)
     end
   elseif event == "refresh" then
-    settings = {}
+    refreshSettings()
     readTrack()
     render()
   end

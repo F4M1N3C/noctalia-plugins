@@ -171,27 +171,37 @@ noctalia = {
   end,
   log = function() end,
   runAsync = function(argv, callback)
+    local exitCode = 0
     if type(argv) == "table" then
       table.insert(commands, argv)
       -- El helper de ajustes es el unico que escribe: se registra.
       if argv[1] == "python3" and argv[2] and argv[2]:match("set%-setting%.py$") then
         local modo = argv[3]
         if modo == "override" then
-          overrides[argv[4]] = parseValue(argv[5], argv[6])
+          if argv[4] == "explode" then
+            exitCode = 1
+          else
+            overrides[argv[4]] = parseValue(argv[5], argv[6])
+          end
         end
       end
     end
     if callback then
-      callback({ exitCode = 0, stdout = "", stderr = "" })
+      callback({ exitCode = exitCode, stdout = "", stderr = exitCode == 0 and "" or "boom" })
     end
     return true
   end,
 }
 
 -- `require` relativo: Noctalia lo resuelve desde el directorio de la entrada.
+local settingsModule = nil
 require = function(name)
   local relative = name:gsub("^%./", ""):gsub("%.luau$", "")
-  return dofile(pluginDir .. "/" .. relative .. ".luau")
+  local module = dofile(pluginDir .. "/" .. relative .. ".luau")
+  if relative:match("settings") then
+    settingsModule = module
+  end
+  return module
 end
 
 dofile(panelPath)
@@ -367,6 +377,61 @@ onConfigChanged()
 for _, node in ipairs(collect(tree, "input")) do
   check(type(node.props.key) == "string", "todo campo de texto tiene clave estable")
 end
+
+-- 7. Un IPC sin token de tipo deduce el tipo de la clave ---------------------
+
+overrides.karaoke = nil
+onIpc("set", "karaoke true")
+eq(overrides.karaoke, true, "un IPC sin tipo guarda un booleano")
+eq(toggleFor("karaoke").props.checked, true, "el interruptor refleja el IPC")
+
+overrides.marker = nil
+onIpc("set", "marker true bool")
+eq(overrides.marker, true, "un IPC con tipo guarda un booleano")
+
+overrides.visible_above = nil
+onIpc("set", "visible_above 4")
+eq(overrides.visible_above, 4, "un IPC sin tipo guarda un numero")
+
+-- 8. El IPC "toggle" alterna un interruptor ---------------------------------
+
+overrides.footer = nil
+onIpc("toggle", "footer")
+eq(overrides.footer, true, "toggle enciende un interruptor apagado")
+onIpc("toggle", "footer")
+eq(overrides.footer, false, "toggle apaga un interruptor encendido")
+
+-- 9. La escritura avisa de si ha ido bien ------------------------------------
+
+local resultado = nil
+settingsModule.write("marker", true, function(ok)
+  resultado = ok
+end)
+eq(resultado, true, "una escritura correcta avisa del resultado")
+
+resultado = nil
+settingsModule.write("explode", true, function(ok)
+  resultado = ok
+end)
+eq(resultado, false, "una escritura que falla avisa del fallo")
+
+-- 10. Un valor que parece un tipo no se consume como token -------------------
+
+overrides.font_family = nil
+onIpc("set", "font_family string")
+eq(overrides.font_family, "string", "un valor con nombre de tipo se guarda entero")
+
+-- 11. Los overrides se cachean -----------------------------------------------
+
+settingsModule.refresh()
+reads = 0
+settingsModule.value("karaoke")
+local lecturas = reads
+check(lecturas > 0, "la primera lectura lee el fichero de overrides")
+settingsModule.value("marker")
+settingsModule.value("footer")
+settingsModule.value("width")
+eq(reads, lecturas, "las siguientes lecturas usan la cache")
 
 -- Resultado ------------------------------------------------------------------
 

@@ -37,7 +37,8 @@ function onIpc(event, payload)
       settings.apply(key, value)
     end
   elseif event == "toggle" then
-    if type(payload) == "string" and settings.DEFAULTS[payload] ~= nil then
+    -- Solo se alternan los interruptores: alternar un numero no tiene sentido.
+    if type(payload) == "string" and settings.BOOL_KEYS[payload] then
       settings.apply(payload, nil)
     end
   elseif event == "refresh" then

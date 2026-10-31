@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  plugin:
+    name: Terminal Widgets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lua 5.4
+        uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: "5.4"
+
+      - name: Unit tests
+        run: lua5.4 terminal-widgets/test-panel.lua
+
+      - name: Community validator
+        run: ./tools/validate-community.sh terminal-widgets

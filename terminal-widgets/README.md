@@ -260,6 +260,13 @@ lines are still reviewed before exiting.
   an animated preview). `grim` and `python3` are only used for the previews; without them
   the cards fall back to a static or mock preview and everything else keeps working.
 
+### The thumbnail
+
+`thumbnail.webp` was exported with the
+[official thumbnail generator](https://assets.noctalia.dev/plugins/thumbnail-generator.html) from
+`screenshots/panel.webp`, with the title `Terminal Widgets`, the tag `Terminal · Widget` and the
+`iris` accent.
+
 ### Implementation notes
 
 - The plugin parses `plugin.toml` once and keeps it in memory (the parser is

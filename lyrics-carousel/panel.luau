@@ -59,7 +59,6 @@ local render
 local launch
 local applyGeometry
 local closePanel
-local flush
 
 local settings = {}
 local trackTitle = ""
@@ -73,6 +72,23 @@ local function tr(key, args)
     return value
   end
   return key
+end
+
+-- Noctalia entrega los valores de los controles como cadenas: un interruptor
+-- manda "true" / "false" (no un booleano). Comparar con `== true` haria que
+-- el interruptor nunca se activase, asi que se normaliza aqui.
+local function truthy(value)
+  if type(value) == "boolean" then
+    return value
+  end
+  if type(value) == "number" then
+    return value ~= 0
+  end
+  if type(value) == "string" then
+    local text = value:lower():gsub("%s+", "")
+    return text == "true" or text == "1" or text == "yes" or text == "on"
+  end
+  return false
 end
 
 -- --------------------------------------------------------- API protegida --
@@ -119,25 +135,10 @@ end
 
 -- ------------------------------------------------------------- ajustes
 
-local function settingsPath()
-  return (noctalia.getenv("HOME") or "") .. "/.local/state/noctalia/settings.toml"
-end
-
-local function parseValue(value)
-  if value == "true" then
-    return true
-  elseif value == "false" then
-    return false
-  end
-  local number = tonumber(value)
-  if number ~= nil then
-    return number
-  end
-  return value
-end
-
+-- Vacia los cambios locales: a partir de aqui manda la configuracion real.
 local function refreshSettings()
   settings = {}
+  settingsLib.refresh()
 end
 
 local function valueOf(key)
@@ -453,13 +454,14 @@ end
 -- -------------------------------------------------------------------- UI
 
 local function toggleRow(key, label, glyph)
-  return ui.row({ align = "center", gap = 10, paddingH = 4, padding = 4 }, {
+  return ui.row({ key = "row-" .. key, align = "center", gap = 10, paddingH = 4, padding = 4 }, {
     ui.glyph({ name = glyph, size = 14, color = "on_surface_variant" }),
     ui.label({ text = label, fontSize = 12, color = "on_surface", flexGrow = 1 }),
     ui.toggle({
+      key = "toggle-" .. key,
       checked = boolOf(key),
       onChange = function(value)
-        setSetting(key, value == true)
+        setSetting(key, truthy(value))
       end,
     }),
   })
@@ -634,76 +636,61 @@ local ANCHOR_KEYS = {
   custom = "anchor_custom",
 }
 
-local function anchorChips()
-  local current = normalizeAnchor(valueOf("anchor"))
-  local rows = {}
-  local row = {}
-  local index = 0
-  for _, name in ipairs(ANCHOR_CHOICES) do
-    index = index + 1
-    table.insert(row, ui.button({
-      key = "anchor-" .. name,
-      text = tr(ANCHOR_KEYS[name]),
-      variant = name == current and "secondary" or "ghost",
-      fontSize = 10,
-      onClick = function()
-        setSetting("anchor", name, { geometry = true })
-      end,
-    }))
-    if index % 3 == 0 then
-      table.insert(rows, ui.row({ gap = 6 }, row))
-      row = {}
-    end
-  end
-  if #row > 0 then
-    table.insert(rows, ui.row({ gap = 6 }, row))
-  end
-  return ui.column({ gap = 6 }, rows)
-end
-
+-- El desplegable de posicion. Noctalia indexa desde 0: el indice que llega en
+-- onChange es la posicion dentro de la lista, no un numero de orden.
 local function anchorSelect()
-  local current = tostring(valueOf("anchor"))
+  local current = normalizeAnchor(valueOf("anchor"))
   local options = {}
   for _, name in ipairs(ANCHOR_CHOICES) do
     table.insert(options, tr(ANCHOR_KEYS[name]))
   end
-  local selectedIndex = 1
+  local selectedIndex = 0
   for i, name in ipairs(ANCHOR_CHOICES) do
     if name == current then
-      selectedIndex = i
+      selectedIndex = i - 1
       break
     end
   end
   return ui.select({
+    key = "anchor-select",
     options = options,
     selectedIndex = selectedIndex,
     controlSize = "sm",
-    onChange = function(idx)
-      local name = ANCHOR_CHOICES[tonumber(idx) or 1]
-      if name then
+    onChange = function(value)
+      local name = ANCHOR_CHOICES[(tonumber(value) or 0) + 1]
+      if name ~= nil then
         setSetting("anchor", name, { geometry = true })
       end
     end,
   })
 end
 
+-- Botones "-" y "+" de un valor numerico.
+--
+-- El hover no toca nada: antes el ajuste se cambiaba al pasar el raton por
+-- encima, y un ancho que se encogia solo al mover el puntero era un fallo.
 local function sizeStepper(key, label, min, max, step)
   local current = math.floor(numberOf(key))
+  local function bump(delta)
+    local newValue = math.floor(numberOf(key)) + delta
+    if newValue < min then
+      newValue = min
+    elseif newValue > max then
+      newValue = max
+    end
+    if newValue == math.floor(numberOf(key)) then
+      return
+    end
+    setSetting(key, newValue, { geometry = true })
+  end
   return ui.row({ align = "center", gap = 6 }, {
     ui.button({
       key = key .. "-dec",
       text = "-",
       variant = "ghost",
       fontSize = 12,
-      onHover = function(state)
-        if state == "true" then
-          local new_val = math.max(min, math.floor(numberOf(key)) - step)
-          setSetting(key, new_val, { geometry = true })
-        end
-      end,
       onClick = function()
-        local new_val = math.max(min, math.floor(numberOf(key)) - step)
-        setSetting(key, new_val, { geometry = true })
+        bump(-step)
       end,
     }),
     ui.label({ text = tostring(current), fontSize = 12, color = "on_surface", flexGrow = 1 }),
@@ -712,15 +699,8 @@ local function sizeStepper(key, label, min, max, step)
       text = "+",
       variant = "ghost",
       fontSize = 12,
-      onHover = function(state)
-        if state == "true" then
-          local new_val = math.min(max, math.floor(numberOf(key)) + step)
-          setSetting(key, new_val, { geometry = true })
-        end
-      end,
       onClick = function()
-        local new_val = math.min(max, math.floor(numberOf(key)) + step)
-        setSetting(key, new_val, { geometry = true })
+        bump(step)
       end,
     }),
   })
@@ -769,7 +749,7 @@ render = function()
       variant = "primary",
       onClick = launch,
     }),
-    ui.separator({ thickness = 1, color = "outline/0.25", spacing = 6 }),
+    ui.separator({ thickness = 1, spacing = 6 }),
     ui.label({ text = tr("section_display"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     ui.row({ align = "center", gap = 10, paddingH = 4, padding = 4 }, {
       ui.glyph({ name = "layout", size = 14, color = "on_surface_variant" }),
@@ -822,7 +802,7 @@ render = function()
     toggleRow("hints", tr("hints"), "keyboard"),
     toggleRow("equalizer", tr("equalizer"), "wave-sine"),
     toggleRow("ghost", tr("ghost"), "sparkles"),
-    ui.separator({ thickness = 1, color = "outline/0.25", spacing = 6 }),
+    ui.separator({ thickness = 1, spacing = 6 }),
     ui.label({ text = tr("section_lyrics"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     ui.column({ gap = 4 }, {
       ui.label({ text = tr("active_scale"), fontSize = 11, color = "on_surface_variant" }),
@@ -836,35 +816,38 @@ render = function()
       ui.label({ text = tr("accent"), fontSize = 11, color = "on_surface_variant" }),
       accentChips(),
     }),
-    ui.separator({ thickness = 1, color = "outline/0.25", spacing = 6 }),
+    ui.separator({ thickness = 1, spacing = 6 }),
     ui.label({ text = tr("section_window"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     ui.label({ text = tr("anchor"), fontSize = 11, color = "on_surface_variant" }),
     anchorSelect(),
     (function()
-      if tostring(valueOf("anchor")) == "custom" then
+      if normalizeAnchor(valueOf("anchor")) == "custom" then
+        local function coordinateInput(key, label)
+          return ui.column({ flexGrow = 1, gap = 4 }, {
+            ui.label({ text = label, fontSize = 10, color = "on_surface_variant" }),
+            ui.input({
+              -- El campo de texto no se controla desde el arbol: necesita una
+              -- clave estable para que conserve lo que el usuario teclea.
+              key = key,
+              value = tostring(math.floor(numberOf(key))),
+              controlSize = "sm",
+              onChange = function(v)
+                local n = tonumber(v)
+                if n == nil then
+                  return
+                end
+                local value = math.floor(n)
+                if value == math.floor(numberOf(key)) then
+                  return
+                end
+                setSetting(key, value, { geometry = true })
+              end,
+            }),
+          })
+        end
         return ui.row({ gap = 10 }, {
-          ui.column({ flexGrow = 1, gap = 4 }, {
-            ui.label({ text = tr("custom_x"), fontSize = 10, color = "on_surface_variant" }),
-            ui.input({
-              value = tostring(math.floor(numberOf("custom_x"))),
-              controlSize = "sm",
-              onChange = function(v)
-                local n = tonumber(v)
-                if n then setSetting("custom_x", math.floor(n), { geometry = true }) end
-              end,
-            }),
-          }),
-          ui.column({ flexGrow = 1, gap = 4 }, {
-            ui.label({ text = tr("custom_y"), fontSize = 10, color = "on_surface_variant" }),
-            ui.input({
-              value = tostring(math.floor(numberOf("custom_y"))),
-              controlSize = "sm",
-              onChange = function(v)
-                local n = tonumber(v)
-                if n then setSetting("custom_y", math.floor(n), { geometry = true }) end
-              end,
-            }),
-          }),
+          coordinateInput("custom_x", tr("custom_x")),
+          coordinateInput("custom_y", tr("custom_y")),
         })
       end
       return ui.column({})
@@ -879,7 +862,7 @@ render = function()
         sizeStepper("height", tr("height"), 200, 3000, 50),
       }),
     }),
-    ui.separator({ thickness = 1, color = "outline/0.25", spacing = 6 }),
+    ui.separator({ thickness = 1, spacing = 6 }),
     ui.label({ text = tr("section_font"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     fontChips(),
     ui.label({ text = tr("font_size"), fontSize = 11, color = "on_surface_variant" }),

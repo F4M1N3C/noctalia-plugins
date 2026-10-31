@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  plugin:
+    name: Terminal Widgets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lua 5.4
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.4
+
+      - name: Unit tests
+        run: lua5.4 terminal-widgets/test-panel.lua
+
+      - name: Community validator
+        run: ./tools/validate-community.sh terminal-widgets
+
+      - name: Static checks
+        run: |
+          python3 tools/check-locals.py terminal-widgets
+          python3 tools/check-luau-globals.py terminal-widgets

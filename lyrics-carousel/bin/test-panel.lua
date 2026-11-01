@@ -433,6 +433,36 @@ settingsModule.value("footer")
 settingsModule.value("width")
 eq(reads, lecturas, "las siguientes lecturas usan la cache")
 
+-- 12. El idioma de la ventana se puede cambiar desde el panel ------------------
+
+local langAuto = findByKey("button", "lang-auto")
+local langEn = findByKey("button", "lang-en")
+local langEs = findByKey("button", "lang-es")
+check(
+  langAuto ~= nil and langEn ~= nil and langEs ~= nil,
+  "el panel tiene botones para el idioma de la ventana"
+)
+if langEs ~= nil then
+  langEs.props.onClick()
+  eq(overrides.language, "es", "elegir español guarda el idioma")
+  eq(findByKey("button", "lang-es").props.variant, "secondary", "el idioma elegido queda marcado")
+end
+
+-- 13. El boton de vaciar la cache lanza el script con --clear-cache ------------
+
+local clearCache = findByKey("button", "clear-cache")
+check(clearCache ~= nil, "el panel tiene un boton para vaciar la cache")
+if clearCache ~= nil then
+  clearCache.props.onClick()
+  local lanzado = false
+  for _, argv in ipairs(commands) do
+    if argv[#argv] == "--clear-cache" then
+      lanzado = true
+    end
+  end
+  check(lanzado, "el boton lanza el script con --clear-cache")
+end
+
 -- Resultado ------------------------------------------------------------------
 
 if failures > 0 then

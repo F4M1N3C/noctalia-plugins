@@ -9,11 +9,11 @@
 
 id = "faminec/lyrics-carousel"
 name = "Lyrics Carousel"
-version = "1.0.0"
+version = "2.0.0"
 plugin_api = 34
 author = "faminec"
 license = "MIT"
-dependencies = ["kitty", "hyprland", "playerctl", "python3"]
+dependencies = ["kitty", "hyprland", "playerctl", "python3", "python-pillow"]
 tags = ["music", "system", "utility", "media"]
 icon = "music"
 description = "Carrusel de letras sincronizadas en una ventana de terminal flotante, con letra grande para la linea activa."
@@ -106,6 +106,7 @@ description_key = "settings.spacing.description"
 default = 2
 min = 1
 max = 6
+advanced = true
 
 [[setting]]
 key = "animation_ms"
@@ -115,6 +116,7 @@ description_key = "settings.animation_ms.description"
 default = 650
 min = 0
 max = 3000
+advanced = true
 
 [[setting]]
 key = "ghost"
@@ -131,6 +133,7 @@ description_key = "settings.offset_ms.description"
 default = 0
 min = -3000
 max = 3000
+advanced = true
 
 [[setting]]
 key = "width"
@@ -152,10 +155,22 @@ max = 2160
 
 [[setting]]
 key = "anchor"
-type = "string"
+type = "select"
 label_key = "settings.anchor.label"
 description_key = "settings.anchor.description"
 default = "center"
+options = [
+  { value = "top-left", label_key = "anchor_top_left" },
+  { value = "top-center", label_key = "anchor_top_center" },
+  { value = "top-right", label_key = "anchor_top_right" },
+  { value = "left-center", label_key = "anchor_left_center" },
+  { value = "center", label_key = "anchor_center" },
+  { value = "right-center", label_key = "anchor_right_center" },
+  { value = "bottom-left", label_key = "anchor_bottom_left" },
+  { value = "bottom-center", label_key = "anchor_bottom_center" },
+  { value = "bottom-right", label_key = "anchor_bottom_right" },
+  { value = "custom", label_key = "anchor_custom" },
+]
 
 [[setting]]
 key = "custom_x"
@@ -165,6 +180,7 @@ description_key = "settings.custom_x.description"
 default = 100
 min = 0
 max = 10000
+advanced = true
 
 [[setting]]
 key = "custom_y"
@@ -174,6 +190,7 @@ description_key = "settings.custom_y.description"
 default = 100
 min = 0
 max = 10000
+advanced = true
 
 [[setting]]
 key = "accent"
@@ -207,6 +224,7 @@ description_key = "settings.active_scale.description"
 default = 1.35
 min = 1.0
 max = 2.5
+advanced = true
 
 [[setting]]
 key = "visible_above"
@@ -227,6 +245,18 @@ min = 0
 max = 20
 
 [[setting]]
+key = "language"
+type = "select"
+label_key = "settings.language.label"
+description_key = "settings.language.description"
+default = "auto"
+options = [
+  { value = "auto", label_key = "language_auto" },
+  { value = "en", label_key = "language_en" },
+  { value = "es", label_key = "language_es" },
+]
+
+[[setting]]
 key = "glyph"
 type = "glyph"
 label_key = "settings.glyph.label"
@@ -245,3 +275,8 @@ height = 760
 placement = "floating"
 position = "center"
 open_near_click = true
+# El panel tiene campos de texto (X e Y): si se cierra al pulsar fuera, el
+# usuario pierde lo que estaba escribiendo. Con foco exclusivo, las teclas
+# (incluidas las de la ventana de letras) no se escapan al escritorio.
+dismiss_on_outside_click = false
+keyboard_focus = "exclusive"

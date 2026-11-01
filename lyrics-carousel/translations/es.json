@@ -33,6 +33,10 @@
   "hints": "Atajos de teclado",
   "image_only_fonts": "Solo en modo imagen (proporcionales):",
   "karaoke": "Efecto karaoke",
+  "language": "Idioma de la ventana",
+  "language_auto": "automático",
+  "language_en": "inglés",
+  "language_es": "español",
   "launch": "Abrir el carrusel",
   "launch_failed": "No se pudo abrir la terminal.",
   "marker": "Marca de la línea activa",
@@ -58,12 +62,19 @@
       "custom": "Personalizado"
     },
     "active_scale": {
-      "description": "Multiplicador de tamaño de la línea que se está cantando (solo modo imagen).",
+      "description": "Multiplicador de tamaño de la línea que se está cantando. Funciona en los dos modos.",
       "label": "Tamaño de la línea activa"
     },
     "anchor": {
       "description": "Dónde se abre la ventana: center, top-left, bottom-right...",
       "label": "Posición de la ventana"
+    },
+    "language": {
+      "description": "Idioma de los textos de la ventana. «Automático» sigue el idioma del sistema.",
+      "label": "Idioma de la ventana",
+      "auto": "Automático",
+      "en": "Inglés",
+      "es": "Español"
     },
     "custom_x": {
       "description": "Posición horizontal personalizada (solo con posición personalizada)",
@@ -167,5 +178,8 @@
   "width": "Ancho",
   "custom_x": "X",
   "custom_y": "Y",
+  "custom_color": "Color personalizado",
+  "clear_cache": "Vaciar la caché de letras",
+  "clear_cache_failed": "No se pudo vaciar la caché de letras.",
   "write_failed": "No se pudo guardar el ajuste."
 }

@@ -616,6 +616,23 @@ local function accentChips()
   })
 end
 
+-- Vacía la caché de letras (el script la guarda en ~/.cache/lyrics-carousel).
+-- Se lanza el script con --clear-cache: es el que sabe qué son las letras y
+-- qué no (el log de diagnóstico se conserva).
+local function clearLyricsCache()
+  local dir = noctalia.pluginDir()
+  if dir == nil or dir == "" then
+    reportError(tr("clear_cache_failed"))
+    return
+  end
+  runAsync({ "python3", dir .. "/bin/lyrics-carousel", "--clear-cache" }, function(result)
+    if result == nil or result.exitCode ~= 0 then
+      reportError(tr("clear_cache_failed"))
+    end
+    render()
+  end)
+end
+
 local ANCHOR_CHOICES = {
   "top-left", "top-center", "top-right",
   "left-center", "center", "right-center",
@@ -709,6 +726,7 @@ end
 render = function()
   local direction = tostring(valueOf("direction"))
   local mode = tostring(valueOf("render_mode"))
+  local language = tostring(valueOf("language"))
   local subtitle = tr("subtitle")
   if trackTitle ~= "" then
     subtitle = trackTitle
@@ -795,6 +813,37 @@ render = function()
         end,
       }),
     }),
+    ui.row({ align = "center", gap = 10, paddingH = 4, padding = 4 }, {
+      ui.glyph({ name = "language", size = 14, color = "on_surface_variant" }),
+      ui.label({ text = tr("language"), fontSize = 12, color = "on_surface", flexGrow = 1 }),
+      ui.button({
+        key = "lang-auto",
+        text = tr("language_auto"),
+        variant = language == "auto" and "secondary" or "ghost",
+        fontSize = 11,
+        onClick = function()
+          setSetting("language", "auto")
+        end,
+      }),
+      ui.button({
+        key = "lang-en",
+        text = tr("language_en"),
+        variant = language == "en" and "secondary" or "ghost",
+        fontSize = 11,
+        onClick = function()
+          setSetting("language", "en")
+        end,
+      }),
+      ui.button({
+        key = "lang-es",
+        text = tr("language_es"),
+        variant = language == "es" and "secondary" or "ghost",
+        fontSize = 11,
+        onClick = function()
+          setSetting("language", "es")
+        end,
+      }),
+    }),
     toggleRow("karaoke", tr("karaoke"), "sun"),
     toggleRow("marker", tr("marker"), "chevron-right"),
     toggleRow("header", tr("header"), "heading"),
@@ -871,6 +920,14 @@ render = function()
     sizeChips(),
     ui.label({ text = tr("image_only_fonts"), fontSize = 10, color = "on_surface_variant" }),
     imageOnlyFonts(),
+    ui.separator({ thickness = 1, spacing = 6 }),
+    ui.button({
+      key = "clear-cache",
+      text = tr("clear_cache"),
+      variant = "secondary",
+      fontSize = 11,
+      onClick = clearLyricsCache,
+    }),
     ui.label({ text = tr("hint"), fontSize = 10, color = "on_surface_variant" }),
   }
 

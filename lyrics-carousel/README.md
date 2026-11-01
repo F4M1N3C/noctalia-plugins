@@ -15,7 +15,7 @@ The following executables must be installed and available on `PATH`:
 
 - `kitty` — the terminal the window runs in, and the graphics protocol used by the image
   renderer.
-- `hyprland` — the compositor; the window is opened with the Hyprland 0.56 Lua API.
+- `hyprland` — the compositor; the window is opened with the Hyprland 0.57 Lua API.
 - `playerctl` — reads the active MPRIS player.
 - `python3` with `python-pillow` — draws the lyrics in image mode.
 
@@ -42,11 +42,13 @@ noctalia msg panel-toggle faminec/lyrics-carousel:panel
 | `image` (default) | Pillow and the kitty graphics protocol | The active line is drawn larger, the scroll is pixel-accurate and any font works | Needs kitty and Pillow; the text cannot be selected |
 | `text` | The terminal itself | Lightweight and crisp, the text is selectable | One font size for the whole window |
 
-In image mode the window is drawn as a transparent PNG (1653×1368 px in an 87×36 cell
-window), so the desktop wallpaper stays visible through it.
+In image mode the window is drawn as a transparent PNG the size of the window
+(1200×820 px by default), so the desktop wallpaper stays visible through it.
 
-The providers are queried in parallel and the first one to answer wins, so the lyrics
-usually show up in under a second. The result is cached in `~/.cache/lyrics-carousel`.
+The providers are queried in parallel and the first one to answer wins. The search
+waits up to 15 seconds, so a slow provider is not thrown away; if nobody has answered
+by then, the lookup is retried a minute later. The result is cached in
+`~/.cache/lyrics-carousel`.
 
 ### Keyboard shortcuts
 
@@ -58,14 +60,17 @@ usually show up in under a second. The result is cached in `~/.cache/lyrics-caro
 | `k` | Toggle the karaoke effect |
 | `r` | Look the lyrics up again |
 
-`d` and `k` also write their value to `settings.toml`.
+`d` and `k` write their value to `settings.toml`, so the change survives a restart
+and shows up in the settings page. Writing that file makes Noctalia reload the
+configuration, so a panel that happened to be open at that moment is closed.
 
 ## Settings
 
-Configure the plugin in **Settings → Plugins → Lyrics Carousel**. The panel writes the
-same file and reloads the configuration, so the settings page and the panel always
-agree; the script re-reads that file every 1.2 s, so changes apply live to a window
-that is already open.
+Configure the plugin in **Settings → Plugins → Lyrics Carousel**. The panel keeps its
+own changes in a small overrides file and pours them into `settings.toml` when it is
+closed, so the settings page and the panel always end up showing the same values
+without the panel closing under the user's fingers. The script re-reads the settings
+every 0.5 s, so changes apply live to a window that is already open.
 
 | Setting | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -85,7 +90,7 @@ that is already open.
 | `offset_ms` | `int` | `0` | Offset to fine-tune the synchronisation. |
 | `width` | `int` | `1200` | Window width. |
 | `height` | `int` | `820` | Window height. |
-| `anchor` | `string` | `center` | Window anchor: `center`, `top-left`, `bottom-right`… or `custom` (uses custom_x/custom_y). |
+| `anchor` | `select` | `center` | Window anchor: `center`, `top-left`, `bottom-right`… or `custom` (uses custom_x/custom_y). |
 | `custom_x` | `int` | `100` | Custom horizontal position (only with anchor = custom). |
 | `custom_y` | `int` | `100` | Custom vertical position (only with anchor = custom). |
 | `accent` | `select` | `primary` | Colour of the active line: `primary` (follows the wallpaper), an ANSI colour or `custom`. |
@@ -93,23 +98,37 @@ that is already open.
 | `active_scale` | `double` | `1.35` | Size multiplier of the line being sung (image and text mode). |
 | `visible_above` | `int` | `6` | Lines visible above the active one. |
 | `visible_below` | `int` | `6` | Lines visible below the active one. |
+| `language` | `select` | `auto` | Language of the texts inside the window: `auto` (the system language), `en` or `es`. |
 | `glyph` | `glyph` | `music` | Bar icon. |
 
 The position and the size are applied live to the running window, without recreating
-it. The font only needs a restart in text mode; in image mode it applies instantly.
+it. In image mode the font family and the font size also apply live (the font cache
+is invalidated on change); in text mode kitty fixes both when the window opens, so
+the window has to be opened again for them to change.
 
-## Changelog (round 2)
+## Changelog
 
-- Width/height controls are now steppers (− / value / +) with hover-to-adjust;
-  only 3 controls per row, no visual collision.
-- Font family and font size apply live in image mode (font cache invalidated on
-  change). In text mode, font size applies live via kitty remote control and
-  active line scaling uses the kitty text sizing protocol (OSC 66).
-- The window is no longer closed/reopened when changing settings; it stays open.
-- Window position is now a dropdown (9 anchors + custom) with X/Y coordinate
-  inputs when "custom" is selected.
-- Active line size (active_scale) now works in both image mode and text mode.
-- Added regression tests for each of the above.
+### 2.0.0
+
+- The panel's switches really turn on and off: Noctalia hands the value over as the
+  string `"true"`, which was never equal to `true`.
+- The window position dropdown was one position off and saved the previous anchor;
+  it now offers the ten anchors of the manifest.
+- The width and height steppers no longer change the value when the mouse merely
+  passes over them.
+- `offset_ms` is applied to the scroll as well as to the highlight, so the line in
+  the middle is the one that is being sung.
+- The lyric lookup waits 15 seconds instead of 4 and no longer marks a song as
+  "no lyrics" while a provider is still answering; an empty result is retried every
+  minute.
+- The sound visualiser keeps its own row instead of drawing over the lyrics.
+- The texts of the window are in English and Spanish (`--lang`, or the `language`
+  setting; `auto` follows the system language).
+- `d` and `k` are saved in `settings.toml`, so they survive a restart.
+- The settings, the overrides and the data directory follow `NOCTALIA_STATE_HOME`
+  and `XDG_STATE_HOME`, like Noctalia itself.
+- The window position is a dropdown in the settings page as well, and the panel can
+  empty the cache of lyrics.
 
 ## IPC
 
@@ -131,15 +150,17 @@ sibling modules and the helper when it is launched through the symbolic link
 in `~/.local/bin` (which is how the panel starts it). It also checks that
 every `.luau` of the plugin compiles as it is (so a syntax error is never
 mistaken for Luau-only syntax) and that the `d` and `k` shortcuts really
-toggle the direction and the karaoke and save them (the overrides are left
-as they were). It also checks that the demo mode does not ask any lyrics
-provider for anything — and that the script's debug log is actually being
-written, so that check is not vacuous.
+toggle the direction and the karaoke and save them in the `settings.toml`. It
+also checks that the demo mode does not ask any lyrics provider for anything —
+and that the script's debug log is actually being written, so that check is not
+vacuous.
 
-The self-test never touches the real state: the overrides file can be
-redirected with the `LYRICS_CAROUSEL_OVERRIDES` environment variable (the
-script and the helper both honour it), and the test uses a temporary one.
-That also avoids a race: the script writes asynchronously, so a write
+The self-test never touches the real state: it runs the script with a temporary
+`HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME`, so the settings file, the
+overrides and the cache of lyrics are all written in a throwaway directory. The
+overrides file can also be redirected on its own with the
+`LYRICS_CAROUSEL_OVERRIDES` environment variable (the script and the helper both
+honour it). That also avoids a race: the script writes asynchronously, so a write
 could land after the test had finished and end up applied to the real
 settings the next time the panel is closed.
 

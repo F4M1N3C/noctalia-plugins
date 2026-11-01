@@ -40,7 +40,7 @@ import urllib.parse
 import urllib.request
 
 APP = "lyrics-carousel"
-VERSION = "1.1.0"
+VERSION = "2.0.0"
 
 # Plazo de espera de la busqueda de letra (segundos). Los proveedores
 # tardan: con 4 s una letra que tarda 6 s se tiraba a la basura.

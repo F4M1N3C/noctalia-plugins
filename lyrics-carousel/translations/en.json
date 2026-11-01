@@ -33,6 +33,10 @@
   "hints": "Keyboard hints",
   "image_only_fonts": "Image mode only (proportional):",
   "karaoke": "Karaoke glow",
+  "language": "Window language",
+  "language_auto": "automatic",
+  "language_en": "English",
+  "language_es": "Spanish",
   "launch": "Open the carousel",
   "launch_failed": "Could not open the terminal.",
   "marker": "Active line marker",
@@ -58,12 +62,19 @@
       "custom": "Custom"
     },
     "active_scale": {
-      "description": "Size multiplier of the line being sung (image mode only).",
+      "description": "Size multiplier of the line being sung. It works in both modes.",
       "label": "Active line size"
     },
     "anchor": {
       "description": "Where the window opens: center, top-left, bottom-right...",
       "label": "Window position"
+    },
+    "language": {
+      "description": "Language of the texts inside the window. Automatic follows the system language.",
+      "label": "Window language",
+      "auto": "Automatic",
+      "en": "English",
+      "es": "Spanish"
     },
     "custom_x": {
       "description": "Custom horizontal position (only with custom position)",
@@ -167,5 +178,8 @@
   "width": "Width",
   "custom_x": "X",
   "custom_y": "Y",
+  "custom_color": "Custom colour",
+  "clear_cache": "Clear the lyrics cache",
+  "clear_cache_failed": "Could not clear the lyrics cache.",
   "write_failed": "Could not save the setting."
 }

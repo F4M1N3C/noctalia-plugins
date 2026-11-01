@@ -427,6 +427,46 @@ local base4 = defaults.load()
 check("sin manifiesto: respaldo", base4.commands.cava, "cava")
 check("sin manifiesto: respaldo de posiciones", base4.layouts.unimatrix, "right-center, 869x1424")
 
+-- El manifiesto tiene que declarar todo lo que el plugin lanza: el revisor del
+-- upstream lo comprueba contra `dependencies` y contra el README. Se lee el
+-- `plugin.toml` real del disco (el simulador solo intercepta `noctalia.readFile`).
+local function readRealFile(path)
+  local handle = io.open(path, "r")
+  if handle == nil then
+    return nil
+  end
+  local content = handle:read("*a")
+  handle:close()
+  return content
+end
+
+local manifestText = readRealFile(DIR .. "plugin.toml")
+check("se puede leer el manifiesto real", true, manifestText ~= nil)
+
+local declared = {}
+if manifestText ~= nil then
+  local block = manifestText:match("dependencies%s*=%s*%[(.-)%]")
+  if block ~= nil then
+    for name in block:gmatch('"([^"]+)"') do
+      declared[name] = true
+    end
+  end
+end
+
+check("el manifiesto declara dependencias", true, next(declared) ~= nil)
+check("declara hyprctl", true, declared["hyprctl"] == true)
+
+-- Cada comando de las tarjetas por defecto tiene que estar declarado: el
+-- ejecutable es la primera palabra del comando.
+for name, command in pairs(base4.commands) do
+  local executable = tostring(command):match("^(%S+)")
+  check(
+    "el comando por defecto '" .. name .. "' está declarado en dependencies",
+    true,
+    executable ~= nil and declared[executable] == true
+  )
+end
+
 -- ------------------------------------------------------------ zonas ocupadas --
 
 print("\n== zonas ocupadas ==")

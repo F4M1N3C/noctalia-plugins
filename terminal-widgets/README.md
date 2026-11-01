@@ -199,6 +199,14 @@ runtime is created on demand.
 
 ## Changelog
 
+### 2.2.1
+
+- The panel no longer asks for animation frames when there is nothing to animate: a
+  deleted card, or a card with a single capture, used to keep the frame ticks on for
+  good and re-read its frames from the disk every 250 ms.
+- The README lists the programs the bundled cards run, and says what happens when one
+  of them is not installed.
+
 ### 2.2.0
 
 - The panel is attached to the bar by default and sized to show four rows of cards with

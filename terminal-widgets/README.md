@@ -45,7 +45,8 @@ anything: every dependency has to be there before the plugin is enabled.
 
 A fresh install starts with six cards, one per default command. Each card runs its own
 program, so the programs are optional in the sense that the plugin works without them —
-but the card whose program is missing does nothing when you click it.
+but clicking a card whose program is missing just opens a terminal that reports that the
+command is not found.
 
 | Card | Command | Package |
 | --- | --- | --- |
@@ -283,6 +284,8 @@ lines are still reviewed before exiting.
   preview) and `python3` (with Pillow: to crop the captures and to extract the frames of
   an animated preview). `grim` and `python3` are only used for the previews; without them
   the cards fall back to a static or mock preview and everything else keeps working.
+  Every card also runs its own command inside `kitty`: on a fresh install, the six
+  bundled programs listed in *The bundled cards* above.
 
 ### The thumbnail
 

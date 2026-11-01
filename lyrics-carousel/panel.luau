@@ -74,23 +74,6 @@ local function tr(key, args)
   return key
 end
 
--- Noctalia entrega los valores de los controles como cadenas: un interruptor
--- manda "true" / "false" (no un booleano). Comparar con `== true` haria que
--- el interruptor nunca se activase, asi que se normaliza aqui.
-local function truthy(value)
-  if type(value) == "boolean" then
-    return value
-  end
-  if type(value) == "number" then
-    return value ~= 0
-  end
-  if type(value) == "string" then
-    local text = value:lower():gsub("%s+", "")
-    return text == "true" or text == "1" or text == "yes" or text == "on"
-  end
-  return false
-end
-
 -- --------------------------------------------------------- API protegida --
 
 -- Envuelve una llamada a la API de Noctalia: si falla, se avisa y se sigue.
@@ -151,8 +134,13 @@ local function valueOf(key)
   return settingsLib.value(key)
 end
 
+-- Noctalia entrega los valores de los controles como cadenas: un interruptor
+-- manda "true" / "false" (no un booleano). La normalizacion vive en
+-- lib/settings.luau para que el panel y el widget la compartan.
+local truthy = settingsLib.truthy
+
 local function boolOf(key)
-  return valueOf(key) == true
+  return truthy(valueOf(key))
 end
 
 local function numberOf(key)

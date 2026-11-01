@@ -55,6 +55,28 @@ M.INT_KEYS = INT_KEYS
 M.FLOAT_KEYS = FLOAT_KEYS
 M.DEFAULTS = DEFAULTS
 
+--- Normaliza un valor a booleano.
+---
+--- Noctalia no siempre entrega los interruptores como booleanos: el control
+--- `ui.toggle` pasa el valor como la cadena "true" o "false". Comparar con
+--- `== true` haria que un interruptor encendido se leyera apagado.
+---
+--- Vive aqui y no en el panel para que el panel y el widget lean los valores
+--- igual: si cada uno normalizara por su cuenta, un dia leerian distinto.
+function M.truthy(value)
+  if type(value) == "boolean" then
+    return value
+  end
+  if type(value) == "number" then
+    return value ~= 0
+  end
+  if type(value) == "string" then
+    local text = value:lower():gsub("%s+", "")
+    return text == "true" or text == "1" or text == "yes" or text == "on"
+  end
+  return false
+end
+
 local function overridesPath()
   local dir = noctalia.pluginDataDir()
   if dir == nil then
@@ -268,18 +290,17 @@ function M.parse(payload)
 end
 
 --- Fija un ajuste (o lo alterna si no hay valor).
+---
+--- Si no se pasa valor, se alterna: solo tiene sentido en un interruptor, asi
+--- que en cualquier otro ajuste no se toca nada. El valor actual se lee con
+--- la misma normalizacion que el panel, para que "true" (cadena) se lea igual
+--- en los dos sitios.
 function M.apply(key, value)
   if value == nil then
-    local current = M.value(key)
-    if type(current) == "boolean" then
-      value = not current
-    elseif current == "true" then
-      value = false
-    elseif current == "false" then
-      value = true
-    else
+    if not BOOL_KEYS[key] then
       return nil
     end
+    value = not M.truthy(M.value(key))
   end
   M.write(key, value)
   return value

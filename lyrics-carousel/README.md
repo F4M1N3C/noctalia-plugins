@@ -132,9 +132,48 @@ the window has to be opened again for them to change.
 
 ## IPC
 
+The panel is opened with:
+
 ```sh
 noctalia msg panel-toggle faminec/lyrics-carousel:panel
 ```
+
+Both entries also accept messages, which is handy for keyboard shortcuts:
+
+```sh
+noctalia msg plugin faminec/lyrics-carousel:panel all launch
+noctalia msg plugin faminec/lyrics-carousel:panel all toggle karaoke
+noctalia msg plugin faminec/lyrics-carousel:panel all set font_size 26 int
+noctalia msg plugin faminec/lyrics-carousel:panel all refresh
+
+noctalia msg plugin faminec/lyrics-carousel:widget all launch
+noctalia msg plugin faminec/lyrics-carousel:widget all toggle karaoke
+noctalia msg plugin faminec/lyrics-carousel:widget all set font_size 26 int
+noctalia msg plugin faminec/lyrics-carousel:widget all refresh
+```
+
+| Event | `panel` | `widget` |
+| --- | --- | --- |
+| `launch` | Opens the lyrics window (starts the script). | Toggles the panel. |
+| `toggle <key>` | Flips a switch. | Flips a switch. |
+| `set <key> <value> [type]` | Sets a setting. | Sets a setting. |
+| `refresh` | Re-reads the settings and the track, and redraws the panel. | Redraws the bar icon. |
+
+`toggle` only works with the switches — `marker`, `karaoke`, `equalizer`, `footer`,
+`hints`, `header` and `ghost` — because flipping a number makes no sense.
+
+The value of `set` can also be written as `key=value`. Its type (`bool`, `int`,
+`float` or `string`) is optional: without it, the type is deduced from the setting,
+so `set karaoke true` stores a boolean and not the string `"true"`.
+
+```sh
+noctalia msg plugin faminec/lyrics-carousel:widget all set font_size 26 int
+noctalia msg plugin faminec/lyrics-carousel:widget all set font_family="Departure Mono"
+```
+
+`set` and `toggle` write to the same overrides file the panel uses, so the change is
+poured into `settings.toml` when the panel is closed and is visible in the settings
+page afterwards.
 
 ## Diagnostics
 

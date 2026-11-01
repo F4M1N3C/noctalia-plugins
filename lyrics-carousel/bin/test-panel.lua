@@ -60,6 +60,7 @@ local config = {
   active_scale = 1.35,
   visible_above = 6,
   visible_below = 6,
+  language = "auto",
 }
 
 -- Capa de overrides: lo que el panel ha escrito.
@@ -462,6 +463,67 @@ if clearCache ~= nil then
   end
   check(lanzado, "el boton lanza el script con --clear-cache")
 end
+
+-- 14. Un interruptor lee bien un valor que llega como cadena ---------------------
+--
+-- Noctalia entrega el valor de un interruptor como la cadena "true". Si el
+-- panel lo leyera con `== true`, el interruptor se dibujaria apagado aunque
+-- el ajuste estuviera encendido.
+
+config.karaoke = "true"
+overrides.karaoke = nil
+onConfigChanged()
+eq(toggleFor("karaoke").props.checked, true, "un \"true\" en la config enciende el interruptor")
+
+config.karaoke = "false"
+overrides.karaoke = nil
+onConfigChanged()
+eq(toggleFor("karaoke").props.checked, false, "un \"false\" en la config apaga el interruptor")
+
+config.karaoke = true
+overrides.karaoke = nil
+onConfigChanged()
+eq(toggleFor("karaoke").props.checked, true, "un booleano true enciende el interruptor")
+
+-- 15. El IPC "toggle" alterna un valor que llega como cadena --------------------
+--
+-- El widget usa settings.apply para alternar. Si el valor guardado llega como
+-- la cadena "true", alternarlo tiene que apagar el interruptor, no dejarlo
+-- como estaba.
+
+overrides.footer = nil
+config.footer = "true"
+settingsModule.refresh()
+local alternado = settingsModule.apply("footer", nil)
+eq(alternado, false, "alternar un \"true\" lo apaga")
+eq(overrides.footer, false, "alternar un \"true\" guarda el apagado")
+
+overrides.footer = nil
+config.footer = "false"
+settingsModule.refresh()
+alternado = settingsModule.apply("footer", nil)
+eq(alternado, true, "alternar un \"false\" lo enciende")
+
+-- El panel y el widget tienen que entender los mismos valores: si el panel
+-- acepta "1" y el widget no, el IPC "toggle" no haria nada.
+overrides.footer = nil
+config.footer = "1"
+settingsModule.refresh()
+alternado = settingsModule.apply("footer", nil)
+eq(alternado, false, "alternar un \"1\" lo apaga")
+eq(overrides.footer, false, "alternar un \"1\" guarda el apagado")
+
+-- Un ajuste que no es un interruptor no se alterna: no tiene sentido escribir
+-- un booleano donde va un numero.
+overrides.width = nil
+config.width = 1200
+settingsModule.refresh()
+eq(settingsModule.apply("width", nil), nil, "un numero no se alterna")
+eq(overrides.width, nil, "alternar un numero no escribe nada")
+
+config.footer = false
+overrides.footer = nil
+settingsModule.refresh()
 
 -- Resultado ------------------------------------------------------------------
 

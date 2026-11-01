@@ -574,6 +574,91 @@ def check_limites_ajustes():
         )
 
 
+def check_readme():
+    """El README documenta lo que el manifiesto declara.
+
+    La tienda exige que el README mencione cada dependencia del manifiesto
+    con su nombre exacto, que documente cada entrada (widget, panel) con su
+    id y que liste los comandos IPC. Si el manifiesto cambia y el README no,
+    el plugin se rechaza en la revision de la tienda; aqui se avisa antes.
+    """
+    manifest_path = os.path.join(PLUGIN_DIR, "plugin.toml")
+    readme_path = os.path.join(PLUGIN_DIR, "README.md")
+    try:
+        import tomllib
+
+        with open(manifest_path, "rb") as handle:
+            manifest = tomllib.load(handle)
+    except Exception as error:  # noqa: BLE001
+        check("el manifiesto se puede leer", False, repr(error)[:120])
+        return
+    try:
+        with open(readme_path, encoding="utf-8") as handle:
+            readme = handle.read()
+    except OSError as error:
+        check("el README se puede leer", False, repr(error)[:120])
+        return
+
+    plugin_id = manifest.get("id", "")
+    check("el README cita el id del plugin", f"`{plugin_id}`" in readme, plugin_id)
+
+    # Cada dependencia del manifiesto, con su nombre exacto.
+    dependencias = manifest.get("dependencies") or []
+    for dependencia in dependencias:
+        check(
+            f"el README menciona la dependencia `{dependencia}`",
+            f"`{dependencia}`" in readme,
+            dependencia,
+        )
+
+    # Cada entrada (widget, panel) con su id.
+    entradas = []
+    for clave in ("widget", "panel", "service", "launcher_provider"):
+        for entrada in manifest.get(clave) or []:
+            entradas.append((clave, entrada.get("id", "")))
+    for clave, entrada_id in entradas:
+        check(
+            f"el README documenta la entrada {clave} `{entrada_id}`",
+            f"`{entrada_id}`" in readme,
+            entrada_id,
+        )
+
+    # El comando IPC del panel, exacto.
+    for clave, entrada_id in entradas:
+        if clave != "panel":
+            continue
+        comando = f"noctalia msg panel-toggle {plugin_id}:{entrada_id}"
+        check(f"el README trae el comando IPC del panel", comando in readme, comando)
+
+    # Los eventos IPC que el panel y el widget atienden tienen que estar
+    # documentados: la plantilla de la tienda los pide cuando el plugin
+    # hace algo mas que abrir el panel.
+    eventos = set()
+    entradas_por_id = {}
+    for clave, entrada_id in entradas:
+        entradas_por_id[entrada_id] = entrada
+    for entrada_id, entrada in entradas_por_id.items():
+        entrada_path = os.path.join(PLUGIN_DIR, entrada.get("entry", entrada_id + ".luau"))
+        try:
+            with open(entrada_path, encoding="utf-8") as handle:
+                fuente = handle.read()
+        except OSError:
+            continue
+        for nombre in ("launch", "toggle", "set", "refresh"):
+            if f'event == "{nombre}"' in fuente:
+                eventos.add(nombre)
+    for evento in sorted(eventos):
+        comandos = [
+            f"noctalia msg plugin {plugin_id}:{entrada_id} all {evento}"
+            for entrada_id in entradas_por_id
+        ]
+        check(
+            f"el README documenta el evento IPC `{evento}`",
+            any(comando in readme for comando in comandos),
+            evento,
+        )
+
+
 def check_salida_al_cerrar():
     """El script sale cuando la salida se cierra (la terminal se cierra).
 
@@ -713,6 +798,10 @@ def main(argv):
     check_rutas_estado()
     check_idioma_ventana()
     check_limites_ajustes()
+
+    # 4e) el README documenta lo que el manifiesto declara: si el manifiesto
+    #     cambia y el README no, la tienda rechaza el plugin.
+    check_readme()
 
     # 5) herramientas externas.
     for tool in ("kitty", "fc-match", "playerctl", "hyprctl"):

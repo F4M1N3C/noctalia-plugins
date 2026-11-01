@@ -17,6 +17,15 @@
 --
 -- Sale con código distinto de 0 si algún caso falla.
 
+-- El runtime real es Luau, que sí trae `math.atan2`; Lua 5.4 no lo trae (solo
+-- desde 5.4.9). `math.atan(y, x)` de Lua 5.4 es atan2, así que se usa como
+-- sustituto cuando falta, para que el comando documentado funcione en
+-- cualquier Lua 5.4 (5.4.4 de Ubuntu, 5.4.8 de otros sistemas) sin tocar el
+-- runtime del plugin.
+if type(math.atan2) ~= "function" then
+  math.atan2 = math.atan
+end
+
 local function scriptDir()
   local self = arg and arg[0] or ""
   return self:match("^(.*)[/\\][^/\\]+$") or "."

@@ -288,8 +288,10 @@ lines are still reviewed before exiting.
 
 `thumbnail.webp` was exported with the
 [official thumbnail generator](https://assets.noctalia.dev/plugins/thumbnail-generator.html) from
-`screenshots/panel.webp`, with the title `Terminal Widgets`, the tag `Terminal · Widget` and the
-`iris` accent.
+`screenshots/panel.webp`, with the title `Terminal Widgets`, the tag `Hyprland 0.56+ · Widget`,
+the description `Hyprland 0.56+ only. Terminal apps in floating windows, with previews and
+rotation` and the `iris` accent. The label is in the thumbnail on purpose: the plugin only
+works on Hyprland 0.56+, and that has to be visible before installing it.
 
 ### Implementation notes
 

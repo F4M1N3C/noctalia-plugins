@@ -17,3 +17,6 @@ __pycache__/
 
 # Scratch de las skills de superpowers
 .superpowers/
+
+# Worktrees de git (ramas de trabajo aisladas)
+.worktrees/

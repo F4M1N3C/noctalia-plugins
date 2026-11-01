@@ -220,7 +220,7 @@ class ImageRenderer:
         top = size * 1.9
         bottom = ypix - size * 1.9
         if cfg["header"]:
-            title = app.track.title or "nada sonando"
+            title = app.track.title or app.tr("nothing_playing")
             artist = app.track.artist or ""
             self._draw_left(draw, title, size * 1.6, top, size * 0.95, theme.bright, family)
             if artist:
@@ -367,14 +367,14 @@ class ImageRenderer:
         app = self.app
         theme = app.theme
         if app.state == "loading":
-            message = "buscando letra"
+            message = app.tr("searching_lyrics")
             detail = (app.track.title + " — " + app.track.artist).strip(" —")
         elif app.state == "empty":
-            message = "sin letra para esta canción"
-            detail = "prueba otra fuente o vuelve a intentarlo con [r]"
+            message = app.tr("no_lyrics_title")
+            detail = app.tr("try_another_source")
         else:
-            message = "nada sonando"
-            detail = "abre YouTube Music o cualquier reproductor MPRIS"
+            message = app.tr("nothing_playing")
+            detail = app.tr("open_player")
         self._draw_centered(draw, message, center_y, size, theme.faint, family)
         self._draw_centered(draw, detail, center_y + size * 1.6, size * 0.9, theme.bright, family)
         eq = app.equalizer_text()
@@ -405,7 +405,7 @@ class ImageRenderer:
         app = self.app
         theme = app.theme
         y = app.terminal_pixels()[1] - size * 0.6
-        text = "[q] salir  [espacio] pausa  [d] dirección  [k] karaoke  [r] recargar"
+        text = (app.texts.get("hints") or [""])[0]
         self._draw_left(
             draw, text, size * 1.6, y, size * 0.8,
             self._mix(theme.faint, theme.background, 0.7), family,

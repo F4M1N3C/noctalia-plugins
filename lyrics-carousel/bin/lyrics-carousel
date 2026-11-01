@@ -42,6 +42,12 @@ import urllib.request
 APP = "lyrics-carousel"
 VERSION = "1.1.0"
 
+# Plazo de espera de la busqueda de letra (segundos). Los proveedores
+# tardan: con 4 s una letra que tarda 6 s se tiraba a la basura.
+SEARCH_TIMEOUT = 15.0
+# Cada cuanto se reintenta una cancion que no tiene letra (segundos).
+RETRY_SECONDS = 60
+
 # realpath: el script se lanza por el enlace simbolico de ~/.local/bin. Con
 # abspath el directorio seria ~/.local/bin y los modulos hermanos
 # (image_renderer, graphics) no se encontrarian: el modo imagen se caeria
@@ -57,10 +63,96 @@ except Exception as error:  # noqa: BLE001  (el modo imagen es opcional)
     ImageRenderer = None
     IMAGE_ERROR = repr(error)
 
+# Las rutas del estado (settings.toml y overrides) viven en un modulo
+# propio: el script y el helper tienen que buscar el mismo sitio o uno
+# escribiria donde el otro lee.
+from paths import data_dir, overrides_path, settings_path, state_dir  # noqa: E402
+
 CACHE_DIR = os.path.join(
     os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
     "lyrics-carousel",
 )
+
+# --------------------------------------------------------------------------
+# textos de la ventana
+# --------------------------------------------------------------------------
+#
+# La ventana se dibuja en una terminal: no hay forma de pedirle a Noctalia
+# una traduccion, asi que los textos viven aqui, en ingles y en espanol.
+# El idioma se elige con --lang, con el ajuste `language` o con el del
+# sistema (LC_ALL, LC_MESSAGES, LANG).
+
+TEXTS = {
+    "en": {
+        "brand": "lyrics",
+        "searching": "searching",
+        "no_lyrics": "no lyrics",
+        "synced": "synced",
+        "unsynced": "unsynced",
+        "paused": "paused",
+        "waiting": "waiting",
+        "nothing_playing": "nothing playing",
+        "open_player": "open YouTube Music or any MPRIS player",
+        "searching_lyrics": "searching lyrics",
+        "no_lyrics_title": "no lyrics for this song",
+        "try_another_source": "try another source or press [r] to retry",
+        "image_unavailable": "image mode unavailable: {reason}",
+        "image_disabled": "image mode disabled after several failures",
+        "no_graphics": "the terminal does not support the graphics protocol",
+        "unknown_reason": "unknown reason",
+        "hints": [
+            "[q] quit  [space] pause  [d] direction  [k] karaoke  [r] reload",
+            "[q] quit  [space] pause  [d] dir  [r] reload",
+            "[q] quit  [space] pause  [r] reload",
+            "[q] quit  [space] pause",
+            "[q] quit",
+        ],
+    },
+    "es": {
+        "brand": "lyrics",
+        "searching": "buscando",
+        "no_lyrics": "sin letra",
+        "synced": "synced",
+        "unsynced": "sin sync",
+        "paused": "pausa",
+        "waiting": "en espera",
+        "nothing_playing": "nada sonando",
+        "open_player": "abre YouTube Music o cualquier reproductor MPRIS",
+        "searching_lyrics": "buscando letra",
+        "no_lyrics_title": "sin letra para esta canción",
+        "try_another_source": "prueba otra fuente o vuelve a intentarlo con [r]",
+        "image_unavailable": "modo imagen no disponible: {reason}",
+        "image_disabled": "modo imagen desactivado tras varios fallos",
+        "no_graphics": "el terminal no admite el protocolo de gráficos",
+        "unknown_reason": "motivo desconocido",
+        "hints": [
+            "[q] salir  [espacio] pausa  [d] dirección  [k] karaoke  [r] recargar",
+            "[q] salir  [espacio] pausa  [d] dir  [r] recargar",
+            "[q] salir  [espacio] pausa  [r] recargar",
+            "[q] salir  [espacio] pausa",
+            "[q] salir",
+        ],
+    },
+}
+
+LANGUAGES = ("en", "es")
+
+
+def detect_language(choice: str = "auto") -> str:
+    """Idioma de los textos de la ventana.
+
+    "auto" mira el idioma del sistema. Si no dice nada, ingles: el plugin
+    esta en ingles y el usuario que lo quiera en espanol lo pide con
+    --lang es o con el ajuste `language`.
+    """
+    value = str(choice or "auto").strip().lower()
+    if value in LANGUAGES:
+        return value
+    for variable in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        locale = os.environ.get(variable, "").strip()
+        if locale:
+            return "es" if locale.lower().startswith("es") else "en"
+    return "en"
 
 # --------------------------------------------------------------------------
 # utilidades
@@ -1137,8 +1229,12 @@ def fetch_lyrics(track: Track, force: bool, log):
     for t in threads:
         t.start()
 
-    # Espera al primer éxito o a que todos terminen (máx. 18 s).
-    deadline = time.monotonic() + 4.0
+    # Espera al primer éxito o a que todos terminen (máx. 15 s).
+    #
+    # El plazo es largo porque hay proveedores que tardan: con 4 s una
+    # letra que tarda 6 s se tiraba a la basura y el usuario se quedaba
+    # sin letra pese a estar disponible.
+    deadline = time.monotonic() + SEARCH_TIMEOUT
     while not result_event.is_set() and time.monotonic() < deadline:
         if not any(t.is_alive() for t in threads):
             break
@@ -1153,6 +1249,13 @@ def fetch_lyrics(track: Track, force: bool, log):
 
     if lines:
         return lines, source, synced
+    if any(t.is_alive() for t in threads):
+        # Se agoto el plazo con proveedores todavia en marcha: la letra
+        # puede llegar despues, asi que no se marca la cache negativa
+        # (si se marcara, la busqueda se daria por cerrada y no se
+        # volveria a mirar esa cancion).
+        log("plazo de busqueda agotado: no se marca la cache negativa")
+        return [], "", False
     mark_missing(track)
     return [], "", False
 
@@ -1232,6 +1335,7 @@ DEFAULTS = {
     "active_scale": 1.35,
     "visible_above": 6,
     "visible_below": 6,
+    "language": "auto",
 }
 
 BOOL_KEYS = ("marker", "karaoke", "equalizer", "footer", "hints", "header", "ghost")
@@ -1242,35 +1346,10 @@ INT_KEYS = (
 FLOAT_KEYS = ("active_scale",)
 
 
-SETTINGS_PATH = os.path.expanduser("~/.local/state/noctalia/settings.toml")
-
-
-# La ruta del fichero de overrides puede redirigirse con la variable de
-# entorno LYRICS_CAROUSEL_OVERRIDES: asi las pruebas no tocan el estado
-# real (y no compiten con las escrituras asincronas del script).
-def _overrides_path() -> str:
-    """Ruta del fichero de overrides.
-
-    Se puede redirigir con la variable de entorno
-    LYRICS_CAROUSEL_OVERRIDES (la usa el autotest para no tocar el estado
-    real). Una variable vacia se ignora: si no, la ruta seria "" y no se
-    podria leer nada.
-    """
-    alternativa = os.environ.get("LYRICS_CAROUSEL_OVERRIDES", "").strip()
-    if alternativa:
-        return os.path.expanduser(alternativa)
-    return os.path.expanduser(
-        "~/.local/state/noctalia/plugins/data/faminec/lyrics-carousel/overrides.json"
-    )
-
-
-OVERRIDES_PATH = _overrides_path()
-
-
 def read_overrides() -> dict:
     """Ajustes cambiados desde el panel (capa temporal, se vuelca al cerrar)."""
     try:
-        with open(OVERRIDES_PATH, encoding="utf-8") as handle:
+        with open(overrides_path(), encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, ValueError):
         return {}
@@ -1281,9 +1360,9 @@ def load_settings() -> dict:
     """Ajustes del plugin: valores por defecto + settings.toml + overrides."""
     cfg = dict(DEFAULTS)
 
-    if os.path.isfile(SETTINGS_PATH) and tomllib is not None:
+    if os.path.isfile(settings_path()) and tomllib is not None:
         try:
-            with open(SETTINGS_PATH, "rb") as handle:
+            with open(settings_path(), "rb") as handle:
                 data = tomllib.load(handle)
             section = (data.get("plugin_settings") or {}).get(PLUGIN_ID) or {}
             for key, value in section.items():
@@ -1317,9 +1396,12 @@ def load_settings() -> dict:
     cfg["font_size"] = max(6, min(96, cfg["font_size"]))
     cfg["spacing"] = max(1, min(6, cfg["spacing"]))
     cfg["animation_ms"] = max(0, min(3000, cfg["animation_ms"]))
-    cfg["offset_ms"] = max(-5000, min(5000, cfg["offset_ms"]))
-    cfg["width"] = max(300, min(4000, cfg["width"]))
-    cfg["height"] = max(200, min(3000, cfg["height"]))
+    # Los limites son los del manifiesto (plugin.toml): si el script
+    # aceptara mas, el panel y la pagina de ajustes darian valores
+    # distintos a los que el script esta usando.
+    cfg["offset_ms"] = max(-3000, min(3000, cfg["offset_ms"]))
+    cfg["width"] = max(400, min(3840, cfg["width"]))
+    cfg["height"] = max(200, min(2160, cfg["height"]))
     cfg["visible_above"] = max(0, min(20, cfg["visible_above"]))
     cfg["visible_below"] = max(0, min(20, cfg["visible_below"]))
     try:
@@ -1335,70 +1417,13 @@ def load_settings() -> dict:
         cfg["direction"] = "down"
     if cfg["render_mode"] not in ("image", "text"):
         cfg["render_mode"] = DEFAULTS["render_mode"]
+    if cfg["language"] not in ("auto",) + LANGUAGES:
+        cfg["language"] = DEFAULTS["language"]
     if cfg["accent"] not in ACCENT_NAMES:
         cfg["accent"] = DEFAULTS["accent"]
     cfg["font_family"] = str(cfg["font_family"] or DEFAULTS["font_family"])
     cfg["custom_color"] = str(cfg["custom_color"] or DEFAULTS["custom_color"])
     return cfg
-
-
-def patch_settings(text: str, key: str, raw_value: str) -> str:
-    """Inserta o reemplaza una clave dentro de la sección del plugin."""
-    section = f'[plugin_settings."{PLUGIN_ID}"]'
-    lines = text.split("\n")
-    start = None
-    end = len(lines)
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped == section:
-            start = index
-            continue
-        if start is not None and stripped.startswith("[") and stripped.endswith("]"):
-            end = index
-            break
-    if start is None:
-        block = [section, f"{key} = {raw_value}"]
-        prefix = text if text.endswith("\n") else text + "\n"
-        if not prefix.strip():
-            return "\n".join(block) + "\n"
-        return prefix + "\n".join(block) + "\n"
-    body = lines[start + 1 : end]
-    # El TOML no admite claves duplicadas: si las hay, todo el fichero
-    # queda invalido y Noctalia descarta la seccion entera. Se deja solo la
-    # primera aparicion de cada clave.
-    seen = set()
-    clean = []
-    for line in body:
-        name = line.split("=", 1)[0].strip()
-        if name and not name.startswith("["):
-            if name in seen:
-                continue
-            seen.add(name)
-        clean.append(line)
-    body = clean
-    replaced = False
-    for index, line in enumerate(body):
-        if line.strip().startswith(key + " "):
-            if not replaced:
-                body[index] = f"{key} = {raw_value}"
-                replaced = True
-            else:
-                # Clave duplicada: el TOML ser\u00eda inv\u00e1lido y los ajustes
-                # se ignorar\u00edan. Se elimina el duplicado.
-                body[index] = None
-    body = [line for line in body if line is not None]
-    if not replaced:
-        insert_at = len(body)
-        while insert_at > 0 and body[insert_at - 1].strip() == "":
-            insert_at -= 1
-        for index in range(insert_at):
-            name = body[index].split("=", 1)[0].strip()
-            if name and name > key:
-                insert_at = index
-                break
-        body.insert(insert_at, f"{key} = {raw_value}")
-    return "\n".join(lines[: start + 1] + body + lines[end:])
-
 
 
 ANCHOR_ALIASES = {
@@ -1517,6 +1542,7 @@ class LyricsCarousel:
             self.cfg["active_scale"] = args.active_scale
         if args.accent:
             self.cfg["accent"] = args.accent
+        self._set_language(getattr(args, "lang", None) or self.cfg.get("language", "auto"))
         self.direction = 1 if self.cfg["direction"] == "down" else -1
         self.karaoke = bool(self.cfg["karaoke"])
         self.spacing = int(self.cfg["spacing"])
@@ -1565,14 +1591,14 @@ class LyricsCarousel:
             # el modo imagen cuando en realidad es el de texto: se avisa, en
             # el log y tambien en la propia ventana.
             if self.image is None:
-                reason = self.image_error or IMAGE_ERROR or "motivo desconocido"
+                reason = self.image_error or IMAGE_ERROR or self.tr("unknown_reason")
             elif not getattr(getattr(self.image, "gfx", None), "supported", False):
-                reason = "el terminal no admite el protocolo de gráficos"
+                reason = self.tr("no_graphics")
             else:
                 reason = ""
             if reason:
                 self.warn(f"modo imagen no disponible: {reason}")
-                self.status_message = f"modo imagen no disponible: {reason}"
+                self.status_message = self.tr("image_unavailable", reason=reason)
         self.last_mode = ""
         self._demo_start = time.monotonic() - max(0.0, args.demo_offset)
         if self.demo:
@@ -1580,6 +1606,29 @@ class LyricsCarousel:
         self.update_size()
 
     # ---- utilidades de terminal -------------------------------------
+
+    def _set_language(self, choice: str):
+        """Fija el idioma de los textos de la ventana."""
+        language = detect_language(choice)
+        self.language = language
+        self.texts = TEXTS.get(language, TEXTS["en"])
+
+    def tr(self, key: str, **kwargs) -> str:
+        """Texto de la ventana en el idioma elegido.
+
+        Si la clave no existe se devuelve la clave: se ve al instante que
+        falta una traduccion en vez de dejar un hueco en la ventana.
+        """
+        value = self.texts.get(key)
+        if value is None:
+            return key
+        text = str(value)
+        if kwargs:
+            try:
+                return text.format(**kwargs)
+            except (IndexError, KeyError):
+                return text
+        return text
 
     def log(self, message: str):
         if not self.args.debug:
@@ -1738,6 +1787,9 @@ class LyricsCarousel:
         self.direction = 1 if cfg["direction"] == "down" else -1
         self.karaoke = bool(cfg["karaoke"])
         self.spacing = int(cfg["spacing"])
+        # El idioma puede cambiar desde la pagina de ajustes: se recalcula
+        # (la opcion de la linea de orden manda sobre el ajuste).
+        self._set_language(getattr(self.args, "lang", None) or cfg.get("language", "auto"))
         self.dirty = True
         self.need_clear = True
         self.log("ajustes: " + json.dumps(cfg, ensure_ascii=False))
@@ -1785,10 +1837,10 @@ class LyricsCarousel:
         if (
             self.state == "empty"
             and self.track.title
-            and time.monotonic() - self.last_fetch > 180
+            and time.monotonic() - self.last_fetch > RETRY_SECONDS
         ):
             # La letra puede no estar disponible la primera vez (API caída o
-            # canción recién añadida): se reintenta cada pocos minutos.
+            # canción recién añadida): se reintenta cada minuto.
             self.last_fetch = time.monotonic()
             self.fetcher.start(self.track, force=True)
             self.log("reintento automático de la letra")
@@ -1905,20 +1957,28 @@ class LyricsCarousel:
 
     def _header(self, rows, t, position, duration):
         theme = self.theme
-        left_plain = "▌ lyrics"
-        left = fg(theme.accent) + "▌" + RESET + " " + fg(theme.bright) + "lyrics" + RESET
+        left_plain = "▌ " + self.tr("brand")
+        left = (
+            fg(theme.accent)
+            + "▌"
+            + RESET
+            + " "
+            + fg(theme.bright)
+            + self.tr("brand")
+            + RESET
+        )
         status = ""
         if self.state == "loading":
             dots = "." * (int(t * 2.5) % 4)
-            status = f"buscando{dots}"
+            status = f"{self.tr('searching')}{dots}"
         elif self.state == "empty":
-            status = "sin letra"
+            status = self.tr("no_lyrics")
         elif self.state == "lyrics":
-            status = "synced" if self.synced else "sin sync"
+            status = self.tr("synced") if self.synced else self.tr("unsynced")
             if not self.track.playing:
-                status += " · pausa"
+                status += " · " + self.tr("paused")
         elif self.state == "idle":
-            status = "en espera"
+            status = self.tr("waiting")
         eq = self._equalizer(t, self.track.playing or self.demo)
         status = truncate(status, max(0, self.width - cell_width(left_plain) - cell_width(eq) - 6))
         right_plain = f"{eq}  [{status}]" if status else eq
@@ -1928,7 +1988,7 @@ class LyricsCarousel:
         gap = max(1, self.width - cell_width(left_plain) - cell_width(right_plain))
         rows[0] = left + " " * gap + right
 
-        title = self.track.title or "nada sonando"
+        title = self.track.title or self.tr("nothing_playing")
         artist = (" — " + self.track.artist) if self.track.artist else ""
         max_title = max(10, self.width - 2)
         if cell_width(title) + cell_width(artist) > max_title:
@@ -1965,13 +2025,7 @@ class LyricsCarousel:
         theme = self.theme
         width = self.width
         source = truncate(self.source or "", 18)
-        candidates = [
-            "[q] salir  [espacio] pausa  [d] direcci\u00f3n  [r] recargar",
-            "[q] salir  [espacio] pausa  [d] dir  [r] recargar",
-            "[q] salir  [espacio] pausa  [r] recargar",
-            "[q] salir  [espacio] pausa",
-            "[q] salir",
-        ]
+        candidates = self.texts.get("hints") or [""]
         hint = ""
         for candidate in candidates:
             if cell_width(candidate) + cell_width(source) + 4 <= width:
@@ -2117,6 +2171,9 @@ class LyricsCarousel:
             top = 3
         elif cfg["equalizer"]:
             self._equalizer_only(rows, t)
+            # El ecualizador ocupa la primera fila: la letra no puede
+            # pisarlo, asi que el contenido empieza debajo.
+            top = 1
         if cfg["footer"]:
             bottom = self.height - 2
             self._footer(rows, position, duration)
@@ -2139,20 +2196,20 @@ class LyricsCarousel:
 
         if self.state == "idle":
             self._idle_block(
-                rows, t, "nada sonando",
-                "abre YouTube Music o cualquier reproductor MPRIS",
+                rows, t, self.tr("nothing_playing"),
+                self.tr("open_player"),
                 top, bottom,
             )
         elif self.state == "loading":
             self._idle_block(
-                rows, t, "buscando letra",
+                rows, t, self.tr("searching_lyrics"),
                 (self.track.title + " \u2014 " + self.track.artist).strip(" \u2014"),
                 top, bottom,
             )
         elif self.state == "empty":
             self._idle_block(
-                rows, t, "sin letra para esta canci\u00f3n",
-                "prueba otra fuente o vuelve a intentarlo con [r]",
+                rows, t, self.tr("no_lyrics_title"),
+                self.tr("try_another_source"),
                 top, bottom,
             )
         else:
@@ -2201,7 +2258,7 @@ class LyricsCarousel:
                 self.log("modo imagen desactivado tras varios fallos")
                 self.image_disabled = True
                 self.cfg["render_mode"] = "text"
-                self.status_message = "modo imagen desactivado tras varios fallos"
+                self.status_message = self.tr("image_disabled")
                 self.need_clear = True
                 self.last_mode = ""
                 self._draw_text_frame()
@@ -2265,10 +2322,15 @@ class LyricsCarousel:
     # ---- teclado ------------------------------------------------------
 
     def _save_override(self, key, value, kind="string"):
-        """Guarda un ajuste en la capa de overrides del panel.
+        """Guarda un ajuste y lo deja escrito en el settings.toml.
 
-        No se toca el settings.toml a proposito: escribirlo hace que Noctalia
-        recargue la configuracion y cierre el panel que este abierto.
+        La capa de overrides es temporal: el panel la vuelca al cerrarse.
+        Un atajo de la ventana no tiene panel que la vuelque, asi que el
+        helper escribe tambien en el settings.toml: si no, el cambio se
+        perderia al reiniciar la sesion.
+
+        Ojo: escribir el settings.toml hace que Noctalia recargue la
+        configuracion (y cierre el panel que estuviera abierto).
         """
         # realpath: el script suele lanzarse por el enlace simbolico de
         # ~/.local/bin, y el helper vive en bin/.
@@ -2283,7 +2345,7 @@ class LyricsCarousel:
                 [
                     "python3",
                     helper,
-                    "override",
+                    "persist",
                     key,
                     str(value),
                     kind,
@@ -2341,7 +2403,10 @@ class LyricsCarousel:
             while not self.stop_requested:
                 self.update_size()
                 self._poll_data()
-                position = self._position()
+                # Con el desfase: si el scroll usara la posicion cruda, la
+                # linea resaltada (que si usa el desfase) no seria la que
+                # esta en el centro.
+                position = self.position()
                 self._update_scroll(position)
                 self.draw(force=self.dirty)
                 self.dirty = False
@@ -2424,6 +2489,10 @@ def diagnostics() -> dict:
         "image_error": IMAGE_ERROR,
         "graphics": graphics_ok,
         "version": VERSION,
+        "state_dir": state_dir(),
+        "settings": settings_path(),
+        "overrides": overrides_path(),
+        "data_dir": data_dir(),
     }
 
 
@@ -2439,6 +2508,12 @@ def main():
     parser.add_argument("--active-scale", type=float, default=None, help="tamaño de la línea activa")
     parser.add_argument("--accent", default=None, help="color de la línea activa")
     parser.add_argument("--no-keys", action="store_true", help="ocultar la ayuda de teclas")
+    parser.add_argument(
+        "--lang",
+        choices=("auto", "en", "es"),
+        default=None,
+        help="idioma de los textos de la ventana (por defecto: el del plugin)",
+    )
     parser.add_argument("--demo", action="store_true", help="letra de demostración sin reproductor")
     parser.add_argument("--demo-offset", type=float, default=0.0, help=argparse.SUPPRESS)
     parser.add_argument("--once", action="store_true", help="dibujar un cuadro y salir")

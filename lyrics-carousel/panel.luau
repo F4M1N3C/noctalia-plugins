@@ -855,11 +855,13 @@ render = function()
     ui.row({ gap = 10 }, {
       ui.column({ flexGrow = 1, gap = 4 }, {
         ui.label({ text = tr("width"), fontSize = 11, color = "on_surface_variant" }),
-        sizeStepper("width", tr("width"), 300, 4000, 100),
+        -- Los limites son los del manifiesto (plugin.toml): el script
+        -- recorta lo que le llegue, asi que el panel no puede ofrecer mas.
+        sizeStepper("width", tr("width"), 400, 3840, 100),
       }),
       ui.column({ flexGrow = 1, gap = 4 }, {
         ui.label({ text = tr("height"), fontSize = 11, color = "on_surface_variant" }),
-        sizeStepper("height", tr("height"), 200, 3000, 50),
+        sizeStepper("height", tr("height"), 200, 2160, 50),
       }),
     }),
     ui.separator({ thickness = 1, spacing = 6 }),

@@ -2,12 +2,20 @@
 """Escribe ajustes del plugin en el settings.toml de Noctalia.
 
 Uso:  set-setting.py <clave> <valor> [tipo] [<clave> <valor> [tipo] ...]
+       set-setting.py override <clave> <valor> <tipo>
+       set-setting.py persist <clave> <valor> <tipo>
+       set-setting.py merge
 
 Tipos: bool | int | float | string
 
 Mantiene el formato del fichero (secciones entrecomilladas, claves ordenadas
 como las deja Noctalia) y escribe de forma atómica para no corromper la
 configuración.
+
+"override" deja el valor solo en la capa temporal (overrides.json), que el
+panel vuelca al cerrarse. "persist" lo escribe además en el settings.toml:
+es lo que necesitan los atajos de la ventana, que no tienen panel que
+vuelque nada.
 """
 
 from __future__ import annotations
@@ -23,37 +31,20 @@ try:
 except ImportError:  # pragma: no cover - python < 3.11
     tomllib = None
 
+# Las rutas del estado las comparte el script: si el helper buscara el
+# settings.toml en un sitio y el script en otro, uno escribiria donde el
+# otro lee.
+from paths import overrides_path, settings_path
+
 PLUGIN_ID = "faminec/lyrics-carousel"
 SECTION = f'[plugin_settings."{PLUGIN_ID}"]'
-SETTINGS = os.path.expanduser("~/.local/state/noctalia/settings.toml")
-
-# La ruta del fichero de overrides puede redirigirse con la variable de
-# entorno LYRICS_CAROUSEL_OVERRIDES (la usa el autotest para no tocar el
-# estado real).
-def _overrides_path() -> str:
-    """Ruta del fichero de overrides.
-
-    Se puede redirigir con la variable de entorno
-    LYRICS_CAROUSEL_OVERRIDES (la usa el autotest para no tocar el estado
-    real). Una variable vacia se ignora: si no, la ruta seria "" y se
-    escribiria un ".lock" en el directorio actual.
-    """
-    alternativa = os.environ.get("LYRICS_CAROUSEL_OVERRIDES", "").strip()
-    if alternativa:
-        return os.path.expanduser(alternativa)
-    return os.path.expanduser(
-        "~/.local/state/noctalia/plugins/data/faminec/lyrics-carousel/overrides.json"
-    )
-
-
-OVERRIDES = _overrides_path()
 
 ALLOWED = {
     "font_family", "font_size", "render_mode", "direction", "marker",
     "karaoke", "equalizer", "footer", "hints", "header", "spacing",
     "animation_ms", "ghost", "offset_ms", "width", "height", "anchor",
     "custom_x", "custom_y", "accent", "custom_color", "active_scale",
-    "visible_above", "visible_below",
+    "visible_above", "visible_below", "language",
 }
 
 BOOL_KEYS = {
@@ -170,13 +161,14 @@ def ensure_dir(path: str) -> bool:
         return False
 
 
-def overrides_path() -> str:
-    return OVERRIDES
+def overrides_path_now() -> str:
+    """Ruta actual del fichero de overrides (se lee cada vez)."""
+    return overrides_path()
 
 
 def read_overrides():
     try:
-        with open(OVERRIDES, encoding="utf-8") as handle:
+        with open(overrides_path_now(), encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, ValueError):
         return {}
@@ -184,9 +176,10 @@ def read_overrides():
 
 
 def write_overrides(data) -> bool:
-    if not ensure_dir(OVERRIDES):
+    path = overrides_path_now()
+    if not ensure_dir(path):
         return False
-    directory = os.path.dirname(OVERRIDES)
+    directory = os.path.dirname(path)
     try:
         temporary = ""
         handle = tempfile.NamedTemporaryFile(
@@ -197,7 +190,7 @@ def write_overrides(data) -> bool:
             json.dump(data, handle, ensure_ascii=False, indent=1, sort_keys=True)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, OVERRIDES)
+        os.replace(temporary, path)
         temporary = ""
     except OSError as error:
         print(f"no se pudo escribir los overrides: {error}", file=sys.stderr)
@@ -212,7 +205,8 @@ def set_override(key: str, value: str, kind: str) -> int:
     la lectura-modificacion-escritura va con lock: si no, la segunda pisa a la
     primera.
     """
-    lock_path = OVERRIDES + ".lock"
+    path = overrides_path_now()
+    lock_path = path + ".lock"
     if not ensure_dir(lock_path):
         return 1
     try:
@@ -227,6 +221,36 @@ def set_override(key: str, value: str, kind: str) -> int:
         if not write_overrides(data):
             return 1
         return 0
+    finally:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(lock)
+
+
+def remove_override(key: str, value) -> bool:
+    """Quita una clave de los overrides si sigue teniendo ese valor.
+
+    El valor se comprueba: si el panel ha cambiado esa clave mientras
+    tanto, su cambio se respeta y no se toca (el panel vuelca lo suyo al
+    cerrarse).
+    """
+    path = overrides_path_now()
+    lock_path = path + ".lock"
+    if not ensure_dir(lock_path):
+        return False
+    try:
+        lock = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        data = read_overrides()
+        if key not in data or data[key] != value:
+            return False
+        del data[key]
+        return write_overrides(data)
     finally:
         try:
             fcntl.flock(lock, fcntl.LOCK_UN)
@@ -264,17 +288,40 @@ def merge_overrides() -> int:
             pairs.append((key, str(value), "string"))
     if not pairs:
         try:
-            os.remove(OVERRIDES)
+            os.remove(overrides_path_now())
         except OSError:
             pass
         return 0
-    code = main(["set-setting.py"] + [item for pair in pairs for item in pair])
+    code = write_settings(pairs)
     if code == 0:
         try:
-            os.remove(OVERRIDES)
+            os.remove(overrides_path_now())
         except OSError:
             pass
     return code
+
+
+def persist_override(key: str, value: str, kind: str) -> int:
+    """Guarda el ajuste y lo deja escrito en el settings.toml.
+
+    La capa de overrides es temporal (la vuelca el panel al cerrarse). Un
+    atajo de la ventana no tiene panel que la vuelque, asi que el valor se
+    escribe tambien en el settings.toml: si no, se perderia al reiniciar
+    la sesion.
+
+    Primero se escribe en los overrides: si la escritura del settings.toml
+    falla, el valor sigue en vigor durante la sesion y el panel lo vuelca
+    al cerrarse. Si la escritura va bien, la clave se quita de los
+    overrides para que no tape un cambio posterior hecho en la pagina de
+    ajustes.
+    """
+    if set_override(key, value, kind) != 0:
+        return 1
+    code = write_settings([(key, value, kind)])
+    if code != 0:
+        return code
+    remove_override(key, parse_value(value, kind))
+    return 0
 
 
 def main(argv):
@@ -286,6 +333,14 @@ def main(argv):
             print(f"clave desconocida: {argv[2]}", file=sys.stderr)
             return 2
         return set_override(argv[2], argv[3], argv[4])
+    if len(argv) >= 2 and argv[1] == "persist":
+        if len(argv) < 5:
+            print("uso: set-setting.py persist <clave> <valor> <tipo>", file=sys.stderr)
+            return 2
+        if argv[2] not in ALLOWED:
+            print(f"clave desconocida: {argv[2]}", file=sys.stderr)
+            return 2
+        return persist_override(argv[2], argv[3], argv[4])
     if len(argv) >= 2 and argv[1] == "merge":
         return merge_overrides()
     if len(argv) < 3:
@@ -302,9 +357,17 @@ def main(argv):
             print(f"clave desconocida: {key}", file=sys.stderr)
             return 2
 
-    # El script y el panel pueden escribir a la vez: con un fichero de lock
-    # la lectura-modificacion-escritura se serializa y no se pisan.
-    lock_path = SETTINGS + ".lock"
+    return write_settings(pairs)
+
+
+def write_settings(pairs) -> int:
+    """Escribe los ajustes en el settings.toml (con lock).
+
+    El script y el panel pueden escribir a la vez: con un fichero de lock
+    la lectura-modificacion-escritura se serializa y no se pisan.
+    """
+    settings = settings_path()
+    lock_path = settings + ".lock"
     if not ensure_dir(lock_path):
         return 1
     try:
@@ -315,7 +378,7 @@ def main(argv):
     try:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            with open(SETTINGS, encoding="utf-8") as handle:
+            with open(settings, encoding="utf-8") as handle:
                 text = handle.read()
         except OSError as error:
             print(f"no se pudo leer: {error}", file=sys.stderr)
@@ -336,9 +399,10 @@ def _write(text, pairs):
     if updated == text:
         return 0
 
-    if not ensure_dir(SETTINGS):
+    settings = settings_path()
+    if not ensure_dir(settings):
         return 1
-    directory = os.path.dirname(SETTINGS)
+    directory = os.path.dirname(settings)
     temporary = ""
     try:
         handle = tempfile.NamedTemporaryFile(
@@ -349,7 +413,7 @@ def _write(text, pairs):
             handle.write(updated)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, SETTINGS)
+        os.replace(temporary, settings)
         temporary = ""
     except OSError as error:
         if temporary:
@@ -365,7 +429,7 @@ def _write(text, pairs):
     if tomllib is None:
         return 0
     try:
-        with open(SETTINGS, "rb") as handle:
+        with open(settings, "rb") as handle:
             check = tomllib.load(handle)
     except (OSError, tomllib.TOMLDecodeError) as error:
         print(f"el fichero quedó ilegible: {error}", file=sys.stderr)

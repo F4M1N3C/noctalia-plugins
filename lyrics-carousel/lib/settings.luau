@@ -36,6 +36,7 @@ local DEFAULTS = {
   active_scale = 1.35,
   visible_above = 6,
   visible_below = 6,
+  language = "auto",
 }
 
 local BOOL_KEYS = {

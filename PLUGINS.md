@@ -18,7 +18,7 @@
 | Plugin | Probado | Versión | Bloqueo exacto |
 | --- | --- | --- | --- |
 | `faminec/equalizer` | **8/8** ✅ | 1.0.0 | **Ninguno** (retirado del sistema, el código sigue publicado y verificado) |
-| `faminec/terminal-widgets` | 20/21 | 2.2.0 "Terminal Widgets" | **Validador oficial en verde (0 errores)** y 141 comprobaciones unitarias + smoke test en verde. Falta abrir el PR contra la tienda oficial |
+| `faminec/terminal-widgets` | 20/21 | 2.2.1 "Terminal Widgets" | **En la tienda oficial**: PR #1238 fusionado (2026-11-01) y seguimiento #1255 abierto. Validador oficial en verde (0 errores) y 159 comprobaciones unitarias + smoke test en verde |
 | `faminec/wallpaper-carousel` | 0/16 | 2.0.0 (v2 inclinada) | La v2 está en el repo pero **sin commitear**; cambia ajustes y miniatura → hay que regenerar el `thumbnail.webp` y el README antes del PR |
 | `faminec/notes` | 0/14 | 1.1.0 | El plugin ya está; falta probarlo y probar la app en el móvil. `tailscale funnel` sin activar en la cuenta |
 | `faminec/cmf-buds` | 0/20 | 1.0.0 | **La rueda del ratón no llega a los `ui.slider`** (falta `wheelAdjustEnabled` en el reconciliador del core). El parche está preparado pero **no aplicado** |
@@ -44,7 +44,7 @@
 
 | Plugin | Id | Estado | En GitHub | Rama del fork | Probado 100 % |
 | --- | --- | --- | --- | --- | --- |
-| Terminal Widgets | `faminec/terminal-widgets` | Listo (v2.2.0 "Terminal Widgets") | Sí | `feat/terminal-widgets` | ☐ 20/21 |
+| Terminal Widgets | `faminec/terminal-widgets` | **En la tienda** (v2.2.1 "Terminal Widgets") | Sí | `fix/frame-ticks` (#1255) | ☐ 20/21 |
 | Wallpaper Carousel | `faminec/wallpaper-carousel` | Listo (v2.0.0, inclinada) | Sí | `feat/wallpaper-carousel` | ☐ 0/16 |
 | Notes | `faminec/notes` | Listo | Sí | `feat/notes` | ☐ 0/14 |
 | Notes Sync | `faminec/notes-sync` | Listo (nuevo) | Sí | `feat/notes-sync` | ☐ 0/9 |
@@ -67,7 +67,7 @@
 | # | Plugin / idea | Qué falta | Prioridad |
 | --- | --- | --- | --- |
 | 1 | PRs a `noctalia-dev/community-plugins` | Las **6 ramas y los 6 cuerpos de PR ya están preparados**; falta la prueba manual y la aprobación del usuario | Alta |
-| 2 | `terminal-widgets` v2.2.0 | Falta abrir el PR contra la tienda oficial (el validador ya pasa) | Alta |
+| 2 | `terminal-widgets` v2.2.1 | **En la tienda oficial**: el PR #1238 se fusionó el 2026-11-01; queda abierto el seguimiento #1255 (los ticks de frame) | Baja |
 | 3 | `wallpaper-carousel` v2 (inclinada) | Falta commitear, regenerar miniatura y README, y probar | Alta |
 | 4 | `lyrics-carousel` | Copiar al repo la versión instalada (fix de `overrides.json` + `render_mode="image"`) | Media |
 | 5 | App móvil de las notas | **Hecho**: PWA instalada en el celular, sincronización en vivo verificada, push PC→celular, conflictos y respaldos. Falta decidir la URL pública estable (Funnel pide un clic en la consola de Tailscale) | Media |
@@ -93,13 +93,15 @@
 Marca `[x]` solo si la función se comporta **exactamente** como esperas, sin fallos ni
 pujeones. Si algo falla a medias, déjalo en `[ ]` y anótalo en §5.
 
-### 4.1 Terminal Widgets — `faminec/terminal-widgets` — **20/21**
+### 4.1 Terminal Widgets — `faminec/terminal-widgets` — **20/21** (en la tienda oficial)
 
-> v2.2.0 "Terminal Widgets": tarjetas con vista previa en vivo, editor de widgets, rotación de
+> v2.2.1 "Terminal Widgets": tarjetas con vista previa en vivo, editor de widgets, rotación de
 > ventanas y botón de abrir/cerrar todo. Los 3 bugs de core ya tienen rodeo (§5).
-> Verificado con `terminal-widgets/test-panel.lua` (141 comprobaciones, sin necesidad de
+> Verificado con `terminal-widgets/test-panel.lua` (159 comprobaciones, sin necesidad de
 > escritorio), con `terminal-widgets/test-smoke.sh` (8 widgets abiertos, rotados y
 > cerrados, log sin avisos) y en vivo con `grim` + capturas de pantalla.
+> **Fusionado en la tienda oficial** (PR #1238, 2026-11-01); el seguimiento #1255 sigue
+> abierto con el arreglo de los ticks de frame.
 
 ```sh
 noctalia msg panel-toggle faminec/terminal-widgets:panel
@@ -418,7 +420,7 @@ Nada de esto se puede automatizar: necesita tus ojos y tus manos.
 
 | # | Qué | Cómo |
 | --- | --- | --- |
-| 1 | Las 18 casillas de `terminal-widgets` (§4.1) | `noctalia msg panel-toggle faminec/terminal-widgets:panel` |
+| 1 | Las 21 casillas de `terminal-widgets` (§4.1) | `noctalia msg panel-toggle faminec/terminal-widgets:panel` |
 | 2 | Las 16 casillas de `wallpaper-carousel` (§4.2) | `noctalia msg panel-toggle faminec/wallpaper-carousel:panel` |
 | 3 | Las 14 casillas de `notes` (§4.3) | `noctalia msg panel-toggle faminec/notes:panel` |
 | 4 | Las 20 casillas de `cmf-buds` (§4.4) | `noctalia msg panel-toggle faminec/cmf-buds:panel-sound` |
@@ -442,7 +444,7 @@ Nada de esto se puede automatizar: necesita tus ojos y tus manos.
 
 | # | Plugin | Probado | Motivo exacto del bloqueo |
 | --- | --- | --- | --- |
-| 2 | `faminec/terminal-widgets` | 20/21 | **Sin bloqueo técnico**: el validador oficial pasa con **0 errores**, los 3 bugs de core (C1, C2, C3) están rodeados y la suite (141 comprobaciones + smoke) está en verde. Falta la prueba manual y abrir el PR |
+| 2 | `faminec/terminal-widgets` | 20/21 | **Sin bloqueo técnico**: el validador oficial pasa con **0 errores**, los 3 bugs de core (C1, C2, C3) están rodeados y la suite (159 comprobaciones + smoke) está en verde. **Ya está en la tienda oficial** (PR #1238 fusionado el 2026-11-01); solo queda la prueba manual de la casilla 21 y el seguimiento #1255 abierto |
 | 3 | `faminec/wallpaper-carousel` | 0/16 | La **v2 inclinada está sin commitear** en el repo y cambia los ajustes (`card_scale`/`gap` → `card_width`/`card_height`/`skew`/…), así que la **miniatura de la tienda y el README están desfasados**. Además la rama `feat/wallpaper-carousel` del fork apunta a la v1 |
 | 4 | `faminec/lyrics-carousel` | 0/18 | El **fix de los ajustes lostos y el `render_mode="image"` están solo en la copia instalada**; el repo (y por tanto la rama del fork) tiene la versión antigua con `overrides.json`. Hay que copiar y revalidar |
 | 5 | `faminec/cmf-buds` | 0/20 | **C4 sin rodeo**: la rueda del ratón no llega a los `ui.slider` porque el core no expone `wheelAdjustEnabled`. El parche de 6 líneas está en `/tmp/opencode/staging/noctalia-patch/patch.diff` pero **no está aplicado** y el binario instalado no lo trae. Afecta a las casillas de los sliders de EQ |

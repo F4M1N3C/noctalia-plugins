@@ -26,8 +26,8 @@ or Musixmatch.
 
 ## Usage
 
-Add the `widget` bar icon and click it to open the lyrics window. The panel that opens
-with it holds the quick switches.
+Add the `widget` bar icon and click it to open the lyrics window. The panel opens
+attached to the widget and holds every setting of the plugin.
 
 The panel can also be opened directly:
 
@@ -66,11 +66,14 @@ configuration, so a panel that happened to be open at that moment is closed.
 
 ## Settings
 
-Configure the plugin in **Settings → Plugins → Lyrics Carousel**. The panel keeps its
-own changes in a small overrides file and pours them into `settings.toml` when it is
-closed, so the settings page and the panel always end up showing the same values
-without the panel closing under the user's fingers. The script re-reads the settings
-every 0.5 s, so changes apply live to a window that is already open.
+Configure the plugin in **Settings → Plugins → Lyrics Carousel** or from the panel.
+The panel mirrors all the settings of the manifest — including the custom accent
+colour, the line spacing, the transition and offset times, and the bar icon — with the
+same `min`/`max`/`step` ranges. It keeps its own changes in a small overrides file and
+pours them into `settings.toml` when it is closed, so the settings page and the panel
+always end up showing the same values without the panel closing under the user's
+fingers. The script re-reads the settings every 0.5 s, so changes apply live to a
+window that is already open.
 
 | Setting | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -107,6 +110,30 @@ is invalidated on change); in text mode kitty fixes both when the window opens, 
 the window has to be opened again for them to change.
 
 ## Changelog
+
+### 2.1.0
+
+- The panel now exposes every setting of the manifest: `spacing`, `animation_ms`,
+  `offset_ms`, `custom_color` and `glyph` are no longer settings-page only.
+- Numeric controls use sliders with the manifest ranges (`font_size`, `active_scale`,
+  `visible_above`, `visible_below`) and clamp every value, including the ones received
+  over IPC: a window can no longer be wider or taller than the screen.
+- The panel opens `attached` to the widget, next to the click, instead of floating in
+  the centre of the screen.
+- The panel no longer redraws itself after it has been closed, reports a failed merge
+  instead of losing the changes silently, and applies size changes received over IPC
+  to the window that is already open.
+- A track with an artist but no title no longer restarts the lyric search on every
+  poll.
+- Slow source adapters get 22 seconds instead of 3, so NetEase and QQ Music are not
+  killed in the middle of an answer.
+- Estimated times never overwrite real LRC times, and lines without a time no longer
+  break the highlight order.
+- A failed image renderer stays disabled instead of re-arming on every settings reload.
+- `[hh:mm:ss]` and up to six decimals are accepted in LRC files, text between angle
+  brackets (`I <3 you`) is preserved, only the winning provider writes the cache, and
+  the lyrics settings and adapter are found under `NOCTALIA_STATE_HOME` /
+  `XDG_STATE_HOME`.
 
 ### 2.0.0
 

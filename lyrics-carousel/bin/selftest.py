@@ -814,6 +814,226 @@ def check_modo_imagen_no_se_rearma():
             )
 
 
+def _app_de_config(mod):
+    """Instancia minima para probar _reload_config sin abrir la ventana."""
+    app = object.__new__(mod.LyricsCarousel)
+    app.args = types.SimpleNamespace(
+        direction=None,
+        no_karaoke=False,
+        render_mode=None,
+        active_scale=None,
+        accent=None,
+        lang=None,
+        force=False,
+    )
+    app.cfg = dict(mod.DEFAULTS)
+    app.direction = 1
+    app.karaoke = True
+    app.spacing = 2
+    app.image = None
+    app.image_disabled = False
+    app.image_failures = 0
+    app.status_message = ""
+    app.dirty = False
+    app.need_clear = False
+    app.pending_overrides = {}
+    app.log = lambda message: None
+    app.tr = lambda key, args=None: key
+    app._set_language = lambda value: None
+    return app
+
+
+def check_cache_una_sola_vez():
+    """Solo el proveedor que gana escribe la cache (no todos)."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            mod.load_lyrics_settings = lambda: {
+                "sources": ["lrclib", "netease"],
+                "credentials": {},
+                "translation": "zh-Hans",
+            }
+            mod.load_cache = lambda track: None
+            mod.missing_recent = lambda track: False
+            mod.SEARCH_TIMEOUT = 5.0
+            guardados = []
+            mod.save_cache = lambda *args: guardados.append(args)
+
+            def lrclib(track, log):
+                return [mod.LyricLine(1.0, 0.0, "gana")], None
+
+            def adaptador(source, track, settings, log):
+                if source == "netease":
+                    time.sleep(0.4)
+                    return [mod.LyricLine(2.0, 0.0, "pierde")], None
+                return [], None
+
+            mod.fetch_lrclib = lrclib
+            mod.run_adapter = adaptador
+            mod.fetch_lyrics(mod.Track("cancion", "artista", duration=100.0), True, lambda m: None)
+            # El hilo perdedor sigue vivo un momento: la cache solo puede
+            # haberse escrito una vez, con el ganador.
+            time.sleep(0.6)
+            check(
+                "solo el proveedor ganador escribe la caché",
+                len(guardados) == 1,
+                "escrituras=%d" % len(guardados),
+            )
+
+
+def check_aviso_se_limpia():
+    """El aviso de modo imagen desactivado se borra al volver a texto."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = _app_de_config(mod)
+            app.cfg["render_mode"] = "image"
+            app.status_message = "image_disabled"
+            original = mod.load_settings
+            mod.load_settings = lambda: {**mod.DEFAULTS, "render_mode": "text"}
+            try:
+                app._reload_config()
+            finally:
+                mod.load_settings = original
+            check(
+                "el aviso de modo imagen se limpia al pasar a texto",
+                app.status_message == "",
+                repr(app.status_message),
+            )
+
+
+def check_lyrics_settings_state_dir():
+    """La configuracion de Lyrics se lee del estado de Noctalia real."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-estado-") as temporal:
+        estado = os.path.join(temporal, "noctalia")
+        os.makedirs(estado, exist_ok=True)
+        with open(os.path.join(estado, "settings.toml"), "w", encoding="utf-8") as handle:
+            handle.write(
+                '[plugin_settings."h465855hgg/lyrics"]\n'
+                'lyrics_sources = ["lrclib"]\n'
+            )
+        with env_temporal({"XDG_STATE_HOME": temporal}):
+            mod = script_module()
+            ajustes = mod.load_lyrics_settings()
+        check(
+            "las fuentes de letra se leen del estado de Noctalia",
+            ajustes.get("sources") == ["lrclib"],
+            str(ajustes.get("sources")),
+        )
+
+
+def check_lrc_horas():
+    """Un LRC con horas ([01:02:03]) no se descarta."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            lines = mod.parse_lrc("[01:02:03]hola")
+            check(
+                "un LRC con horas se interpreta",
+                len(lines) == 1 and abs(lines[0].start - 3723.0) < 0.01,
+                str([line.start for line in lines]),
+            )
+
+
+def check_lrc_decimales():
+    """Un LRC con cuatro decimales no se descarta."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            lines = mod.parse_lrc("[00:12.1234]hola")
+            check(
+                "un LRC con cuatro decimales se interpreta",
+                len(lines) == 1 and abs(lines[0].start - 12.1234) < 0.001,
+                str([line.start for line in lines]),
+            )
+
+
+def check_texto_entre_angulos():
+    """Las etiquetas mejoradas no se comen el texto normal entre < >."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            lines = mod.parse_lrc("[00:01.00]I <3 you > me")
+            texto = lines[0].text if lines else ""
+            check(
+                "el texto con < y > se conserva",
+                "<3" in texto,
+                repr(texto),
+            )
+
+
+def check_cache_no_objeto():
+    """Un cache con un JSON que no es un objeto no lanza."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            mod.CACHE_DIR = cache
+            track = mod.Track("cancion", "artista", duration=100.0)
+            path = os.path.join(cache, mod.cache_key(track) + ".json")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("[]")
+            try:
+                resultado = mod.load_cache(track)
+            except Exception as error:  # noqa: BLE001
+                resultado = error
+            check(
+                "un cache que no es un objeto no lanza",
+                resultado is None,
+                repr(resultado)[:120],
+            )
+
+
+def check_espacio_no_rompe():
+    """Si playerctl falla, la tecla de pausa no mata la ventana."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.track = mod.Track("cancion", "artista", player="mpv")
+            app._player = None
+            original = mod.subprocess.run
+
+            def falla(*args, **kwargs):
+                raise OSError("no hay playerctl")
+
+            mod.subprocess.run = falla
+            try:
+                resultado = app.handle_key(" ")
+            except Exception as error:  # noqa: BLE001
+                resultado = error
+            finally:
+                mod.subprocess.run = original
+            check(
+                "un playerctl que falla no mata la ventana",
+                resultado is True,
+                repr(resultado)[:120],
+            )
+
+
+def check_atajo_no_se_pierde():
+    """Pulsar 'd' no se revierte si la config aun tiene el valor viejo."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = _app_de_config(mod)
+            app._save_override = lambda key, value, kind="string": app.pending_overrides.__setitem__(
+                key, value
+            )
+            app.handle_key("d")
+            original = mod.load_settings
+            mod.load_settings = lambda: dict(mod.DEFAULTS)
+            try:
+                app._reload_config()
+            finally:
+                mod.load_settings = original
+            check(
+                "el atajo 'd' no se pierde en la recarga",
+                app.cfg.get("direction") == "up"
+                and app.direction == -1,
+                "direction=%s cfg=%s" % (app.direction, app.cfg.get("direction")),
+            )
+
+
 def check_panel_cubre_manifiesto():
     """Cada ajuste del manifiesto se puede cambiar desde el panel.
 
@@ -1022,6 +1242,15 @@ def main(argv):
     check_tiempos_reales_no_se_pisan()
     check_lineas_ordenadas()
     check_modo_imagen_no_se_rearma()
+    check_cache_una_sola_vez()
+    check_aviso_se_limpia()
+    check_lyrics_settings_state_dir()
+    check_lrc_horas()
+    check_lrc_decimales()
+    check_texto_entre_angulos()
+    check_cache_no_objeto()
+    check_espacio_no_rompe()
+    check_atajo_no_se_pierde()
     check_panel_cubre_manifiesto()
     check_panel_attached()
 

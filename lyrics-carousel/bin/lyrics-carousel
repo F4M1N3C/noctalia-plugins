@@ -535,9 +535,11 @@ class PlayerWatcher:
 # letras
 # --------------------------------------------------------------------------
 
-LRC_TAG = re.compile(r"\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]")
+LRC_TAG = re.compile(r"\[(?:(\d{1,3}):)?(\d{1,2}):(\d{1,2})(?:[.:](\d{1,6}))?\]")
 LRC_OFFSET = re.compile(r"\[offset:([+-]?\d+)\]", re.I)
-ENHANCED_TAG = re.compile(r"<[^>]*>")
+# Solo las etiquetas de tiempo mejoradas (<00:12.34>): un patron generico
+# <[^>]*> se comia texto normal entre angulos, como "I <3 you > me".
+ENHANCED_TAG = re.compile(r"<\d{1,3}:\d{1,2}(?:[.:]\d{1,6})?>")
 
 
 class LyricLine:
@@ -592,16 +594,13 @@ def parse_lrc(text: str):
         if re.match(r"^(ar|al|ti|by|re|ve|length|offset):", body, re.I):
             continue
         for tag in tags:
-            minutes = int(tag.group(1))
-            seconds = float(tag.group(2))
-            fraction = tag.group(3) or "0"
-            if len(fraction) == 1:
-                fraction_value = int(fraction) / 10.0
-            elif len(fraction) == 2:
-                fraction_value = int(fraction) / 100.0
-            else:
-                fraction_value = int(fraction) / 1000.0
-            start = minutes * 60 + seconds + fraction_value + offset
+            hours = int(tag.group(1) or 0)
+            minutes = int(tag.group(2))
+            seconds = float(tag.group(3))
+            fraction = tag.group(4) or "0"
+            # Hasta seis decimales: algunos LRC traen microsegundos.
+            fraction_value = int(fraction) / (10 ** len(fraction))
+            start = hours * 3600 + minutes * 60 + seconds + fraction_value + offset
             if start < 0:
                 continue
             found[round(start, 3)] = body
@@ -822,7 +821,7 @@ def fetch_netease(track: Track, log):
 
 def find_lyric_adapter():
     roots = [
-        os.path.expanduser("~/.local/state/noctalia/plugins/materialized"),
+        os.path.join(state_dir(), "plugins", "materialized"),
         os.path.expanduser("~/.local/share/noctalia/plugins"),
     ]
     for root in roots:
@@ -920,9 +919,9 @@ def load_lyrics_settings():
         "credentials": {},
         "translation": "zh-Hans",
     }
-    path = os.path.expanduser(
-        "~/.local/state/noctalia/settings.toml"
-    )
+    # El estado puede estar movido con NOCTALIA_STATE_HOME o XDG_STATE_HOME:
+    # una ruta fija leeria los ajustes de otra instalacion.
+    path = os.path.join(state_dir(), "settings.toml")
     if not os.path.isfile(path) or tomllib is None:
         return result
     try:
@@ -1063,6 +1062,8 @@ def load_cache(track: Track):
     try:
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
+        if not isinstance(data, dict):
+            return None
         lines = [LyricLine.from_json(value) for value in data.get("lines", [])]
         lines = [line for line in lines if line and line.text]
         if lines:
@@ -1188,11 +1189,12 @@ def fetch_lyrics(track: Track, force: bool, log):
                 result["source"] = source
                 result["synced"] = synced
                 result_event.set()
-        # Guardamos la caché la primera vez (el resto se ignora).
-        try:
-            save_cache(track, lines, source, synced)
-        except Exception:  # noqa: BLE001
-            pass
+                # Solo el ganador escribe la cache: si escribieran todos,
+                # el ultimo en llegar podia dejar la letra perdedora.
+                try:
+                    save_cache(track, lines, source, synced)
+                except Exception:  # noqa: BLE001
+                    pass
         return True
 
     def worker_builtin_lrclib():
@@ -1765,6 +1767,16 @@ class LyricsCarousel:
             cfg["active_scale"] = self.args.active_scale
         if self.args.accent:
             cfg["accent"] = self.args.accent
+        # Los atajos guardan en segundo plano. Mientras el settings.toml no
+        # recoja el valor, la configuracion trae el viejo: se mantiene el
+        # cambio local para que la recarga no lo revierta.
+        pending = getattr(self, "pending_overrides", None)
+        if pending:
+            for key, value in list(pending.items()):
+                if cfg.get(key) == value:
+                    del pending[key]
+                else:
+                    cfg[key] = value
         # Compara clave a clave: la igualdad de diccionarios puede fallar
         # por tipos (int vs float) y entonces los cambios se ignoran.
         if all(
@@ -1781,6 +1793,9 @@ class LyricsCarousel:
         if cfg.get("render_mode") == "text":
             self.image_disabled = False
             self.image_failures = 0
+            # El aviso de "modo imagen desactivado" ya no aplica.
+            if getattr(self, "status_message", "") == self.tr("image_disabled"):
+                self.status_message = ""
         elif (
             previous.get("render_mode") != cfg.get("render_mode")
             and getattr(self, "image_disabled", False)
@@ -2384,6 +2399,13 @@ class LyricsCarousel:
         if not os.path.isfile(helper):
             self.log(f"no se encuentra el helper: {helper}")
             return
+        # La escritura va en segundo plano: hasta que el settings.toml la
+        # recoja, una recarga traeria el valor viejo y revertiria el atajo.
+        pending = getattr(self, "pending_overrides", None)
+        if pending is None:
+            pending = {}
+            self.pending_overrides = pending
+        pending[key] = value
         try:
             subprocess.Popen(
                 [
@@ -2398,6 +2420,7 @@ class LyricsCarousel:
                 stderr=subprocess.DEVNULL,
             )
         except OSError as error:
+            pending.pop(key, None)
             self.log(f"no se pudo guardar {key}: {error}")
 
     def handle_key(self, key: str) -> bool:
@@ -2405,15 +2428,20 @@ class LyricsCarousel:
             return False
         if key == " ":
             if self.track.player and self.track.player != "demo":
-                subprocess.run(
-                    ["playerctl", "-p", self.track.player, "play-pause"],
-                    capture_output=True,
-                    timeout=2,
-                    check=False,
-                )
-                time.sleep(0.15)
-                if self._player:
-                    self._player.poll(force=True)
+                # playerctl puede no estar instalado o fallar: la ventana
+                # sigue viva y la tecla no se propaga.
+                try:
+                    subprocess.run(
+                        ["playerctl", "-p", self.track.player, "play-pause"],
+                        capture_output=True,
+                        timeout=2,
+                        check=False,
+                    )
+                    time.sleep(0.15)
+                    if self._player:
+                        self._player.poll(force=True)
+                except (OSError, subprocess.SubprocessError):
+                    pass
             return True
         if key in ("d", "D"):
             self.direction *= -1

@@ -65,6 +65,9 @@ local trackTitle = ""
 local trackArtist = ""
 local launching = false
 local lastError = ""
+-- Un callback asincrono (playerctl, el helper) puede llegar despues de
+-- cerrar el panel. Sin esta bandera, el callback redibuja un arbol muerto.
+local panelClosed = false
 
 local function tr(key, args)
   local ok, value = pcall(noctalia.tr, key, args)
@@ -150,6 +153,16 @@ end
 -- Limites de los ajustes numericos, copiados del manifiesto (plugin.toml).
 -- El script recorta lo que le llegue; el panel no puede ofrecer mas de lo
 -- que el script acepta, o el usuario veria un valor que no se aplica.
+-- Ajustes que cambian la geometria de la ventana abierta: al tocarlos hay
+-- que moverla o redimensionarla, no basta con guardar el valor.
+local GEOMETRY_KEYS = {
+  width = true,
+  height = true,
+  anchor = true,
+  custom_x = true,
+  custom_y = true,
+}
+
 local LIMITS = {
   font_size = { 6, 96 },
   spacing = { 1, 6 },
@@ -346,10 +359,12 @@ end
 
 -- Mueve y redimensiona la ventana existente sin recrearla.
 applyGeometry = function()
-  local width = math.floor(numberOf("width"))
-  local height = math.floor(numberOf("height"))
-  local anchor = normalizeAnchor(valueOf("anchor"))
   local screenWidth, screenHeight = outputGeometry()
+  -- La ventana nunca puede ser mayor que el monitor: Hyprland acepta el
+  -- tamano, pero la deja cortada y sin forma de moverla.
+  local width = math.min(math.floor(numberOf("width")), screenWidth)
+  local height = math.min(math.floor(numberOf("height")), screenHeight)
+  local anchor = normalizeAnchor(valueOf("anchor"))
   local x, y
   if anchor == "custom" then
     x = math.floor(numberOf("custom_x"))
@@ -384,11 +399,11 @@ launch = function()
   refreshSettings()
   local family = tostring(valueOf("font_family"))
   local size = math.floor(numberOf("font_size"))
-  local width = math.floor(numberOf("width"))
-  local height = math.floor(numberOf("height"))
-  local anchor = normalizeAnchor(valueOf("anchor"))
-  
   local screenWidth, screenHeight = outputGeometry()
+  local width = math.min(math.floor(numberOf("width")), screenWidth)
+  local height = math.min(math.floor(numberOf("height")), screenHeight)
+  local anchor = normalizeAnchor(valueOf("anchor"))
+
   local x, y
   if anchor == "custom" then
     x = math.floor(numberOf("custom_x"))
@@ -741,6 +756,9 @@ local function inputRow(key, label, placeholder, pattern)
 end
 
 render = function()
+  if panelClosed then
+    return
+  end
   local direction = tostring(valueOf("direction"))
   local mode = tostring(valueOf("render_mode"))
   local language = tostring(valueOf("language"))
@@ -963,6 +981,7 @@ render = function()
 end
 
 function onOpen()
+  panelClosed = false
   refreshSettings()
   readTrack()
   render()
@@ -978,12 +997,20 @@ local function mergeOverrides(attempts)
     end)
     return
   end
-  settingsLib.merge()
-  refreshSettings()
+  settingsLib.merge(function(ok)
+    refreshSettings()
+    if not ok then
+      -- El cambio se queda en la capa de overrides: si el usuario no se
+      -- entera, cree que se ha guardado y al reiniciar lo pierde.
+      reportError(tr("write_failed"))
+      safe("notifyError", noctalia.notifyError, tr("title"), tr("write_failed"))
+    end
+  end)
 end
 
 function onClose()
   -- La recarga que dispara Noctalia ya no molesta: el panel se esta cerrando.
+  panelClosed = true
   mergeOverrides(0)
 end
 
@@ -1006,7 +1033,7 @@ function onIpc(event, payload)
     if key ~= nil then
       -- setSetting recorta el valor a los limites del manifiesto y refresca
       -- la vista: escribir `settings` antes saltaria ese recorte.
-      setSetting(key, value)
+      setSetting(key, value, { geometry = GEOMETRY_KEYS[key] == true })
     end
   elseif event == "refresh" then
     refreshSettings()

@@ -204,9 +204,12 @@ end
 
 --- Vuelca los overrides al settings.toml (para que la pagina de ajustes y el
 --- panel muestren lo mismo).
-function M.merge()
+function M.merge(callback)
   local dir = noctalia.pluginDir()
   if dir == nil then
+    if callback ~= nil then
+      callback(false)
+    end
     return false
   end
   local ok, started = pcall(noctalia.runAsync, {
@@ -215,14 +218,27 @@ function M.merge()
     "merge",
   }, function(result)
     M.refresh()
-    if result == nil or result.exitCode ~= 0 then
+    local guardado = result ~= nil and result.exitCode == 0
+    if not guardado then
       noctalia.log("lyrics-carousel: no se pudieron volcar los ajustes")
+    end
+    if callback ~= nil then
+      callback(guardado)
     end
   end)
   if not ok then
+    if callback ~= nil then
+      callback(false)
+    end
     return false
   end
-  return started == true
+  if started ~= true then
+    if callback ~= nil then
+      callback(false)
+    end
+    return false
+  end
+  return true
 end
 
 --- Interpreta la carga de un IPC: "clave=valor [tipo]" o "clave valor [tipo]".

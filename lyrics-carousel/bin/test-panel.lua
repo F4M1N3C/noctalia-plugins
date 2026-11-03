@@ -72,6 +72,12 @@ local commands = {}
 local tree = nil
 local closed = false
 local notified = {}
+-- El panel se redibuja en cada cambio; algunos callbacks llegan tarde.
+local renders = 0
+-- Fallos simulados: el volcado de overrides y playerctl.
+local failMerge = false
+local deferPlayerctl = false
+local deferredPlayerctl = nil
 
 local function parseValue(value, kind)
   if kind == "bool" then
@@ -110,6 +116,7 @@ panel = {
     closed = true
   end,
   render = function(nextTree)
+    renders = renders + 1
     tree = nextTree
   end,
   setNeedsFrameTick = function() end,
@@ -175,6 +182,11 @@ noctalia = {
     local exitCode = 0
     if type(argv) == "table" then
       table.insert(commands, argv)
+      -- Un playerctl lento: el callback llega despues de cerrar el panel.
+      if argv[1] == "playerctl" and deferPlayerctl and callback ~= nil then
+        deferredPlayerctl = callback
+        return true
+      end
       -- El helper de ajustes es el unico que escribe: se registra.
       if argv[1] == "python3" and argv[2] and argv[2]:match("set%-setting%.py$") then
         local modo = argv[3]
@@ -184,6 +196,8 @@ noctalia = {
           else
             overrides[argv[4]] = parseValue(argv[5], argv[6])
           end
+        elseif modo == "merge" and failMerge then
+          exitCode = 1
         end
       end
     end
@@ -270,6 +284,27 @@ end
 
 local function firstSelect()
   return collect(tree, "select")[1]
+end
+
+-- Busca un fragmento en cualquier argumento de los procesos lanzados.
+local function comandoContiene(fragmento)
+  for _, argv in ipairs(commands) do
+    for _, value in ipairs(argv) do
+      if type(value) == "string" and value:find(fragmento, 1, true) then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+-- Entrega el callback de playerctl que se dejo pendiente.
+local function dispararPlayerctlDiferido()
+  local callback = deferredPlayerctl
+  deferredPlayerctl = nil
+  if callback ~= nil then
+    callback({ exitCode = 0, stdout = "", stderr = "" })
+  end
 end
 
 onOpen()
@@ -634,6 +669,63 @@ eq(overrides.font_size, 96, "el IPC recorta el tamano de fuente a 96")
 overrides.active_scale = nil
 onIpc("set", "active_scale 9.5 float")
 eq(overrides.active_scale, 2.5, "el IPC recorta la escala activa a 2.5")
+
+-- 18. La ventana no puede ser mayor que la pantalla -------------------------
+--
+-- Hyprland acepta un tamano mayor que el monitor, pero la ventana queda
+-- cortada y el usuario no puede moverla. El panel recorta antes de lanzar.
+
+config.width = 3840
+config.height = 2160
+overrides.width = nil
+overrides.height = nil
+onConfigChanged()
+commands = {}
+local launchButton = findByKey("button", "launch")
+check(launchButton ~= nil, "el panel tiene el boton de lanzar")
+if launchButton ~= nil then
+  launchButton.props.onClick()
+  check(
+    comandoContiene("size = { 1920, 1080 }"),
+    "el tamano se recorta a la pantalla"
+  )
+end
+
+-- 19. Cambiar el tamano por IPC mueve la ventana ----------------------------
+--
+-- Si el IPC solo guarda el ajuste, la ventana abierta mantiene el tamano
+-- viejo hasta que se vuelve a lanzar.
+
+config.width = 1200
+config.height = 820
+overrides.width = nil
+overrides.height = nil
+onConfigChanged()
+commands = {}
+onIpc("set", "width 1600 int")
+check(comandoContiene("hl.dsp.window"), "el IPC de tamano aplica la geometria")
+
+-- 20. Un fallo del volcado avisa al usuario ---------------------------------
+--
+-- Si el helper no puede escribir el settings.toml, el usuario tiene que
+-- enterarse: el cambio se queda solo en la capa de overrides.
+
+failMerge = true
+notified = {}
+onClose()
+check(#notified > 0, "si el volcado falla, el panel avisa")
+
+-- 21. Un callback tras cerrar no vuelve a dibujar ---------------------------
+--
+-- playerctl puede tardar mas que el panel. Al llegar su callback, el panel
+-- ya esta cerrado y dibujar sobre el arbol muerto da error en Noctalia.
+
+deferPlayerctl = true
+onOpen()
+local rendersAntes = renders
+onClose()
+dispararPlayerctlDiferido()
+eq(renders, rendersAntes, "no se redibuja un panel cerrado")
 
 -- Resultado ------------------------------------------------------------------
 

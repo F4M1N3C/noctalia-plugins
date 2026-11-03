@@ -1137,6 +1137,122 @@ def check_salida_al_cerrar():
     shutil.rmtree(temporal, ignore_errors=True)
 
 
+def entorno_de_prueba(base: str) -> dict:
+    """Entorno para el helper: ninguna ruta puede apuntar al estado real.
+
+    paths.state_dir() prioriza NOCTALIA_STATE_HOME y XDG_STATE_HOME sobre
+    HOME, asi que aislar solo HOME no basta: con esas variables definidas
+    (lo habitual en un escritorio) el volcado escribe en los ajustes de
+    verdad y borra el overrides.json del usuario.
+    """
+    env = dict(os.environ)
+    estado = os.path.join(base, ".local", "state")
+    env["HOME"] = base
+    env["XDG_STATE_HOME"] = estado
+    env["NOCTALIA_STATE_HOME"] = estado
+    env["XDG_CACHE_HOME"] = os.path.join(base, ".cache")
+    env["LYRICS_CAROUSEL_STATE"] = os.path.join(estado, "noctalia")
+    return env
+
+
+def probar_helper_volcado(fake_home: str) -> dict:
+    """Ejecuta el helper con un override y su volcado al settings.toml.
+
+    Se separa en su propia funcion para que las pruebas puedan repetirla
+    con un entorno distinto (por ejemplo, con XDG_STATE_HOME apuntando al
+    estado "real") y comprobar que no lo tocan.
+
+    Devuelve un diccionario con lo ocurrido.
+    """
+    resultado = {
+        "crea_directorio": False,
+        "vuelca": False,
+        "detalle": "",
+        "settings": "",
+        "env": {},
+    }
+    fake_state = os.path.join(fake_home, ".local", "state", "noctalia")
+    os.makedirs(fake_state, exist_ok=True)
+    fake_settings = os.path.join(fake_state, "settings.toml")
+    with open(fake_settings, "w", encoding="utf-8") as handle:
+        handle.write("")
+    env = entorno_de_prueba(fake_home)
+    resultado["env"] = env
+    try:
+        result = subprocess.run(
+            [sys.executable, HELPER, "override", "marker", "true", "bool"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=env,
+        )
+        fake_dir = os.path.join(
+            fake_home,
+            ".local/state/noctalia/plugins/data/faminec/lyrics-carousel",
+        )
+        resultado["crea_directorio"] = result.returncode == 0 and os.path.isdir(fake_dir)
+        resultado["detalle"] = result.stderr.strip()[:120]
+        # El volcado se intenta siempre: si el helper no ha podido
+        # escribir, el merge tambien fallara y se vera igual. Asi la
+        # prueba reproduce el caso dangerous: con el estado real en
+        # XDG_STATE_HOME, el volcado happens ahi y no en el temporal.
+        merge = subprocess.run(
+            [sys.executable, HELPER, "merge"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=env,
+        )
+        with open(fake_settings, encoding="utf-8") as handle:
+            resultado["settings"] = handle.read()
+        resultado["vuelca"] = merge.returncode == 0 and "marker = true" in resultado["settings"]
+        resultado["detalle"] = merge.stderr.strip()[:120]
+    except (OSError, subprocess.SubprocessError) as error:
+        resultado["detalle"] = repr(error)[:120]
+    return resultado
+
+
+def check_estado_real_intocable():
+    """El autotest no puede escribir en el estado real del usuario.
+
+    paths.state_dir() prioriza NOCTALIA_STATE_HOME y XDG_STATE_HOME sobre
+    HOME: si el usuario los tiene definidos (es lo habitual) y el test no
+    los aísla, el volcado deja cambiados los ajustes de verdad y borra su
+    overrides.json.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-estado-") as temporal:
+        trampa = os.path.join(temporal, "estado-real")
+        datos = os.path.join(
+            trampa, "noctalia", "plugins", "data", "faminec", "lyrics-carousel"
+        )
+        os.makedirs(datos, exist_ok=True)
+        settings = os.path.join(trampa, "noctalia", "settings.toml")
+        with open(settings, "w", encoding="utf-8") as handle:
+            handle.write('[plugin_settings."faminec/lyrics-carousel"]\nfont_size = 22\n')
+        overrides = os.path.join(datos, "overrides.json")
+        with open(overrides, "w", encoding="utf-8") as handle:
+            json.dump({"marker": False}, handle)
+        with open(settings, encoding="utf-8") as handle:
+            antes = handle.read()
+        # El entorno del usuario: el estado de verdad esta en XDG_STATE_HOME.
+        with env_temporal({"XDG_STATE_HOME": trampa, "NOCTALIA_STATE_HOME": trampa}):
+            with tempfile.TemporaryDirectory() as fake_home:
+                resultado = probar_helper_volcado(fake_home)
+        check("el volcado va al temporal", resultado["vuelca"], resultado["detalle"])
+        with open(settings, encoding="utf-8") as handle:
+            despues = handle.read()
+        check(
+            "el autotest no toca el settings.toml real",
+            antes == despues,
+            despues[:100],
+        )
+        check(
+            "el autotest no borra el overrides real",
+            os.path.isfile(overrides),
+            overrides,
+        )
+
+
 def main(argv):
     verbose = "--verbose" in argv
 
@@ -1145,83 +1261,75 @@ def main(argv):
     check("helper presente", os.path.isfile(HELPER), HELPER)
     check("helper ejecutable", os.access(HELPER, os.X_OK))
 
-    # 2) el directorio de datos se puede crear.
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        created = os.path.isdir(DATA_DIR)
-    except OSError as error:
-        created = False
-        check("directorio de datos", False, str(error))
-    if created:
-        check("directorio de datos", True, DATA_DIR)
-
-    # 3) el directorio de datos real se puede usar (sin escribir nada en el:
-    #    la prueba de escritura se hace en un HOME temporal).
-    if created:
-        probe = os.path.join(DATA_DIR, "selftest.json")
+    # 2) el directorio de datos se puede crear y escribir. Se hace en un
+    #    temporal: el autotest no puede crear ni escribir en el directorio
+    #    de datos real del usuario.
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-datos-") as temporal:
+        datos_prueba = os.path.join(temporal, "datos")
         try:
-            with open(probe, "w", encoding="utf-8") as handle:
-                json.dump({"selftest": True}, handle)
-            with open(probe, encoding="utf-8") as handle:
-                data = json.load(handle)
-            os.remove(probe)
-            check("escritura de overrides", data.get("selftest") is True)
-        except (OSError, ValueError) as error:
-            check("escritura de overrides", False, str(error))
-            try:
-                os.remove(probe)
-            except OSError:
-                pass
+            os.makedirs(datos_prueba, exist_ok=True)
+            created = os.path.isdir(datos_prueba)
+        except OSError as error:
+            created = False
+            check("directorio de datos", False, str(error))
+        if created:
+            check("directorio de datos", True, datos_prueba)
 
-        # 4) el helper responde, crea el directorio si falta y vuelca los
-        #    overrides al settings.toml. Todo con un HOME temporal: si se
-        #    usara el real, el autotest dejaria cambiados los ajustes del
-        #    usuario (el volcado escribe en el settings.toml de verdad).
-        with tempfile.TemporaryDirectory() as fake_home:
-            fake_state = os.path.join(fake_home, ".local", "state", "noctalia")
-            os.makedirs(fake_state, exist_ok=True)
-            fake_settings = os.path.join(fake_state, "settings.toml")
-            with open(fake_settings, "w", encoding="utf-8") as handle:
-                handle.write("")
-            env = {**os.environ, "HOME": fake_home}
+            # 3) el directorio de datos se puede usar (escribir y leer).
+            probe = os.path.join(datos_prueba, "selftest.json")
             try:
-                result = subprocess.run(
-                    [sys.executable, HELPER, "override", "marker", "true", "bool"],
-                    capture_output=True,
-                    text=True,
-                    timeout=15,
-                    env=env,
-                )
-                fake_dir = os.path.join(
-                    fake_home,
-                    ".local/state/noctalia/plugins/data/faminec/lyrics-carousel",
-                )
-                ok = result.returncode == 0 and os.path.isdir(fake_dir)
-                check(
-                    "el helper crea el directorio", ok, result.stderr.strip()[:120]
-                )
-                if ok:
-                    merge = subprocess.run(
-                        [sys.executable, HELPER, "merge"],
-                        capture_output=True,
-                        text=True,
-                        timeout=15,
-                        env=env,
-                    )
-                    with open(fake_settings, encoding="utf-8") as handle:
-                        written = handle.read()
-                    check(
-                        "el helper vuelca al settings.toml",
-                        merge.returncode == 0 and "marker = true" in written,
-                        merge.stderr.strip()[:120],
-                    )
-            except (OSError, subprocess.SubprocessError) as error:
-                check("el helper crea el directorio", False, repr(error)[:120])
+                with open(probe, "w", encoding="utf-8") as handle:
+                    json.dump({"selftest": True}, handle)
+                with open(probe, encoding="utf-8") as handle:
+                    data = json.load(handle)
+                os.remove(probe)
+                check("escritura de overrides", data.get("selftest") is True)
+            except (OSError, ValueError) as error:
+                check("escritura de overrides", False, str(error))
+                try:
+                    os.remove(probe)
+                except OSError:
+                    pass
+
+    # 3-bis) el directorio de datos real solo se mira, nunca se escribe:
+    #     si no existe todavia, el plugin lo creara al escribir.
+    if os.path.isdir(DATA_DIR):
+        check("directorio de datos real escribible", os.access(DATA_DIR, os.W_OK), DATA_DIR)
+    else:
+        padre = os.path.dirname(DATA_DIR)
+        check(
+            "directorio de datos real escribible",
+            os.path.isdir(padre) and os.access(padre, os.W_OK),
+            padre,
+        )
+
+    # 4) el helper responde, crea el directorio si falta y vuelca los
+    #    overrides al settings.toml. Todo con un HOME temporal y el estado
+    #    aislado: si se usara el real, el autotest dejaria cambiados los
+    #    ajustes del usuario (el volcado escribe en el settings.toml de
+    #    verdad).
+    with tempfile.TemporaryDirectory() as fake_home:
+        resultado = probar_helper_volcado(fake_home)
+        check(
+            "el helper crea el directorio",
+            resultado["crea_directorio"],
+            resultado["detalle"],
+        )
+        check(
+            "el helper vuelca al settings.toml",
+            resultado["vuelca"],
+            resultado["detalle"],
+        )
 
     # 4b) el atajo 'd' del script alterna la direccion y la guarda.
     #     Es la prueba de que el script, el helper y el overrides
     #     funcionan juntos de verdad.
     check_atajos()
+
+    # 4b-bis) el autotest no puede escribir en el estado real: con
+    #     XDG_STATE_HOME o NOCTALIA_STATE_HOME definidos (lo habitual), el
+    #     volcado del helper dejaria cambiados los ajustes del usuario.
+    check_estado_real_intocable()
 
     # 4c) si la terminal se cierra, el script tiene que salir: si se
     #      queda, sigue dibujando en el vacio indefinidamente.

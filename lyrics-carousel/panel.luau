@@ -147,6 +147,43 @@ local function numberOf(key)
   return tonumber(valueOf(key)) or settingsLib.DEFAULTS[key]
 end
 
+-- Limites de los ajustes numericos, copiados del manifiesto (plugin.toml).
+-- El script recorta lo que le llegue; el panel no puede ofrecer mas de lo
+-- que el script acepta, o el usuario veria un valor que no se aplica.
+local LIMITS = {
+  font_size = { 6, 96 },
+  spacing = { 1, 6 },
+  animation_ms = { 0, 3000 },
+  offset_ms = { -3000, 3000 },
+  width = { 400, 3840 },
+  height = { 200, 2160 },
+  custom_x = { 0, 10000 },
+  custom_y = { 0, 10000 },
+  visible_above = { 0, 20 },
+  visible_below = { 0, 20 },
+  active_scale = { 1.0, 2.5 },
+}
+
+local function clampSetting(key, value)
+  local limit = LIMITS[key]
+  if limit == nil then
+    return value
+  end
+  local number = tonumber(value)
+  if number == nil then
+    return nil
+  end
+  if number < limit[1] then
+    number = limit[1]
+  elseif number > limit[2] then
+    number = limit[2]
+  end
+  if settingsLib.INT_KEYS[key] then
+    number = math.floor(number)
+  end
+  return number
+end
+
 -- Escribe un ajuste en la capa de overrides del plugin.
 --
 -- No se escribe en el settings.toml con el panel abierto: Noctalia vigila ese
@@ -168,6 +205,10 @@ end
 
 local function setSetting(key, value, options)
   options = options or {}
+  value = clampSetting(key, value)
+  if value == nil then
+    return
+  end
   settings[key] = value
   -- Se escribe al instante: el widget lo aplica en el acto (lee los
   -- overrides cada 1,2 s) y el panel sigue abierto para más cambios.
@@ -523,69 +564,6 @@ local function imageOnlyFonts()
   return ui.column({ gap = 6 }, rows)
 end
 
-local function sizeChips()
-  local current = math.floor(numberOf("font_size"))
-  local items = {}
-  for _, size in ipairs({ 11, 14, 18, 22, 26, 33 }) do
-    table.insert(items, {
-      key = "size-" .. size,
-      text = tostring(size),
-      selected = size == current,
-      onClick = function()
-        setSetting("font_size", size)
-      end,
-    })
-  end
-  return chipRow(items)
-end
-
-local function scaleChips()
-  local current = numberOf("active_scale")
-  local items = {}
-  for _, value in ipairs({ 1.0, 1.2, 1.35, 1.6, 2.0 }) do
-    table.insert(items, {
-      key = "scale-" .. tostring(value),
-      text = string.format("%.2f", value),
-      selected = math.abs(current - value) < 0.01,
-      onClick = function()
-        setSetting("active_scale", value)
-      end,
-    })
-  end
-  return chipRow(items)
-end
-
-local function countChips(key, label)
-  local current = math.floor(numberOf(key))
-  local values = { 0, 2, 4, 6, 8, 12 }
-  local rows = {}
-  local row = {}
-  local index = 0
-  for _, value in ipairs(values) do
-    index = index + 1
-    table.insert(row, ui.button({
-      key = key .. "-" .. value,
-      text = tostring(value),
-      variant = value == current and "secondary" or "ghost",
-      fontSize = 11,
-      onClick = function()
-        setSetting(key, value)
-      end,
-    }))
-    if index % 3 == 0 then
-      table.insert(rows, ui.row({ gap = 6 }, row))
-      row = {}
-    end
-  end
-  if #row > 0 then
-    table.insert(rows, ui.row({ gap = 6 }, row))
-  end
-  return ui.column({ gap = 4 }, {
-    ui.label({ text = label, fontSize = 11, color = "on_surface_variant" }),
-    ui.column({ gap = 6 }, rows),
-  })
-end
-
 local function accentChips()
   local current = tostring(valueOf("accent"))
   local items = {}
@@ -893,13 +871,14 @@ render = function()
     toggleRow("ghost", tr("ghost"), "sparkles"),
     ui.separator({ thickness = 1, spacing = 6 }),
     ui.label({ text = tr("section_lyrics"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
-    ui.column({ gap = 4 }, {
-      ui.label({ text = tr("active_scale"), fontSize = 11, color = "on_surface_variant" }),
-      scaleChips(),
-    }),
+    sliderRow("active_scale", tr("active_scale"), 1.0, 2.5, 0.05, false),
     ui.row({ gap = 10 }, {
-      ui.column({ flexGrow = 1, gap = 4 }, { countChips("visible_above", tr("visible_above")) }),
-      ui.column({ flexGrow = 1, gap = 4 }, { countChips("visible_below", tr("visible_below")) }),
+      ui.column({ flexGrow = 1, gap = 4 }, {
+        sliderRow("visible_above", tr("visible_above"), 0, 20, 1, true),
+      }),
+      ui.column({ flexGrow = 1, gap = 4 }, {
+        sliderRow("visible_below", tr("visible_below"), 0, 20, 1, true),
+      }),
     }),
     sliderRow("spacing", tr("spacing"), 1, 6, 1, true),
     sliderRow("animation_ms", tr("animation_ms"), 0, 3000, 50, true),
@@ -960,8 +939,7 @@ render = function()
     ui.separator({ thickness = 1, spacing = 6 }),
     ui.label({ text = tr("section_font"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     fontChips(),
-    ui.label({ text = tr("font_size"), fontSize = 11, color = "on_surface_variant" }),
-    sizeChips(),
+    sliderRow("font_size", tr("font_size"), 6, 96, 1, true),
     ui.label({ text = tr("image_only_fonts"), fontSize = 10, color = "on_surface_variant" }),
     imageOnlyFonts(),
     ui.separator({ thickness = 1, spacing = 6 }),
@@ -1026,7 +1004,8 @@ function onIpc(event, payload)
     -- Fija un ajuste: "set font_size=26 int" o "set font_size 26 int"
     local key, value = settingsLib.parse(payload)
     if key ~= nil then
-      settings[key] = value
+      -- setSetting recorta el valor a los limites del manifiesto y refresca
+      -- la vista: escribir `settings` antes saltaria ese recorte.
       setSetting(key, value)
     end
   elseif event == "refresh" then

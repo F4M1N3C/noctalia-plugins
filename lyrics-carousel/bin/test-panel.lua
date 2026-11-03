@@ -580,6 +580,61 @@ if glyphInput ~= nil then
   eq(overrides.glyph, "headphones", "un glifo invalido no se guarda")
 end
 
+-- 17. Los controles numericos respetan el rango del manifiesto --------------
+--
+-- Un valor fuera de rango deja la ventana fuera de la pantalla o la fuente
+-- vacia. Los limites del panel tienen que ser los mismos que los del
+-- manifiesto y del script.
+
+check(sliderFor("font_size") ~= nil, "font_size se ajusta con un deslizador")
+if sliderFor("font_size") ~= nil then
+  eq(sliderFor("font_size").props.min, 6, "font_size empieza en 6")
+  eq(sliderFor("font_size").props.max, 96, "font_size acaba en 96")
+end
+check(sliderFor("visible_above") ~= nil, "visible_above se ajusta con un deslizador")
+if sliderFor("visible_above") ~= nil then
+  eq(sliderFor("visible_above").props.max, 20, "visible_above acaba en 20")
+end
+check(sliderFor("active_scale") ~= nil, "active_scale se ajusta con un deslizador")
+if sliderFor("active_scale") ~= nil then
+  eq(sliderFor("active_scale").props.min, 1.0, "active_scale empieza en 1.0")
+  eq(sliderFor("active_scale").props.max, 2.5, "active_scale acaba en 2.5")
+end
+
+config.anchor = "custom"
+overrides.anchor = nil
+overrides.custom_x = nil
+onConfigChanged()
+local inputX2 = findByKey("input", "custom_x")
+check(inputX2 ~= nil, "con posicion personalizada hay campo X para el limite")
+if inputX2 ~= nil then
+  inputX2.props.onChange("-500")
+  check(overrides.custom_x ~= -500, "X no acepta negativos")
+  eq(overrides.custom_x, 0, "X recorta el negativo al minimo")
+  inputX2.props.onChange("999999")
+  check(
+    overrides.custom_x == nil or overrides.custom_x <= 10000,
+    "X no supera el maximo"
+  )
+  eq(overrides.custom_x, 10000, "X recorta al maximo")
+end
+config.anchor = "center"
+overrides.anchor = nil
+onConfigChanged()
+
+overrides.width = nil
+onIpc("set", "width 99999 int")
+check(overrides.width == nil or overrides.width <= 3840, "el IPC recorta el ancho al maximo")
+eq(overrides.width, 3840, "el IPC recorta el ancho a 3840")
+
+overrides.font_size = nil
+onIpc("set", "font_size 999 int")
+eq(overrides.font_size, 96, "el IPC recorta el tamano de fuente a 96")
+
+overrides.active_scale = nil
+onIpc("set", "active_scale 9.5 float")
+eq(overrides.active_scale, 2.5, "el IPC recorta la escala activa a 2.5")
+
 -- Resultado ------------------------------------------------------------------
 
 if failures > 0 then

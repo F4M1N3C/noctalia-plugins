@@ -129,7 +129,7 @@ the window has to be opened again for them to change.
   killed in the middle of an answer.
 - Estimated times never overwrite real LRC times, and lines without a time no longer
   break the highlight order: they keep their place in the song instead of starting
-  to sing six seconds in.
+  to sing six seconds in, and they never end up outside the song.
 - The karaoke fill ends at the next real timestamp, not at the next line of the list
   (lines without a time are not timestamps and used to cut the fill short).
 - A failed image renderer stays disabled instead of re-arming on every settings
@@ -140,7 +140,10 @@ the window has to be opened again for them to change.
   `NOCTALIA_STATE_HOME` / `XDG_STATE_HOME`.
 - The window is always clipped to the monitor, also when it is resized over IPC.
 - The font family can be typed by hand (the manifest declares it as free text), and
-  the bar icon and the custom colour are validated before they are saved.
+  the bar icon and the custom colour are validated before they are saved — on every
+  write path, including the IPC of the widget.
+- The value ranges are read from the manifest even on Python versions without
+  `tomllib`, so the clamping never disappears silently.
 
 ### 2.0.0
 

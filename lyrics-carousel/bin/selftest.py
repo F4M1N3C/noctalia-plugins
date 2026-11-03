@@ -1016,6 +1016,28 @@ def check_estimate_times_no_adelanta_las_sin_tiempo():
                 str([line.start for line in lines]),
             )
 
+            # Caso límite: varias líneas sin tiempo antes de una real muy
+            # temprana. No pueden acabar todas en el segundo 0 (ni
+            # desordenarse): tienen que repartirse sin salirse del origen.
+            lines = [
+                mod.LyricLine(-1, 0, "a"),
+                mod.LyricLine(-1, 0, "b"),
+                mod.LyricLine(-1, 0, "c"),
+                mod.LyricLine(2.0, 0, "real"),
+            ]
+            mod.estimate_times(lines, 200.0)
+            inicios = [line.start for line in lines]
+            check(
+                "las líneas sin tiempo se reparten sin solaparse",
+                inicios[0] < inicios[1] < inicios[2] < inicios[3],
+                str(inicios),
+            )
+            check(
+                "las líneas sin tiempo quedan antes de la real",
+                inicios[0] >= 0.0 and inicios[2] < 2.0,
+                str(inicios),
+            )
+
 
 def check_geometria_se_recorta_a_la_pantalla():
     """La ventana nunca puede ser más grande que la pantalla.

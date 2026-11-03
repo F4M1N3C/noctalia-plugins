@@ -1194,11 +1194,16 @@ def estimate_times(lines, duration: float):
                 if linea.duration <= 0:
                     linea.duration = hueco * 0.92
         elif despues:
-            # Antes de la primera línea con tiempo.
+            # Antes de la primera línea con tiempo. Se reparte hacia atrás
+            # sin salirse del origen: si no, varias líneas sin tiempo
+            # delante de una real muy temprana acaban todas en el segundo
+            # 0 y se resaltan a la vez.
+            inicio = max(0.0, despues[1] - total * hueco)
+            paso = (despues[1] - inicio) / (total + 1)
             for indice, linea in enumerate(miembros):
-                linea.start = max(0.0, despues[1] - (total - indice) * hueco)
+                linea.start = inicio + indice * paso
                 if linea.duration <= 0:
-                    linea.duration = hueco * 0.92
+                    linea.duration = max(0.1, paso * 0.92)
         else:
             # Ninguna línea tiene tiempo: se reparte desde el principio.
             if duration and duration > 20:

@@ -21,6 +21,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -775,7 +776,13 @@ def check_lineas_ordenadas():
 
 
 def check_modo_imagen_no_se_rearma():
-    """Un modo imagen desactivado por fallos no se reactiva solo."""
+    """Un modo imagen desactivado por fallos no se reactiva solo.
+
+    Al fallar, el script deja "text" en todas partes (settings.toml y
+    overrides): por eso una recarga no lo rearma. Si el usuario lo pide
+    otra vez, en cambio, tiene que poder: puede que ya haya instalado
+    Pillow, y quedarse en modo texto para siempre no es una opcion.
+    """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
         with env_temporal({"XDG_CACHE_HOME": cache}):
             mod = script_module()
@@ -796,22 +803,39 @@ def check_modo_imagen_no_se_rearma():
             app.image = None
             app.log = lambda message: None
             app._set_language = lambda value: None
+            app.texts = {}
+            app.status_message = ""
             app.dirty = False
             app.need_clear = False
 
             original = mod.load_settings
-            mod.load_settings = lambda: dict(mod.DEFAULTS)
             try:
+                # 1) la configuracion dice "text" (lo que persistio el
+                #    script al fallar): el modo imagen no se rearma.
+                mod.load_settings = lambda: {**mod.DEFAULTS, "render_mode": "text"}
                 app._reload_config()
+                check(
+                    "el modo imagen desactivado no se rearma",
+                    app.cfg.get("render_mode") == "text",
+                    "render_mode=%s" % app.cfg.get("render_mode"),
+                )
+
+                # 2) el usuario lo pide otra vez: se rearma.
+                app.cfg = dict(mod.DEFAULTS)
+                app.cfg["render_mode"] = "text"
+                app.image_disabled = True
+                app.image_failures = 3
+                mod.load_settings = lambda: {**mod.DEFAULTS, "render_mode": "image"}
+                app._reload_config()
+                check(
+                    "el usuario puede volver a pedir el modo imagen",
+                    app.image_disabled is False
+                    and app.cfg.get("render_mode") == "image",
+                    "image_disabled=%s render_mode=%s"
+                    % (app.image_disabled, app.cfg.get("render_mode")),
+                )
             finally:
                 mod.load_settings = original
-            check(
-                "el modo imagen desactivado no se rearma",
-                app.image_disabled is True
-                and app.cfg.get("render_mode") == "text",
-                "image_disabled=%s render_mode=%s"
-                % (app.image_disabled, app.cfg.get("render_mode")),
-            )
 
 
 def _app_de_config(mod):
@@ -1253,6 +1277,96 @@ def check_estado_real_intocable():
         )
 
 
+def check_limites_desde_el_manifiesto():
+    """El helper recorta con los rangos que declara el manifiesto.
+
+    Los limites viven en plugin.toml: si el helper los codificara, un
+    cambio en el manifiesto dejaria al plugin escribiendo valores que su
+    propia pagina de ajustes no permite. Ademas el recorte tiene que
+    aplicar a cualquier via de escritura (el IPC del widgetincluded).
+    """
+    import tomllib
+
+    manifiesto = os.path.join(os.path.dirname(HERE), "plugin.toml")
+    try:
+        with open(manifiesto, "rb") as handle:
+            datos = tomllib.load(handle)
+    except (OSError, ValueError) as error:
+        check("el manifiesto declara limites", False, repr(error)[:120])
+        return
+    limites = {}
+    for campo in datos.get("setting", []):
+        if campo.get("min") is not None or campo.get("max") is not None:
+            limites[campo["key"]] = (campo.get("min"), campo.get("max"))
+    check("el manifiesto declara limites", bool(limites), str(sorted(limites))[:120])
+    if not limites:
+        return
+
+    # La copia que usa la interfaz (lib/settings.luau) tiene que ser la
+    # misma que la del manifiesto: si divergen, el panel deja escribir
+    # valores que su propia pagina de ajustes no permite.
+    lib = os.path.join(os.path.dirname(HERE), "lib", "settings.luau")
+    copia = {}
+    try:
+        with open(lib, encoding="utf-8") as handle:
+            texto = handle.read()
+    except OSError as error:
+        check("los limites de la interfaz son los del manifiesto", False, repr(error)[:120])
+        texto = ""
+    bloque = re.search(r"local LIMITS = \{(.*?)\n\}", texto, re.S)
+    if bloque:
+        for linea in bloque.group(1).splitlines():
+            encontrado = re.match(
+                r"\s*(\w+)\s*=\s*\{\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\}", linea
+            )
+            if encontrado:
+                copia[encontrado.group(1)] = (
+                    float(encontrado.group(2)),
+                    float(encontrado.group(3)),
+                )
+    esperado = {
+        clave: (float(bajo), float(alto))
+        for clave, (bajo, alto) in limites.items()
+        if bajo is not None and alto is not None
+    }
+    check(
+        "los limites de la interfaz son los del manifiesto",
+        copia == esperado,
+        f"interfaz={sorted(copia.items())} manifiesto={sorted(esperado.items())}",
+    )
+
+    clave = "font_size"
+    if clave not in limites:
+        clave = sorted(limites)[0]
+    bajo, alto = limites[clave]
+
+    def guardar(valor: str) -> object:
+        with tempfile.TemporaryDirectory() as temporal:
+            env = entorno_de_prueba(temporal)
+            subprocess.run(
+                [sys.executable, HELPER, "override", clave, valor, "int"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=env,
+            )
+            ruta = os.path.join(
+                temporal,
+                ".local/state/noctalia/plugins/data/faminec/lyrics-carousel",
+                "overrides.json",
+            )
+            try:
+                with open(ruta, encoding="utf-8") as handle:
+                    return json.load(handle).get(clave)
+            except (OSError, ValueError):
+                return None
+
+    if alto is not None:
+        check("el helper recorta por arriba", guardar(str(alto + 1000)) == alto, str(alto))
+    if bajo is not None:
+        check("el helper recorta por abajo", guardar(str(bajo - 1000)) == bajo, str(bajo))
+
+
 def main(argv):
     verbose = "--verbose" in argv
 
@@ -1345,6 +1459,7 @@ def main(argv):
     check_rutas_estado()
     check_idioma_ventana()
     check_limites_ajustes()
+    check_limites_desde_el_manifiesto()
     check_titulo_vacio_no_rebusca()
     check_timeout_adaptador()
     check_tiempos_reales_no_se_pisan()

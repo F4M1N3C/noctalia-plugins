@@ -1797,10 +1797,20 @@ class LyricsCarousel:
             if getattr(self, "status_message", "") == self.tr("image_disabled"):
                 self.status_message = ""
         elif (
-            previous.get("render_mode") != cfg.get("render_mode")
+            cfg.get("render_mode") == "image"
+            and previous.get("render_mode") != "image"
             and getattr(self, "image_disabled", False)
         ):
-            cfg["render_mode"] = "text"
+            # El valor efectivo ha pasado de "text" a "image": lo ha pedido
+            # el usuario (cuando el script desactiva el modo, deja "text"
+            # en el settings.toml y en los overrides, asi que el unico que
+            # puede pedir "image" otra vez es el usuario). Se rearma: si no,
+            # el usuario se queda en modo texto para siempre, aunque
+            # instale Pillow.
+            self.image_disabled = False
+            self.image_failures = 0
+            if getattr(self, "status_message", "") == self.tr("image_disabled"):
+                self.status_message = ""
         # Invalida la cache de fuentes si cambio la familia o el tamaño.
         if (
             str(previous.get("font_family")) != str(cfg.get("font_family"))

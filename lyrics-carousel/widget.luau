@@ -8,7 +8,19 @@
 
 local settings = require("./lib/settings.luau")
 
-local glyph = noctalia.getConfig("glyph") or "music"
+-- El glifo se lee de la capa de overrides y no solo de la configuracion:
+-- el panel escribe ahi y la vuelca al cerrarse, asi que si el widget
+-- mirara solo la configuracion, el icono de la barra no cambiaria hasta
+-- que se cerrara el panel.
+local function currentGlyph()
+  local value = settings.value("glyph")
+  if type(value) == "string" and value ~= "" then
+    return value
+  end
+  return "music"
+end
+
+local glyph = currentGlyph()
 
 local function render()
   barWidget.setGlyph(glyph)
@@ -16,7 +28,7 @@ local function render()
 end
 
 function update()
-  glyph = noctalia.getConfig("glyph") or "music"
+  glyph = currentGlyph()
   render()
 end
 

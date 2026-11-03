@@ -25,6 +25,8 @@
   "direction": "Direction",
   "down": "down",
   "equalizer": "Sound visualiser",
+  "font_family": "Font family",
+  "font_placeholder": "Departure Mono",
   "font_size": "Size",
   "footer": "Time bar",
   "ghost": "Soft transitions",
@@ -183,6 +185,8 @@
   "custom_x": "X",
   "custom_y": "Y",
   "custom_color": "Custom colour",
+  "color_placeholder": "#rrggbb",
+  "glyph_placeholder": "music",
   "clear_cache": "Clear the lyrics cache",
   "clear_cache_failed": "Could not clear the lyrics cache.",
   "write_failed": "Could not save the setting."

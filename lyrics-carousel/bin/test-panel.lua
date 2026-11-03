@@ -597,6 +597,21 @@ if sliderFor("offset_ms") ~= nil then
   eq(overrides.offset_ms, -250, "el control de desfase guarda un negativo")
 end
 
+-- Un valor fuera de rango (escrito a mano en el settings.toml, por
+-- ejemplo) tiene que verse recortado en el deslizador: si el panel
+-- muestra 500 y el script usa 96, los dos no cuentan la misma historia.
+config.font_size = 500
+overrides.font_size = nil
+settingsModule.refresh()
+onConfigChanged()
+if sliderFor("font_size") ~= nil then
+  eq(sliderFor("font_size").props.value, 96, "el deslizador muestra el valor recortado")
+end
+config.font_size = 22
+overrides.font_size = nil
+settingsModule.refresh()
+onConfigChanged()
+
 local colorInput = findByKey("input", "custom_color")
 if colorInput ~= nil then
   colorInput.props.onChange("#12ab34")
@@ -726,6 +741,58 @@ local rendersAntes = renders
 onClose()
 dispararPlayerctlDiferido()
 eq(renders, rendersAntes, "no se redibuja un panel cerrado")
+
+-- 22. El widget lee la capa de overrides ---------------------------------
+--
+-- El panel escribe el glifo en los overrides y los vuelca al cerrarse; si
+-- el widget solo mirara la configuracion, el icono de la barra no cambiaria
+-- hasta entonces (y el panel dice que se aplica en el acto).
+
+local glyphUsado = nil
+barWidget = {
+  setGlyph = function(name) glyphUsado = name end,
+  setTooltip = function(text) end,
+}
+config.glyph = "music"
+overrides = {}
+settingsModule.refresh()
+dofile(pluginDir .. "/widget.luau")
+eq(glyphUsado, "music", "el widget usa el glifo de la configuracion")
+
+overrides.glyph = "volume"
+settingsModule.refresh()
+update()
+eq(glyphUsado, "volume", "el widget usa el glifo de los overrides")
+
+-- 23. Todo el texto visible pasa por las traducciones ----------------------
+--
+-- Un placeholder es texto visible: si va escrito a mano, el panel enseña
+-- "music" o "#rrggbb" en cualquier idioma y el revisor de la tienda lo
+-- marca como texto sin traducir. El mock de tr devuelve la clave, asi que
+-- se comprueba que el placeholder es una clave y no un literal.
+
+local glyphInput = findByKey("input", "glyph")
+if glyphInput ~= nil then
+  eq(glyphInput.props.placeholder, "glyph_placeholder", "el placeholder del glifo pasa por la traduccion")
+end
+
+local colorInput = findByKey("input", "custom_color")
+if colorInput ~= nil then
+  eq(colorInput.props.placeholder, "color_placeholder", "el placeholder del color pasa por la traduccion")
+end
+
+-- 24. La fuente se puede escribir ------------------------------------------
+--
+-- El manifiesto declara la fuente como texto libre: los chips son solo
+-- atajos y, sin un campo, no se podria elegir una fuente que no este en
+-- la lista.
+
+local familyInput = findByKey("input", "font_family")
+check(familyInput ~= nil, "font_family se puede escribir")
+if familyInput ~= nil then
+  familyInput.props.onChange("Iosevka")
+  eq(overrides.font_family, "Iosevka", "el campo de font_family guarda la familia escrita")
+end
 
 -- Resultado ------------------------------------------------------------------
 

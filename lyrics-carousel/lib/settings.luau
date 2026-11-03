@@ -56,6 +56,53 @@ M.INT_KEYS = INT_KEYS
 M.FLOAT_KEYS = FLOAT_KEYS
 M.DEFAULTS = DEFAULTS
 
+--- Rangos (min, max) de los ajustes numericos.
+---
+--- Son los mismos que declara el manifiesto (plugin.toml): el manifiesto es
+--- la fuente de verdad y el helper que escribe los overrides los lee de
+--- ahi. Esta copia la usa la interfaz para dibujar los deslizadores y para
+--- recortar los valores que ya estan guardados fuera de rango.
+local LIMITS = {
+  font_size = { 6, 96 },
+  spacing = { 1, 6 },
+  animation_ms = { 0, 3000 },
+  offset_ms = { -3000, 3000 },
+  width = { 400, 3840 },
+  height = { 200, 2160 },
+  custom_x = { 0, 10000 },
+  custom_y = { 0, 10000 },
+  visible_above = { 0, 20 },
+  visible_below = { 0, 20 },
+  active_scale = { 1.0, 2.5 },
+}
+
+M.LIMITS = LIMITS
+
+--- Recorta un valor a los limites de su ajuste.
+---
+--- Vive aqui y no en el panel para que las dos entradas (panel y widget)
+--- recorten igual: si cada una lo hiciera por su cuenta, el widget
+--- dejaria guardar un 500 en un campo que el panel limita a 96.
+function M.clamp(key, value)
+  local limit = LIMITS[key]
+  if limit == nil then
+    return value
+  end
+  local number = tonumber(value)
+  if number == nil then
+    return nil
+  end
+  if number < limit[1] then
+    number = limit[1]
+  elseif number > limit[2] then
+    number = limit[2]
+  end
+  if INT_KEYS[key] then
+    number = math.floor(number)
+  end
+  return number
+end
+
 --- Normaliza un valor a booleano.
 ---
 --- Noctalia no siempre entrega los interruptores como booleanos: el control
@@ -318,6 +365,13 @@ function M.apply(key, value)
       return nil
     end
     value = not M.truthy(M.value(key))
+  else
+    -- El recorte va aqui y no solo en el helper: el widget escribe por
+    -- IPC y su valor tiene que ser el mismo que veria el panel.
+    value = M.clamp(key, value)
+    if value == nil then
+      return nil
+    end
   end
   M.write(key, value)
   return value

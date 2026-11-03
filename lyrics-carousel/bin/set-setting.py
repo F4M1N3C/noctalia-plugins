@@ -56,6 +56,60 @@ INT_KEYS = {
 }
 FLOAT_KEYS = {"active_scale"}
 
+# Los limites (min/max) no se copian aqui: se leen del manifiesto, que es
+# la fuente de verdad. Si se codificaran, un cambio en plugin.toml
+# dejaria al plugin escribiendo valores que su propia pagina de ajustes
+# no permite.
+_MANIFEST_LIMITS = None
+
+
+def manifest_limits() -> dict:
+    """Rangos (min, max) que declara el manifiesto del plugin."""
+    global _MANIFEST_LIMITS
+    if _MANIFEST_LIMITS is not None:
+        return _MANIFEST_LIMITS
+    limits = {}
+    if tomllib is not None:
+        manifest = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plugin.toml"
+        )
+        try:
+            with open(manifest, "rb") as handle:
+                data = tomllib.load(handle)
+        except (OSError, tomllib.TOMLDecodeError):
+            data = {}
+        for field in data.get("setting", []):
+            key = field.get("key")
+            if not key:
+                continue
+            low = field.get("min")
+            high = field.get("max")
+            if low is None and high is None:
+                continue
+            limits[key] = (low, high)
+    _MANIFEST_LIMITS = limits
+    return limits
+
+
+def clamp_value(key: str, value):
+    """Recorta un valor numerico a los limites del manifiesto."""
+    bounds = manifest_limits().get(key)
+    if bounds is None:
+        return value
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return value
+    low, high = bounds
+    if low is not None and value < low:
+        return low
+    if high is not None and value > high:
+        return high
+    return value
+
+
+def prepare(key: str, value, kind: str):
+    """Convierte el valor a su tipo y lo recorta con los limites."""
+    return clamp_value(key, parse_value(value, kind))
+
 
 def format_value(value: str, kind: str) -> str:
     if kind == "bool":
@@ -217,7 +271,7 @@ def set_override(key: str, value: str, kind: str) -> int:
     try:
         fcntl.flock(lock, fcntl.LOCK_EX)
         data = read_overrides()
-        data[key] = parse_value(value, kind)
+        data[key] = prepare(key, value, kind)
         if not write_overrides(data):
             return 1
         return 0
@@ -320,7 +374,7 @@ def persist_override(key: str, value: str, kind: str) -> int:
     code = write_settings([(key, value, kind)])
     if code != 0:
         return code
-    remove_override(key, parse_value(value, kind))
+    remove_override(key, prepare(key, value, kind))
     return 0
 
 
@@ -395,7 +449,7 @@ def write_settings(pairs) -> int:
 def _write(text, pairs):
     updated = text
     for key, value, kind in pairs:
-        updated = patch(updated, key, format_value(value, kind))
+        updated = patch(updated, key, format_value(prepare(key, value, kind), kind))
     if updated == text:
         return 0
 

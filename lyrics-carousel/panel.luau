@@ -163,38 +163,10 @@ local GEOMETRY_KEYS = {
   custom_y = true,
 }
 
-local LIMITS = {
-  font_size = { 6, 96 },
-  spacing = { 1, 6 },
-  animation_ms = { 0, 3000 },
-  offset_ms = { -3000, 3000 },
-  width = { 400, 3840 },
-  height = { 200, 2160 },
-  custom_x = { 0, 10000 },
-  custom_y = { 0, 10000 },
-  visible_above = { 0, 20 },
-  visible_below = { 0, 20 },
-  active_scale = { 1.0, 2.5 },
-}
+local LIMITS = settingsLib.LIMITS
 
 local function clampSetting(key, value)
-  local limit = LIMITS[key]
-  if limit == nil then
-    return value
-  end
-  local number = tonumber(value)
-  if number == nil then
-    return nil
-  end
-  if number < limit[1] then
-    number = limit[1]
-  elseif number > limit[2] then
-    number = limit[2]
-  end
-  if settingsLib.INT_KEYS[key] then
-    number = math.floor(number)
-  end
-  return number
+  return settingsLib.clamp(key, value)
 end
 
 -- Escribe un ajuste en la capa de overrides del plugin.
@@ -667,7 +639,7 @@ end
 --
 -- El hover no toca nada: antes el ajuste se cambiaba al pasar el raton por
 -- encima, y un ancho que se encogia solo al mover el puntero era un fallo.
-local function sizeStepper(key, label, min, max, step)
+local function sizeStepper(key, min, max, step)
   local current = math.floor(numberOf(key))
   local function bump(delta)
     local newValue = math.floor(numberOf(key)) + delta
@@ -707,7 +679,13 @@ end
 -- Deslizador con su etiqueta y el valor a la derecha. Los limites son los
 -- del manifiesto: el panel no puede ofrecer mas de lo que el script acepta.
 local function sliderRow(key, label, min, max, step, integer)
-  local current = tonumber(numberOf(key)) or min
+  -- El valor mostrado se recorta: si el ajuste esta fuera de rango (por
+  -- ejemplo escrito a mano en el settings.toml), el deslizador tiene que
+  -- ensenar el valor real, no uno que el script va a descartar.
+  local current = clampSetting(key, numberOf(key))
+  if current == nil then
+    current = min
+  end
   local fmt = integer and "%d" or "%.2f"
   return ui.column({ gap = 4 }, {
     ui.row({ align = "center", gap = 8 }, {
@@ -879,7 +857,7 @@ render = function()
         end,
       }),
     }),
-    inputRow("glyph", tr("glyph"), "music", "^[a-z0-9-]+$"),
+    inputRow("glyph", tr("glyph"), tr("glyph_placeholder"), "^[a-z0-9-]+$"),
     toggleRow("karaoke", tr("karaoke"), "sun"),
     toggleRow("marker", tr("marker"), "chevron-right"),
     toggleRow("header", tr("header"), "heading"),
@@ -904,7 +882,7 @@ render = function()
     ui.column({ gap = 4 }, {
       ui.label({ text = tr("accent"), fontSize = 11, color = "on_surface_variant" }),
       accentChips(),
-      inputRow("custom_color", tr("custom_color"), "#rrggbb", "^#%x%x%x%x%x%x$"),
+      inputRow("custom_color", tr("custom_color"), tr("color_placeholder"), "^#%x%x%x%x%x%x$"),
     }),
     ui.separator({ thickness = 1, spacing = 6 }),
     ui.label({ text = tr("section_window"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
@@ -947,16 +925,20 @@ render = function()
         ui.label({ text = tr("width"), fontSize = 11, color = "on_surface_variant" }),
         -- Los limites son los del manifiesto (plugin.toml): el script
         -- recorta lo que le llegue, asi que el panel no puede ofrecer mas.
-        sizeStepper("width", tr("width"), 400, 3840, 100),
+        sizeStepper("width", 400, 3840, 100),
       }),
       ui.column({ flexGrow = 1, gap = 4 }, {
         ui.label({ text = tr("height"), fontSize = 11, color = "on_surface_variant" }),
-        sizeStepper("height", tr("height"), 200, 2160, 50),
+        sizeStepper("height", 200, 2160, 50),
       }),
     }),
     ui.separator({ thickness = 1, spacing = 6 }),
     ui.label({ text = tr("section_font"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     fontChips(),
+    -- El manifiesto declara la fuente como texto libre: los chips son solo
+    -- atajos, y sin este campo no se podria elegir una fuente que no este
+    -- en la lista.
+    inputRow("font_family", tr("font_family"), tr("font_placeholder"), "^.+$"),
     sliderRow("font_size", tr("font_size"), 6, 96, 1, true),
     ui.label({ text = tr("image_only_fonts"), fontSize = 10, color = "on_surface_variant" }),
     imageOnlyFonts(),

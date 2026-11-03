@@ -988,7 +988,9 @@ def run_adapter(source: str, track: Track, settings: dict, log):
             cwd=workdir,
             capture_output=True,
             text=True,
-            timeout=3,
+            # NetEase y QQ Music pueden tardar mas de 3 s: matarlos dejaba
+            # sin letra canciones que el adaptador si sabia resolver.
+            timeout=22,
             check=False,
         )
         if not result.stdout.strip():
@@ -1113,24 +1115,26 @@ def missing_recent(track: Track, hours=0.4) -> bool:
 
 
 def estimate_times(lines, duration: float):
-    """Asigna tiempos estimados a líneas sin marca temporal (letra plain)."""
-    usable = [line for line in lines if line.text]
-    if not usable or any(line.start >= 0 for line in usable[:3]):
+    """Asigna tiempos estimados solo a las líneas sin marca temporal.
+
+    Una letra puede traer unas líneas con tiempo (LRC a medias) y otras sin
+    él: pisar las que ya lo tienen descoloca el resaltado y la letra deja de
+    seguir la canción.
+    """
+    untimed = [line for line in lines if line.text and line.start < 0]
+    if not untimed:
         return lines
     if duration and duration > 20:
         start = min(6.0, duration * 0.05)
         end = max(start + 1, duration - 4.0)
-        step = (end - start) / max(1, len(usable))
+        step = (end - start) / max(1, len(untimed))
     else:
         start = 1.0
         step = 4.0
-    index = 0
-    for line in lines:
-        if line.text:
-            line.start = start + index * step
-            if line.duration <= 0:
-                line.duration = step * 0.92
-            index += 1
+    for index, line in enumerate(untimed):
+        line.start = start + index * step
+        if line.duration <= 0:
+            line.duration = step * 0.92
     return lines
 
 def fetch_lyrics(track: Track, force: bool, log):
@@ -1770,9 +1774,18 @@ class LyricsCarousel:
         ) and set(cfg.keys()) == set(self.cfg.keys()):
             return
         previous = self.cfg
-        if previous.get("render_mode") != cfg.get("render_mode"):
+        # El modo texto pedido desde los ajustes es una eleccion explicita:
+        # limpia el fallo anterior y permite volver a pedir imagen despues.
+        # Si en cambio la configuracion sigue pidiendo imagen y el modo se
+        # desactivo solo, no se reactiva en cada recarga (bucle de fallos).
+        if cfg.get("render_mode") == "text":
             self.image_disabled = False
             self.image_failures = 0
+        elif (
+            previous.get("render_mode") != cfg.get("render_mode")
+            and getattr(self, "image_disabled", False)
+        ):
+            cfg["render_mode"] = "text"
         # Invalida la cache de fuentes si cambio la familia o el tamaño.
         if (
             str(previous.get("font_family")) != str(cfg.get("font_family"))
@@ -1868,23 +1881,43 @@ class LyricsCarousel:
         """Posición de reproducción con el desfase aplicado."""
         return max(0.0, self._position() + self.cfg["offset_ms"] / 1000.0)
 
+    def _timed_lines(self):
+        """(inicio, índice) de las líneas con tiempo, ordenado por inicio.
+
+        Las líneas de una letra plain no tienen tiempo (-1). Si se mezclan
+        con la búsqueda binaria, el orden deja de ser creciente y se resalta
+        una línea que no suena.
+        """
+        pairs = [
+            (line.start, index)
+            for index, line in enumerate(self.lines)
+            if line.start >= 0
+        ]
+        pairs.sort(key=lambda pair: pair[0])
+        return pairs
+
     def scroll_state(self, position):
         """(línea cantada, línea en el centro, progreso de la transición)."""
         if not self.lines:
             return 0, 0, 0.0
-        times = [line.start for line in self.lines]
-        index = bisect.bisect_right(times, position + 0.05) - 1
-        index = max(0, min(index, len(self.lines) - 1))
+        timed = self._timed_lines()
+        if not timed:
+            return 0, 0, 0.0
+        times = [start for start, _ in timed]
+        slot = bisect.bisect_right(times, position + 0.05) - 1
+        slot = max(0, min(slot, len(timed) - 1))
+        index = timed[slot][1]
         focus = index
         progress = 0.0
         duration = self.cfg["animation_ms"] / 1000.0
-        nxt = index + 1
-        if nxt < len(times) and duration > 0:
+        nxt = slot + 1
+        if nxt < len(timed) and duration > 0:
+            next_start = timed[nxt][0]
             anticipation = min(1.2, max(0.2, duration * 0.5))
-            start = times[nxt] - anticipation
-            if start <= position < times[nxt]:
+            start = next_start - anticipation
+            if start <= position < next_start:
                 progress = (position - start) / anticipation
-                focus = nxt
+                focus = timed[nxt][1]
         return index, focus, progress
 
     def equalizer_text(self):
@@ -1907,9 +1940,13 @@ class LyricsCarousel:
         """
         if not self.lines:
             return
-        times = [line.start for line in self.lines]
-        index = bisect.bisect_right(times, position + 0.05) - 1
-        index = max(0, min(index, len(self.lines) - 1))
+        timed = self._timed_lines()
+        if not timed:
+            return
+        times = [start for start, _ in timed]
+        slot = bisect.bisect_right(times, position + 0.05) - 1
+        slot = max(0, min(slot, len(timed) - 1))
+        index = timed[slot][1]
         step = float(self.spacing)
         duration = self.cfg["animation_ms"] / 1000.0
         self.active_index = index
@@ -1917,15 +1954,15 @@ class LyricsCarousel:
         target = index * step
         self.moving = False
 
-        nxt = index + 1
-        if nxt < len(times) and duration > 0:
-            t_next = times[nxt]
+        nxt = slot + 1
+        if nxt < len(timed) and duration > 0:
+            next_start = timed[nxt][0]
             anticipation = min(1.2, max(0.2, duration * 0.5))
-            start = t_next - anticipation
-            if start <= position < t_next:
+            start = next_start - anticipation
+            if start <= position < next_start:
                 progress = clamp((position - start) / max(0.001, anticipation), 0.0, 1.0)
                 eased = 1 - (1 - progress) ** 2
-                target = index * step + (nxt - index) * step * eased
+                target = index * step + (timed[nxt][1] - index) * step * eased
                 self.moving = True
         self.scroll = target
 
@@ -2261,6 +2298,9 @@ class LyricsCarousel:
                 self.log("modo imagen desactivado tras varios fallos")
                 self.image_disabled = True
                 self.cfg["render_mode"] = "text"
+                # Se guarda el cambio: si la configuracion siguiera pidiendo
+                # imagen, cada recarga volveria a activar el modo que falla.
+                self._save_override("render_mode", "text", "string")
                 self.status_message = self.tr("image_disabled")
                 self.need_clear = True
                 self.last_mode = ""
@@ -2273,6 +2313,7 @@ class LyricsCarousel:
                 self.log("modo imagen desactivado: no se puede dibujar")
                 self.image_disabled = True
                 self.cfg["render_mode"] = "text"
+                self._save_override("render_mode", "text", "string")
             self.last_mode = ""
             self.need_clear = True
             self._draw_text_frame()

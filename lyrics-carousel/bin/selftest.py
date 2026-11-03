@@ -697,6 +697,123 @@ def check_titulo_vacio_no_rebusca():
             )
 
 
+def check_timeout_adaptador():
+    """El adaptador lento (4 s) no se corta antes de responder.
+
+    El plazo de 3 s mataba a NetEase y QQ Music, que a veces tardan mas:
+    la letra se perdia aunque el adaptador fuera a devolverla.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-adapter-") as temporal:
+        cache = os.path.join(temporal, "cache")
+        os.makedirs(cache, exist_ok=True)
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            os.makedirs(mod.CACHE_DIR, exist_ok=True)
+            script = os.path.join(temporal, "lyric_sources.py")
+            with open(script, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "import json, time\n"
+                    "time.sleep(4)\n"
+                    "print(json.dumps({'lines': [{'time': 1000, 'duration': 0, 'text': 'hola'}]}))\n"
+                )
+            original = mod.find_lyric_adapter
+            mod.find_lyric_adapter = lambda: script
+            try:
+                lines, source = mod.run_adapter(
+                    "splayer",
+                    mod.Track("cancion", "artista", duration=200.0),
+                    {},
+                    lambda message: None,
+                )
+            finally:
+                mod.find_lyric_adapter = original
+            check(
+                "el adaptador lento no se corta",
+                len(lines) == 1,
+                "líneas=%d fuente=%s" % (len(lines), source),
+            )
+
+
+def check_tiempos_reales_no_se_pisan():
+    """estimate_times rellena las lineas sin tiempo, no las que ya lo tienen."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            lines = [
+                mod.LyricLine(-1.0, 0.0, "a"),
+                mod.LyricLine(-1.0, 0.0, "b"),
+                mod.LyricLine(-1.0, 0.0, "c"),
+                mod.LyricLine(42.0, 4.0, "d"),
+            ]
+            mod.estimate_times(lines, 200.0)
+            check(
+                "estimate_times respeta los tiempos reales",
+                abs(lines[3].start - 42.0) < 0.01,
+                "start=%.3f" % lines[3].start,
+            )
+
+
+def check_lineas_ordenadas():
+    """El resaltado ignora las lineas sin tiempo al buscar por posicion."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.cfg = dict(mod.DEFAULTS)
+            app.lines = [
+                mod.LyricLine(-1.0, 0.0, "sin tiempo"),
+                mod.LyricLine(10.0, 0.0, "suena"),
+                mod.LyricLine(-1.0, 0.0, "sin tiempo 2"),
+                mod.LyricLine(20.0, 0.0, "final"),
+            ]
+            index, _, _ = app.scroll_state(15.0)
+            check(
+                "el resaltado ignora las líneas sin tiempo",
+                app.lines[index].text == "suena",
+                "línea resaltada=%r" % (app.lines[index].text,),
+            )
+
+
+def check_modo_imagen_no_se_rearma():
+    """Un modo imagen desactivado por fallos no se reactiva solo."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.args = types.SimpleNamespace(
+                direction=None,
+                no_karaoke=False,
+                render_mode=None,
+                active_scale=None,
+                accent=None,
+                lang=None,
+                force=False,
+            )
+            app.cfg = dict(mod.DEFAULTS)
+            app.cfg["render_mode"] = "text"
+            app.image_disabled = True
+            app.image_failures = 3
+            app.image = None
+            app.log = lambda message: None
+            app._set_language = lambda value: None
+            app.dirty = False
+            app.need_clear = False
+
+            original = mod.load_settings
+            mod.load_settings = lambda: dict(mod.DEFAULTS)
+            try:
+                app._reload_config()
+            finally:
+                mod.load_settings = original
+            check(
+                "el modo imagen desactivado no se rearma",
+                app.image_disabled is True
+                and app.cfg.get("render_mode") == "text",
+                "image_disabled=%s render_mode=%s"
+                % (app.image_disabled, app.cfg.get("render_mode")),
+            )
+
+
 def check_panel_cubre_manifiesto():
     """Cada ajuste del manifiesto se puede cambiar desde el panel.
 
@@ -901,6 +1018,10 @@ def main(argv):
     check_idioma_ventana()
     check_limites_ajustes()
     check_titulo_vacio_no_rebusca()
+    check_timeout_adaptador()
+    check_tiempos_reales_no_se_pisan()
+    check_lineas_ordenadas()
+    check_modo_imagen_no_se_rearma()
     check_panel_cubre_manifiesto()
     check_panel_attached()
 

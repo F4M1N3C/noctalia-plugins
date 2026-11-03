@@ -65,6 +65,39 @@ def env_temporal(valores):
         os.environ.update(anterior)
 
 
+@contextmanager
+def estado_temporal(base: str):
+    """Estado de Noctalia temporal para el proceso actual.
+
+    Sustituye todas las variables que pueden apuntar al estado real, no
+    solo XDG_STATE_HOME: paths.py prioriza LYRICS_CAROUSEL_STATE y
+    NOCTALIA_STATE_HOME, asi que con esas definidas el script leeria (y
+    escribiria) en los ajustes de verdad.
+
+    Devuelve la ruta del directorio de estado (<base>/.local/state/noctalia).
+    """
+    anterior = dict(os.environ)
+    estado = os.path.join(base, ".local", "state")
+    destino = os.path.join(estado, "noctalia")
+    os.makedirs(destino, exist_ok=True)
+    os.environ["XDG_STATE_HOME"] = estado
+    os.environ["NOCTALIA_STATE_HOME"] = estado
+    os.environ["LYRICS_CAROUSEL_STATE"] = destino
+    os.environ["LYRICS_CAROUSEL_OVERRIDES"] = os.path.join(
+        destino,
+        "plugins",
+        "data",
+        "faminec",
+        "lyrics-carousel",
+        "overrides.json",
+    )
+    try:
+        yield destino
+    finally:
+        os.environ.clear()
+        os.environ.update(anterior)
+
+
 def script_module():
     """Carga el script como modulo para poder probar sus funciones sueltas.
 
@@ -161,31 +194,20 @@ def check_diagnostics(label: str, path: str):
 def check_atajos():
     """Los atajos 'd' y 'k' alternan sus ajustes y los guardan de verdad.
 
-    Todo ocurre en un directorio temporal (HOME, XDG_STATE_HOME y
-    XDG_CACHE_HOME): el script escribe en el settings.toml y en los
-    overrides, y la prueba no debe tocar el estado real del usuario ni
-    competir con la escritura asincrona del script.
+    Todo ocurre en un directorio temporal (entorno_de_prueba): el script
+    escribe en el settings.toml y en los overrides, y la prueba no debe
+    tocar el estado real del usuario ni competir con la escritura
+    asincrona del script.
     """
     temporal = tempfile.mkdtemp(prefix="lyrics-carousel-selftest-")
-    home = os.path.join(temporal, "home")
-    estado = os.path.join(temporal, "state")
-    cache = os.path.join(temporal, "cache")
-    overrides = os.path.join(temporal, "overrides.json")
-    for path in (home, estado, cache):
-        os.makedirs(path, exist_ok=True)
+    estado = os.path.join(temporal, ".local", "state")
+    cache = os.path.join(temporal, ".cache")
     ajustes = os.path.join(estado, "noctalia", "settings.toml")
     os.makedirs(os.path.dirname(ajustes), exist_ok=True)
+    os.makedirs(cache, exist_ok=True)
     with open(ajustes, "w", encoding="utf-8") as handle:
         handle.write("")
-    entorno = {
-        **os.environ,
-        "HOME": home,
-        "XDG_STATE_HOME": estado,
-        "XDG_CACHE_HOME": cache,
-        "LYRICS_CAROUSEL_OVERRIDES": overrides,
-    }
-    entorno.pop("COLUMNS", None)
-    entorno.pop("LINES", None)
+    entorno = entorno_de_prueba(temporal)
     log = os.path.join(cache, "lyrics-carousel", "debug.log")
     try:
         import fcntl
@@ -475,6 +497,10 @@ def check_rutas_estado():
                 return
             anterior = dict(os.environ)
             try:
+                # LYRICS_CAROUSEL_STATE manda sobre todo lo demas: sin
+                # quitarla, estas comprobaciones mirarian el estado de la
+                # caja de arena y no el que piden.
+                os.environ.pop("LYRICS_CAROUSEL_STATE", None)
                 os.environ.pop("NOCTALIA_STATE_HOME", None)
                 os.environ["XDG_STATE_HOME"] = "/tmp/xdg-state-prueba"
                 check(
@@ -504,27 +530,16 @@ def check_rutas_estado():
 def check_idioma_ventana():
     """La ventana habla el idioma pedido (--lang en / --lang es)."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-idioma-") as temporal:
-        estado = os.path.join(temporal, "state")
-        cache = os.path.join(temporal, "cache")
-        home = os.path.join(temporal, "home")
-        for path in (estado, cache, home):
-            os.makedirs(path, exist_ok=True)
-        ajustes = os.path.join(estado, "noctalia", "settings.toml")
-        os.makedirs(os.path.dirname(ajustes), exist_ok=True)
+        estado = os.path.join(temporal, ".local", "state", "noctalia")
+        os.makedirs(estado, exist_ok=True)
+        ajustes = os.path.join(estado, "settings.toml")
         with open(ajustes, "w", encoding="utf-8") as handle:
             handle.write(
                 '[plugin_settings."faminec/lyrics-carousel"]\n'
                 "hints = true\n"
                 'render_mode = "text"\n'
             )
-        entorno = {
-            **os.environ,
-            "HOME": home,
-            "XDG_STATE_HOME": estado,
-            "XDG_CACHE_HOME": cache,
-        }
-        entorno.pop("COLUMNS", None)
-        entorno.pop("LINES", None)
+        entorno = entorno_de_prueba(temporal)
         for lang, esperado in (("en", "[q] quit"), ("es", "[q] salir")):
             try:
                 proceso = subprocess.run(
@@ -561,9 +576,16 @@ def check_limites_ajustes():
         with env_temporal(
             {
                 "XDG_CACHE_HOME": os.path.join(temporal, "cache"),
-                "XDG_STATE_HOME": estado,
             }
-        ):
+        ), estado_temporal(temporal) as destino:
+            os.makedirs(os.path.join(destino, "plugins", "data"), exist_ok=True)
+            with open(os.path.join(destino, "settings.toml"), "w", encoding="utf-8") as handle:
+                handle.write(
+                    '[plugin_settings."faminec/lyrics-carousel"]\n'
+                    "width = 100\n"
+                    "height = 100\n"
+                    "offset_ms = 99999\n"
+                )
             mod = script_module()
             cfg = mod.load_settings()
         check("el ancho se limita como el manifiesto", cfg["width"] == 400, str(cfg["width"]))
@@ -778,54 +800,73 @@ def check_lineas_ordenadas():
 def check_modo_imagen_no_se_rearma():
     """Un modo imagen desactivado por fallos no se reactiva solo.
 
-    Al fallar, el script deja "text" en todas partes (settings.toml y
-    overrides): por eso una recarga no lo rearma. Si el usuario lo pide
-    otra vez, en cambio, tiene que poder: puede que ya haya instalado
-    Pillow, y quedarse en modo texto para siempre no es una opcion.
+    Cuando el modo imagen falla varias veces, el script lo desactiva y
+    escribe "text" en los ajustes. La recarga siguiente trae "text", asi
+    que el modo imagen no se rearma solo (si se rearmara, el fallo se
+    repetiria en bucle). Solo se rearma cuando el usuario lo pide otra
+    vez: entonces el valor efectivo pasa de "text" a "image".
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
         with env_temporal({"XDG_CACHE_HOME": cache}):
             mod = script_module()
-            app = object.__new__(mod.LyricsCarousel)
-            app.args = types.SimpleNamespace(
-                direction=None,
-                no_karaoke=False,
-                render_mode=None,
-                active_scale=None,
-                accent=None,
-                lang=None,
-                force=False,
-            )
-            app.cfg = dict(mod.DEFAULTS)
-            app.cfg["render_mode"] = "text"
-            app.image_disabled = True
-            app.image_failures = 3
-            app.image = None
-            app.log = lambda message: None
-            app._set_language = lambda value: None
-            app.texts = {}
-            app.status_message = ""
-            app.dirty = False
-            app.need_clear = False
+
+            def app_nuevo(render_mode: str, font_size: int) -> object:
+                app = object.__new__(mod.LyricsCarousel)
+                app.args = types.SimpleNamespace(
+                    direction=None,
+                    no_karaoke=False,
+                    render_mode=None,
+                    active_scale=None,
+                    accent=None,
+                    lang=None,
+                    force=False,
+                )
+                app.cfg = dict(mod.DEFAULTS)
+                app.cfg["render_mode"] = render_mode
+                app.cfg["font_size"] = font_size
+                app.image_disabled = True
+                app.image_failures = 3
+                app.image = None
+                app.log = lambda message: None
+                app._set_language = lambda value: None
+                app.texts = {}
+                app.status_message = ""
+                app.dirty = False
+                app.need_clear = False
+                return app
 
             original = mod.load_settings
             try:
-                # 1) la configuracion dice "text" (lo que persistio el
-                #    script al fallar): el modo imagen no se rearma.
-                mod.load_settings = lambda: {**mod.DEFAULTS, "render_mode": "text"}
+                # 1) El modo imagen fallo y sigue pedido en los ajustes
+                #    (la escritura de "text" todavia no ha llegado), pero
+                #    el usuario cambio otra cosa: el modo imagen no se
+                #    rearma (si se rearmara, volveria a fallar en bucle).
+                app = app_nuevo("image", 22)
+                mod.load_settings = lambda: {
+                    **mod.DEFAULTS,
+                    "render_mode": "image",
+                    "font_size": 30,
+                }
                 app._reload_config()
                 check(
-                    "el modo imagen desactivado no se rearma",
-                    app.cfg.get("render_mode") == "text",
+                    "un cambio que no es el modo no rearma el modo imagen",
+                    app.image_disabled is True,
+                    "image_disabled=%s" % app.image_disabled,
+                )
+                check(
+                    "el modo imagen desactivado no se usa para dibujar",
+                    app.use_image() is False,
                     "render_mode=%s" % app.cfg.get("render_mode"),
                 )
 
-                # 2) el usuario lo pide otra vez: se rearma.
-                app.cfg = dict(mod.DEFAULTS)
-                app.cfg["render_mode"] = "text"
-                app.image_disabled = True
-                app.image_failures = 3
-                mod.load_settings = lambda: {**mod.DEFAULTS, "render_mode": "image"}
+                # 2) El usuario pide el modo imagen otra vez (el valor
+                #    efectivo pasa de "text" a "image"): se rearma.
+                app = app_nuevo("text", 22)
+                mod.load_settings = lambda: {
+                    **mod.DEFAULTS,
+                    "render_mode": "image",
+                    "font_size": 30,
+                }
                 app._reload_config()
                 check(
                     "el usuario puede volver a pedir el modo imagen",
@@ -833,6 +874,24 @@ def check_modo_imagen_no_se_rearma():
                     and app.cfg.get("render_mode") == "image",
                     "image_disabled=%s render_mode=%s"
                     % (app.image_disabled, app.cfg.get("render_mode")),
+                )
+
+                # 3) El usuario pide el modo texto: el fallo anterior se
+                #    limpia, asi que pedir imagen despues vuelve a
+                #    funcionar aunque el valor efectivo no cambie.
+                app = app_nuevo("image", 22)
+                mod.load_settings = lambda: {
+                    **mod.DEFAULTS,
+                    "render_mode": "text",
+                    "font_size": 30,
+                }
+                app._reload_config()
+                check(
+                    "pedir el modo texto limpia el fallo anterior",
+                    app.image_disabled is False
+                    and app.image_failures == 0,
+                    "image_disabled=%s image_failures=%s"
+                    % (app.image_disabled, app.image_failures),
                 )
             finally:
                 mod.load_settings = original
@@ -929,14 +988,12 @@ def check_aviso_se_limpia():
 def check_lyrics_settings_state_dir():
     """La configuracion de Lyrics se lee del estado de Noctalia real."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-estado-") as temporal:
-        estado = os.path.join(temporal, "noctalia")
-        os.makedirs(estado, exist_ok=True)
-        with open(os.path.join(estado, "settings.toml"), "w", encoding="utf-8") as handle:
-            handle.write(
-                '[plugin_settings."h465855hgg/lyrics"]\n'
-                'lyrics_sources = ["lrclib"]\n'
-            )
-        with env_temporal({"XDG_STATE_HOME": temporal}):
+        with estado_temporal(temporal) as estado:
+            with open(os.path.join(estado, "settings.toml"), "w", encoding="utf-8") as handle:
+                handle.write(
+                    '[plugin_settings."h465855hgg/lyrics"]\n'
+                    'lyrics_sources = ["lrclib"]\n'
+                )
             mod = script_module()
             ajustes = mod.load_lyrics_settings()
         check(
@@ -1035,6 +1092,77 @@ def check_estimate_times_no_adelanta_las_sin_tiempo():
             check(
                 "las líneas sin tiempo quedan antes de la real",
                 inicios[0] >= 0.0 and inicios[2] < 2.0,
+                str(inicios),
+            )
+
+
+def check_estimate_times_dentro_de_la_cancion():
+    """Las líneas sin tiempo se quedan dentro de la canción.
+
+    El hueco entre líneas no se deriva de la duración: con una canción de
+    200 s, una línea sin tiempo al final acababa en el segundo 226 (fuera
+    de la canción, así que nunca se resaltaba). Y si la lista de líneas
+    viene desordenada, la estimación tiene que caer después de la línea
+    anterior (no en un hueco calculado con una duración que no le
+    correspondía).
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+
+            # Una línea sin tiempo al final: se queda a cuatro segundos de
+            # la última real, dentro de la canción.
+            lines = [
+                mod.LyricLine(30.0, 0, "con tiempo"),
+                mod.LyricLine(-1, 0, "sin tiempo"),
+            ]
+            mod.estimate_times(lines, 200.0)
+            check(
+                "la línea sin tiempo del final no se sale de la canción",
+                30.0 < lines[1].start < 200.0,
+                str([line.start for line in lines]),
+            )
+            check(
+                "la línea sin tiempo del final va justo detrás de la real",
+                lines[1].start <= 30.0 + 4.0,
+                str([line.start for line in lines]),
+            )
+
+            # Lista desordenada: la estimación cae después de la línea
+            # anterior (la siguiente real viene antes en el tiempo, así que
+            # el hueco intermedio no sirve).
+            lines = [
+                mod.LyricLine(30.0, 0, "con tiempo"),
+                mod.LyricLine(-1, 0, "sin tiempo"),
+                mod.LyricLine(10.0, 0, "con tiempo"),
+            ]
+            mod.estimate_times(lines, 200.0)
+            check(
+                "con la lista desordenada la estimación va detrás de la anterior",
+                30.0 < lines[1].start < 200.0,
+                str([line.start for line in lines]),
+            )
+
+            # Varias líneas sin tiempo al final: todas dentro de la
+            # canción y sin solaparse.
+            lines = [
+                mod.LyricLine(180.0, 0, "con tiempo"),
+                mod.LyricLine(-1, 0, "a"),
+                mod.LyricLine(-1, 0, "b"),
+                mod.LyricLine(-1, 0, "c"),
+                mod.LyricLine(-1, 0, "d"),
+                mod.LyricLine(-1, 0, "e"),
+            ]
+            mod.estimate_times(lines, 200.0)
+            inicios = [line.start for line in lines]
+            check(
+                "las líneas sin tiempo del final no se salen de la canción",
+                all(inicio < 200.0 for inicio in inicios[1:]),
+                str(inicios),
+            )
+            check(
+                "las líneas sin tiempo del final se reparten en orden",
+                inicios[1] < inicios[2] < inicios[3] < inicios[4] < inicios[5],
                 str(inicios),
             )
 
@@ -1288,7 +1416,10 @@ def check_salida_al_cerrar():
     """
     temporal = tempfile.mkdtemp(prefix="lyrics-carousel-cierre-")
     overrides = os.path.join(temporal, "overrides.json")
-    entorno = {**os.environ, "LYRICS_CAROUSEL_OVERRIDES": overrides}
+    # El script escribe su diagnóstico en la caché: sin aislar
+    # XDG_CACHE_HOME el autotest deja un debug.log en la caché real.
+    entorno = entorno_de_prueba(temporal)
+    entorno["LYRICS_CAROUSEL_OVERRIDES"] = overrides
     lectura, escritura = os.pipe()
     os.close(lectura)  # el que lee se cierra: escribir falla
     proceso = subprocess.Popen(
@@ -1317,12 +1448,18 @@ def check_salida_al_cerrar():
 
 
 def entorno_de_prueba(base: str) -> dict:
-    """Entorno para el helper: ninguna ruta puede apuntar al estado real.
+    """Entorno aislado: ninguna variable puede apuntar al estado real.
 
-    paths.state_dir() prioriza NOCTALIA_STATE_HOME y XDG_STATE_HOME sobre
-    HOME, asi que aislar solo HOME no basta: con esas variables definidas
-    (lo habitual en un escritorio) el volcado escribe en los ajustes de
-    verdad y borra el overrides.json del usuario.
+    paths.state_dir() prioriza LYRICS_CAROUSEL_STATE y NOCTALIA_STATE_HOME
+    por encima de XDG_STATE_HOME, y paths.overrides_path() prioriza
+    LYRICS_CAROUSEL_OVERRIDES: aislar solo HOME (o solo XDG_STATE_HOME) no
+    basta. Con cualquiera de esas variables definidas (lo habitual en un
+    escritorio) el volcado escribe en los ajustes de verdad y borra la
+    capa de overrides del usuario.
+
+    Todas las pruebas que lanzan el script o el helper usan esta funcion:
+    el aislamiento tiene que estar en un unico sitio, o se olvida en
+    alguna.
     """
     env = dict(os.environ)
     estado = os.path.join(base, ".local", "state")
@@ -1331,6 +1468,17 @@ def entorno_de_prueba(base: str) -> dict:
     env["NOCTALIA_STATE_HOME"] = estado
     env["XDG_CACHE_HOME"] = os.path.join(base, ".cache")
     env["LYRICS_CAROUSEL_STATE"] = os.path.join(estado, "noctalia")
+    env["LYRICS_CAROUSEL_OVERRIDES"] = os.path.join(
+        estado,
+        "noctalia",
+        "plugins",
+        "data",
+        "faminec",
+        "lyrics-carousel",
+        "overrides.json",
+    )
+    env.pop("COLUMNS", None)
+    env.pop("LINES", None)
     return env
 
 
@@ -1394,10 +1542,15 @@ def probar_helper_volcado(fake_home: str) -> dict:
 def check_estado_real_intocable():
     """El autotest no puede escribir en el estado real del usuario.
 
-    paths.state_dir() prioriza NOCTALIA_STATE_HOME y XDG_STATE_HOME sobre
-    HOME: si el usuario los tiene definidos (es lo habitual) y el test no
-    los aísla, el volcado deja cambiados los ajustes de verdad y borra su
-    overrides.json.
+    paths.state_dir() prioriza LYRICS_CAROUSEL_STATE y NOCTALIA_STATE_HOME
+    por encima de XDG_STATE_HOME, y paths.overrides_path() prioriza
+    LYRICS_CAROUSEL_OVERRIDES. Con cualquiera de esas variables definidas
+    (lo habitual en un escritorio) el volcado escribe en los ajustes de
+    verdad y borra la capa de overrides del usuario.
+
+    La prueba demuestra las dos mitades: sin aislamiento el volcado SI
+    llega a la trampa (si no, comprobar que no llega no probaria nada), y
+    con el aislamiento la trampa queda intacta.
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-estado-") as temporal:
         trampa = os.path.join(temporal, "estado-real")
@@ -1406,29 +1559,73 @@ def check_estado_real_intocable():
         )
         os.makedirs(datos, exist_ok=True)
         settings = os.path.join(trampa, "noctalia", "settings.toml")
-        with open(settings, "w", encoding="utf-8") as handle:
-            handle.write('[plugin_settings."faminec/lyrics-carousel"]\nfont_size = 22\n')
         overrides = os.path.join(datos, "overrides.json")
-        with open(overrides, "w", encoding="utf-8") as handle:
-            json.dump({"marker": False}, handle)
+        contenido = '[plugin_settings."faminec/lyrics-carousel"]\nfont_size = 22\n'
+
+        def preparar_trampa():
+            with open(settings, "w", encoding="utf-8") as handle:
+                handle.write(contenido)
+            with open(overrides, "w", encoding="utf-8") as handle:
+                json.dump({"font_size": 22}, handle)
+
+        preparar_trampa()
+
+        # 1) El entorno del usuario: el estado de verdad esta en las
+        #    variables que prioriza paths.py. Sin aislamiento, el volcado
+        #    llega ahi (y borra la capa de overrides).
+        hostil = dict(os.environ)
+        hostil["NOCTALIA_STATE_HOME"] = trampa
+        hostil["XDG_STATE_HOME"] = trampa
+        hostil["LYRICS_CAROUSEL_STATE"] = os.path.join(trampa, "noctalia")
+        hostil["LYRICS_CAROUSEL_OVERRIDES"] = overrides
+        subprocess.run(
+            [sys.executable, HELPER, "override", "font_size", "30", "int"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=hostil,
+        )
+        with open(overrides, encoding="utf-8") as handle:
+            override_alcanzado = json.load(handle)
+        check(
+            "sin aislamiento el volcado llega a la capa de overrides",
+            override_alcanzado.get("font_size") == 30,
+            str(override_alcanzado),
+        )
+        subprocess.run(
+            [sys.executable, HELPER, "merge"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=hostil,
+        )
         with open(settings, encoding="utf-8") as handle:
-            antes = handle.read()
-        # El entorno del usuario: el estado de verdad esta en XDG_STATE_HOME.
-        with env_temporal({"XDG_STATE_HOME": trampa, "NOCTALIA_STATE_HOME": trampa}):
-            with tempfile.TemporaryDirectory() as fake_home:
-                resultado = probar_helper_volcado(fake_home)
+            alcanzado = handle.read()
+        check(
+            "sin aislamiento el volcado llega al settings.toml",
+            "font_size = 30" in alcanzado,
+            alcanzado[:100],
+        )
+
+        # 2) Con el aislamiento, la trampa queda como estaba y el volcado
+        #    va al temporal.
+        preparar_trampa()
+        with tempfile.TemporaryDirectory() as temporal2:
+            resultado = probar_helper_volcado(temporal2)
         check("el volcado va al temporal", resultado["vuelca"], resultado["detalle"])
         with open(settings, encoding="utf-8") as handle:
             despues = handle.read()
         check(
             "el autotest no toca el settings.toml real",
-            antes == despues,
+            despues == contenido,
             despues[:100],
         )
+        with open(overrides, encoding="utf-8") as handle:
+            overrides_despues = json.load(handle)
         check(
-            "el autotest no borra el overrides real",
-            os.path.isfile(overrides),
-            overrides,
+            "el autotest no toca la capa de overrides real",
+            overrides_despues.get("font_size") == 22,
+            str(overrides_despues),
         )
 
 
@@ -1490,6 +1687,45 @@ def check_limites_desde_el_manifiesto():
         f"interfaz={sorted(copia.items())} manifiesto={sorted(esperado.items())}",
     )
 
+    # Sin tomllib (Python < 3.11) el manifiesto se lee con una expresion
+    # regular: si no, el recorte desapareceria en silencio y el helper
+    # escribiria valores que la pagina de ajustes no permite.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("set_setting_sin_tomllib", HELPER)
+    helper = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(helper)
+    except Exception as error:  # noqa: BLE001
+        check("el helper se puede cargar", False, repr(error)[:120])
+        helper = None
+    if helper is not None and hasattr(helper, "manifest_limits_sin_tomllib"):
+        sin_tomllib = helper.manifest_limits_sin_tomllib(manifiesto)
+        esperado_limites = {
+            clave: (bajo, alto)
+            for clave, (bajo, alto) in limites.items()
+        }
+        check(
+            "sin tomllib se leen los mismos limites del manifiesto",
+            sin_tomllib == esperado_limites,
+            f"regex={sorted(sin_tomllib.items())} manifiesto={sorted(esperado_limites.items())}",
+        )
+        # Y el recorte tiene que funcionar con esos limites.
+        original_tomllib = helper.tomllib
+        try:
+            helper.tomllib = None
+            helper._MANIFEST_LIMITS = None
+            check(
+                "sin tomllib el helper sigue recortando",
+                helper.clamp_value("font_size", 9999) == limites.get("font_size", (0, 0))[1],
+                str(helper.clamp_value("font_size", 9999)),
+            )
+        finally:
+            helper.tomllib = original_tomllib
+            helper._MANIFEST_LIMITS = None
+    else:
+        check("el helper tiene fallback para leer el manifiesto", False)
+
     clave = "font_size"
     if clave not in limites:
         clave = sorted(limites)[0]
@@ -1526,20 +1762,15 @@ def check_limites_desde_el_manifiesto():
     # contarian la misma historia.
     def cargar(valores: dict) -> dict:
         with tempfile.TemporaryDirectory(prefix="lyrics-carousel-limites-") as temporal:
-            estado = os.path.join(temporal, "state")
-            ajustes = os.path.join(estado, "noctalia", "settings.toml")
-            os.makedirs(os.path.dirname(ajustes), exist_ok=True)
-            with open(ajustes, "w", encoding="utf-8") as handle:
-                handle.write('[plugin_settings."faminec/lyrics-carousel"]\n')
-                for clave, valor in valores.items():
-                    handle.write(f"{clave} = {valor}\n")
             with env_temporal(
                 {
                     "XDG_CACHE_HOME": os.path.join(temporal, "cache"),
-                    "XDG_STATE_HOME": estado,
-                    "NOCTALIA_STATE_HOME": estado,
                 }
-            ):
+            ), estado_temporal(temporal) as destino:
+                with open(os.path.join(destino, "settings.toml"), "w", encoding="utf-8") as handle:
+                    handle.write('[plugin_settings."faminec/lyrics-carousel"]\n')
+                    for clave, valor in valores.items():
+                        handle.write(f"{clave} = {valor}\n")
                 mod = script_module()
                 return mod.load_settings()
 
@@ -1562,6 +1793,33 @@ def check_limites_desde_el_manifiesto():
 
 def main(argv):
     verbose = "--verbose" in argv
+
+    # Caja de arena para todo el autotest.
+    #
+    # Las variables que puede tener el usuario para apuntar al estado de
+    # Noctalia (NOCTALIA_STATE_HOME, XDG_STATE_HOME, LYRICS_CAROUSEL_STATE
+    # y LYRICS_CAROUSEL_OVERRIDES) se sustituyen por rutas temporales
+    # antes de hacer nada. Asi ninguna prueba, ni las que lanzan el script
+    # como subproceso, puede escribir en los ajustes de verdad: con
+    # LYRICS_CAROUSEL_STATE definida (que es lo que hace paths.py
+    # funcionar) el volcado del helper llegaba al estado real.
+    caja = tempfile.mkdtemp(prefix="lyrics-carousel-autotest-")
+    estado_caja = os.path.join(caja, ".local", "state")
+    os.makedirs(os.path.join(estado_caja, "noctalia"), exist_ok=True)
+    os.environ["HOME"] = caja
+    os.environ["XDG_STATE_HOME"] = estado_caja
+    os.environ["NOCTALIA_STATE_HOME"] = estado_caja
+    os.environ["XDG_CACHE_HOME"] = os.path.join(caja, ".cache")
+    os.environ["LYRICS_CAROUSEL_STATE"] = os.path.join(estado_caja, "noctalia")
+    os.environ["LYRICS_CAROUSEL_OVERRIDES"] = os.path.join(
+        estado_caja,
+        "noctalia",
+        "plugins",
+        "data",
+        "faminec",
+        "lyrics-carousel",
+        "overrides.json",
+    )
 
     # 1) el helper tiene que estar al lado del script (ruta real, no la del
     #    enlace simbólico por el que se puede lanzar).
@@ -1666,6 +1924,7 @@ def main(argv):
     check_lrc_decimales()
     check_karaoke_usa_tiempos_reales()
     check_estimate_times_no_adelanta_las_sin_tiempo()
+    check_estimate_times_dentro_de_la_cancion()
     check_geometria_se_recorta_a_la_pantalla()
     check_texto_entre_angulos()
     check_cache_no_objeto()
@@ -1755,6 +2014,7 @@ def main(argv):
                 % ("ok " if ok else "FALLO", name, (" -> " + detail) if detail else "")
             )
     print("%d comprobación(es), %d fallo(s)" % (len(results), failed))
+    shutil.rmtree(caja, ignore_errors=True)
     return 1 if failed else 0
 
 

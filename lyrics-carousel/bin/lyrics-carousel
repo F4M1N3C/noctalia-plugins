@@ -1141,9 +1141,12 @@ def estimate_times(lines, duration: float):
         return lines
 
     # Hueco por defecto entre líneas: cuatro segundos.
+    #
+    # No se deriva de la duración: con una canción de 200 s y una línea
+    # sin tiempo al final, un hueco de 196 s la colocaba en el segundo 226
+    # (fuera de la canción, así que nunca se resaltaba). El hueco es fijo
+    # y el reparto se recorta al final, donde haga falta.
     hueco = 4.0
-    if duration and duration > 20:
-        hueco = max(1.0, (duration - 4.0) / max(1, len(sin_tiempo)))
 
     # Anclas: las líneas con tiempo real y su posición en la lista.
     anclas = [
@@ -1188,11 +1191,16 @@ def estimate_times(lines, duration: float):
                 if linea.duration <= 0:
                     linea.duration = paso * 0.92
         elif antes:
-            # Detrás de la última línea con tiempo.
+            # Detrás de la última línea con tiempo. Si la canción se sabe
+            # y no caben todas las líneas antes de que termine, el paso se
+            # recorta: una línea fuera de la canción nunca se resaltaba.
+            paso = hueco
+            if duration and duration > antes[1]:
+                paso = min(hueco, (duration - antes[1]) / (total + 1))
             for indice, linea in enumerate(miembros):
-                linea.start = antes[1] + (indice + 1) * hueco
+                linea.start = antes[1] + (indice + 1) * paso
                 if linea.duration <= 0:
-                    linea.duration = hueco * 0.92
+                    linea.duration = max(0.1, paso * 0.92)
         elif despues:
             # Antes de la primera línea con tiempo. Se reparte hacia atrás
             # sin salirse del origen: si no, varias líneas sin tiempo
@@ -1200,6 +1208,10 @@ def estimate_times(lines, duration: float):
             # 0 y se resaltan a la vez.
             inicio = max(0.0, despues[1] - total * hueco)
             paso = (despues[1] - inicio) / (total + 1)
+            if paso <= 0:
+                # La línea real llega en el segundo 0: no hay hueco antes,
+                # pero al menos las líneas no comparten el mismo instante.
+                paso = 0.001
             for indice, linea in enumerate(miembros):
                 linea.start = inicio + indice * paso
                 if linea.duration <= 0:
@@ -1572,11 +1584,11 @@ def apply_geometry(cfg):
     # panel): si no, Hyprland acepta una ventana de 3840x2160 en una
     # pantalla de 1920x1080 y la posición calculada sale negativa.
     try:
-        width = int(cfg["width"])
+        width = int(cfg.get("width", DEFAULTS.get("width", 1200)))
     except (TypeError, ValueError):
         width = int(DEFAULTS.get("width", 1200))
     try:
-        height = int(cfg["height"])
+        height = int(cfg.get("height", DEFAULTS.get("height", 820)))
     except (TypeError, ValueError):
         height = int(DEFAULTS.get("height", 820))
     width = max(1, min(width, screen_w))

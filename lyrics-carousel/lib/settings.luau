@@ -78,6 +78,35 @@ local LIMITS = {
 
 M.LIMITS = LIMITS
 
+--- Patrones de los ajustes de texto libre.
+---
+--- El glifo es un nombre de icono de Material Symbols y el color es un
+--- hexadecimal: si se guarda cualquier otra cosa, la barra se queda sin
+--- icono o la ventana sin color. Los patrones viven aqui y no en el
+--- panel para que las dos entradas (panel y widget) apliquen los
+--- mismos: el IPC del widget tambien puede escribir estos ajustes.
+local PATTERNS = {
+  glyph = "^[a-z0-9-]+$",
+  custom_color = "^#%x%x%x%x%x%x$",
+}
+
+M.PATTERNS = PATTERNS
+
+--- Valida el formato de un ajuste de texto libre.
+---
+--- Devuelve el valor si cumple el patron y nil si no. Los ajustes sin
+--- patron (o sin limite) se devuelven tal cual.
+function M.validate(key, value)
+  local pattern = PATTERNS[key]
+  if pattern == nil then
+    return value
+  end
+  if type(value) ~= "string" or value:match(pattern) == nil then
+    return nil
+  end
+  return value
+end
+
 --- Recorta un valor a los limites de su ajuste.
 ---
 --- Vive aqui y no en el panel para que las dos entradas (panel y widget)
@@ -369,6 +398,13 @@ function M.apply(key, value)
     -- El recorte va aqui y no solo en el helper: el widget escribe por
     -- IPC y su valor tiene que ser el mismo que veria el panel.
     value = M.clamp(key, value)
+    if value == nil then
+      return nil
+    end
+    -- Lo mismo con el formato: un glifo con mayusculas o un color que
+    -- no es un hexadecimal dejarian la barra o la ventana sin icono o
+    -- sin color.
+    value = M.validate(key, value)
     if value == nil then
       return nil
     end

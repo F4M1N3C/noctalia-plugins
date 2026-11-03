@@ -368,15 +368,15 @@ overrides.width = nil
 onConfigChanged()
 local minus = findByKey("button", "width-dec")
 check(minus ~= nil, "el panel tiene un boton para restar ancho")
--- Pasar el raton por encima no puede cambiar el ancho. El panel no usa
--- manejadores de hover en ningun sitio, asi que el boton no debe tener
--- ninguno: si algun dia lo tuviera, tendria que ser inocuo (y el
--- aserto de abajo lo comprueba).
-check(
-  minus == nil or minus.props.onHover == nil,
-  "el boton de ancho no define un manejador de hover"
-)
 if minus ~= nil then
+  -- Pasar el raton por encima no puede cambiar el ancho. El panel no usa
+  -- manejadores de hover en ningun sitio, asi que el boton no debe tener
+  -- ninguno: si algun dia lo tuviera, tendria que ser inocuo (y el
+  -- aserto de abajo lo comprueba).
+  check(
+    minus.props.onHover == nil,
+    "el boton de ancho no define un manejador de hover"
+  )
   if minus.props.onHover ~= nil then
     minus.props.onHover("true")
     minus.props.onHover("false")
@@ -764,8 +764,32 @@ barWidget = {
 config.glyph = "music"
 overrides = {}
 settingsModule.refresh()
+-- El widget define onConfigChanged y onIpc como globales (asi los llama
+-- Noctalia): al cargarlo con dofile pisa los del panel. Se guardan y se
+-- restauran, o el resto del bancoaria contra el widget en vez de contra
+-- el panel.
+local onConfigChangedDelPanel = onConfigChanged
+local onIpcDelPanel = onIpc
 dofile(pluginDir .. "/widget.luau")
+local onIpcDelWidget = onIpc
+onConfigChanged = onConfigChangedDelPanel
+onIpc = onIpcDelPanel
 eq(glyphUsado, "music", "el widget usa el glifo de la configuracion")
+
+-- El IPC del widget valida lo mismo que el panel: un glifo con
+-- mayusculas o un color que no es un hex dejarian la barra o la ventana
+-- sin icono o sin color. Los patrones viven en lib/settings.luau para
+-- que las dos entradas no se separen.
+overrides.glyph = nil
+overrides.custom_color = nil
+onIpcDelWidget("set", "glyph Music!")
+eq(overrides.glyph, nil, "el IPC del widget no guarda un glifo invalido")
+onIpcDelWidget("set", "glyph headphones")
+eq(overrides.glyph, "headphones", "el IPC del widget guarda un glifo valido")
+onIpcDelWidget("set", "custom_color rojo")
+eq(overrides.custom_color, nil, "el IPC del widget no guarda un color invalido")
+onIpcDelWidget("set", "custom_color #12ab34")
+eq(overrides.custom_color, "#12ab34", "el IPC del widget guarda un color valido")
 
 overrides.glyph = "volume"
 settingsModule.refresh()

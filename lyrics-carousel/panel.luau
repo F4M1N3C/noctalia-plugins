@@ -166,7 +166,13 @@ local GEOMETRY_KEYS = {
 local LIMITS = settingsLib.LIMITS
 
 local function clampSetting(key, value)
-  return settingsLib.clamp(key, value)
+  -- Recorte y formato: los dos vienen de la libreria compartida, para que
+  -- el panel y el widget apliquen las mismas reglas al mismo ajuste.
+  value = settingsLib.clamp(key, value)
+  if value == nil then
+    return nil
+  end
+  return settingsLib.validate(key, value)
 end
 
 -- Escribe un ajuste en la capa de overrides del plugin.
@@ -716,7 +722,10 @@ end
 -- Campo de texto con validacion. Solo se guarda lo que cumple el patron: un
 -- color a medias o un nombre de glifo con mayusculas dejaria la ventana sin
 -- color o sin icono.
-local function inputRow(key, label, placeholder, pattern)
+local function inputRow(key, label, placeholder)
+  -- El patron de cada campo vive en lib/settings.luau (PATTERNS): el
+  -- widget lo usa por su IPC y los dos tienen que aplicar el mismo.
+  local pattern = settingsLib.PATTERNS[key]
   return ui.column({ gap = 4 }, {
     ui.label({ text = label, fontSize = 11, color = "on_surface_variant" }),
     ui.input({
@@ -725,7 +734,7 @@ local function inputRow(key, label, placeholder, pattern)
       placeholder = placeholder,
       controlSize = "sm",
       onChange = function(value)
-        if type(value) == "string" and value:match(pattern) then
+        if type(value) == "string" and (pattern == nil or value:match(pattern)) then
           setSetting(key, value)
         end
       end,
@@ -857,7 +866,7 @@ render = function()
         end,
       }),
     }),
-    inputRow("glyph", tr("glyph"), tr("glyph_placeholder"), "^[a-z0-9-]+$"),
+    inputRow("glyph", tr("glyph"), tr("glyph_placeholder")),
     toggleRow("karaoke", tr("karaoke"), "sun"),
     toggleRow("marker", tr("marker"), "chevron-right"),
     toggleRow("header", tr("header"), "heading"),
@@ -882,7 +891,7 @@ render = function()
     ui.column({ gap = 4 }, {
       ui.label({ text = tr("accent"), fontSize = 11, color = "on_surface_variant" }),
       accentChips(),
-      inputRow("custom_color", tr("custom_color"), tr("color_placeholder"), "^#%x%x%x%x%x%x$"),
+      inputRow("custom_color", tr("custom_color"), tr("color_placeholder")),
     }),
     ui.separator({ thickness = 1, spacing = 6 }),
     ui.label({ text = tr("section_window"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),

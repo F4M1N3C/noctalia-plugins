@@ -23,6 +23,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import sys
 import tempfile
 
@@ -64,15 +65,20 @@ _MANIFEST_LIMITS = None
 
 
 def manifest_limits() -> dict:
-    """Rangos (min, max) que declara el manifiesto del plugin."""
+    """Rangos (min, max) que declara el manifiesto del plugin.
+
+    Sin tomllib (Python < 3.11) el manifiesto se lee con una expresion
+    regular: si no, el recorte desapareceria en silencio y el helper
+    escribiria valores que la pagina de ajustes no permite.
+    """
     global _MANIFEST_LIMITS
     if _MANIFEST_LIMITS is not None:
         return _MANIFEST_LIMITS
+    manifest = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plugin.toml"
+    )
     limits = {}
     if tomllib is not None:
-        manifest = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plugin.toml"
-        )
         try:
             with open(manifest, "rb") as handle:
                 data = tomllib.load(handle)
@@ -87,7 +93,52 @@ def manifest_limits() -> dict:
             if low is None and high is None:
                 continue
             limits[key] = (low, high)
+    else:
+        limits = manifest_limits_sin_tomllib(manifest)
     _MANIFEST_LIMITS = limits
+    return limits
+
+
+def manifest_limits_sin_tomllib(manifest: str) -> dict:
+    """Lee min/max del manifiesto con una expresion regular.
+
+    Solo se usa cuando no hay tomllib. El formato del manifiesto es
+    sencillo (bloques [[setting]] con key/min/max), asi que una regular
+    basta: lo importante es que el recorte no desaparezca.
+    """
+    limits = {}
+    try:
+        with open(manifest, encoding="utf-8") as handle:
+            texto = handle.read()
+    except OSError:
+        return limits
+    clave = None
+    minimo = None
+    maximo = None
+    for linea in texto.splitlines():
+        limpia = linea.strip()
+        if limpia == "[[setting]]":
+            if clave and minimo is not None or clave and maximo is not None:
+                limits[clave] = (minimo, maximo)
+            clave, minimo, maximo = None, None, None
+            continue
+        encontrado = re.match(r'^key\s*=\s*"([^"]+)"', limpia)
+        if encontrado:
+            clave = encontrado.group(1)
+            continue
+        encontrado = re.match(r"^min\s*=\s*(-?\d+(?:\.\d+)?)", limpia)
+        if encontrado:
+            minimo = float(encontrado.group(1))
+            if minimo.is_integer():
+                minimo = int(minimo)
+            continue
+        encontrado = re.match(r"^max\s*=\s*(-?\d+(?:\.\d+)?)", limpia)
+        if encontrado:
+            maximo = float(encontrado.group(1))
+            if maximo.is_integer():
+                maximo = int(maximo)
+    if clave and (minimo is not None or maximo is not None):
+        limits[clave] = (minimo, maximo)
     return limits
 
 

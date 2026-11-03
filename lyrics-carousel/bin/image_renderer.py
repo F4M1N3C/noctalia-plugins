@@ -273,10 +273,10 @@ class ImageRenderer:
             # La huella usa el número de caracteres cantados (no la fracción),
             # así solo cambia cuando avanza una letra.
             line = app.lines[index]
-            times = [item.start for item in app.lines]
             end = line.start + (line.duration or 4.0)
-            if index + 1 < len(times) and times[index + 1] > line.start:
-                end = times[index + 1] if not line.duration else min(end, times[index + 1])
+            siguiente = app.next_timed_start(index)
+            if siguiente is not None and siguiente > line.start:
+                end = siguiente if not line.duration else min(end, siguiente)
             fraction = max(
                 0.0, min(1.0, (position - line.start) / max(0.35, end - line.start))
             )
@@ -289,7 +289,6 @@ class ImageRenderer:
         background = theme.background
         index, focus, progress = app.scroll_state(position)
         lines = app.lines
-        times = [line.start for line in lines]
 
         pos_a = self._layout(index, center_y, size, scale)
         pos_b = self._layout(focus, center_y, size, scale)
@@ -340,8 +339,9 @@ class ImageRenderer:
                 self._draw_marker(draw, text, y, line_size, marker, family, accent)
             if is_sung and app.karaoke and app.cfg["karaoke"]:
                 end = line.start + (line.duration or 4.0)
-                if line_index + 1 < len(times) and times[line_index + 1] > line.start:
-                    end = times[line_index + 1] if not line.duration else min(end, times[line_index + 1])
+                siguiente = app.next_timed_start(line_index)
+                if siguiente is not None and siguiente > line.start:
+                    end = siguiente if not line.duration else min(end, siguiente)
                 fraction = max(
                     0.0, min(1.0, (position - line.start) / max(0.35, end - line.start))
                 )

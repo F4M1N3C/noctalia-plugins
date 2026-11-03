@@ -368,8 +368,16 @@ overrides.width = nil
 onConfigChanged()
 local minus = findByKey("button", "width-dec")
 check(minus ~= nil, "el panel tiene un boton para restar ancho")
+-- Pasar el raton por encima no puede cambiar el ancho. El panel no usa
+-- manejadores de hover en ningun sitio, asi que el boton no debe tener
+-- ninguno: si algun dia lo tuviera, tendria que ser inocuo (y el
+-- aserto de abajo lo comprueba).
+check(
+  minus == nil or minus.props.onHover == nil,
+  "el boton de ancho no define un manejador de hover"
+)
 if minus ~= nil then
-  if minus.props.onHover then
+  if minus.props.onHover ~= nil then
     minus.props.onHover("true")
     minus.props.onHover("false")
   end
@@ -792,6 +800,109 @@ check(familyInput ~= nil, "font_family se puede escribir")
 if familyInput ~= nil then
   familyInput.props.onChange("Iosevka")
   eq(overrides.font_family, "Iosevka", "el campo de font_family guarda la familia escrita")
+end
+
+-- 25. El panel ofrece los rangos del manifiesto -----------------------------
+--
+-- El manifiesto es la fuente de verdad. Si el panel ofrece un deslizador
+-- de 6 a 120 y el manifiesto dice 6 a 96, el usuario puede elegir un valor
+-- que el script va a descartar. Este test lee los limites del manifiesto y
+-- los compara con los controles que el panel dibuja de verdad (no con el
+-- codigo fuente).
+
+local function manifestLimits(path)
+  local limites = {}
+  local file = io.open(path, "r")
+  if file == nil then
+    return nil
+  end
+  local clave, minimo, maximo
+  local function cerrar()
+    if clave and minimo and maximo then
+      limites[clave] = { min = tonumber(minimo), max = tonumber(maximo) }
+    end
+    clave, minimo, maximo = nil, nil, nil
+  end
+  for linea in file:lines() do
+    local texto = linea:match("^%s*(.-)%s*$")
+    if texto == "[[setting]]" then
+      cerrar()
+    else
+      local k = texto:match('^key%s*=%s*"([^"]+)"')
+      if k then
+        clave = k
+      end
+      local mn = texto:match("^min%s*=%s*(%-?%d+%.?%d*)")
+      if mn then
+        minimo = mn
+      end
+      local mx = texto:match("^max%s*=%s*(%-?%d+%.?%d*)")
+      if mx then
+        maximo = mx
+      end
+    end
+  end
+  cerrar()
+  file:close()
+  return limites
+end
+
+-- Con la posicion personalizada se ven tambien los campos X e Y. El panel
+-- se abre otra vez porque en el apartado 21 se cerro (y un panel cerrado
+-- no vuelve a dibujar). La posicion se cambia por su desplegable (la via
+-- real del usuario) para que la tabla interna del panel quede coherente.
+onOpen()
+local anchorSelect = findByKey("select", "anchor-select")
+check(anchorSelect ~= nil, "el panel tiene el desplegable de posicion")
+if anchorSelect ~= nil then
+  anchorSelect.props.onChange("9")
+end
+eq(overrides.anchor, "custom", "la posicion personalizada queda elegida")
+settingsModule.refresh()
+onConfigChanged()
+
+local limites = manifestLimits(pluginDir .. "/plugin.toml")
+check(limites ~= nil and next(limites) ~= nil, "el manifiesto declara limites")
+if limites ~= nil then
+  for clave, limite in pairs(limites) do
+    local control = findByKey("slider", clave)
+    if control ~= nil then
+      eq(
+        control.props.min,
+        limite.min,
+        "el deslizador de " .. clave .. " empieza en el minimo del manifiesto"
+      )
+      eq(
+        control.props.max,
+        limite.max,
+        "el deslizador de " .. clave .. " acaba en el maximo del manifiesto"
+      )
+      check(
+        control.props.step ~= nil and control.props.step > 0,
+        "el deslizador de " .. clave .. " tiene paso"
+      )
+    elseif findByKey("input", clave) ~= nil then
+      -- Los campos de texto (las coordenadas) no llevan rango visible: el
+      -- recorte lo hace la libreria al escribir.
+    elseif findByKey("button", clave .. "-dec") ~= nil then
+      -- Los contadores +/- no llevan rango en sus props: se comprueba que
+      -- no bajan del minimo que declara el manifiesto.
+      config[clave] = limite.min
+      overrides[clave] = nil
+      settingsModule.refresh()
+      onConfigChanged()
+      local boton = findByKey("button", clave .. "-dec")
+      if boton ~= nil then
+        boton.props.onClick()
+      end
+      check(
+        overrides[clave] == nil or overrides[clave] >= limite.min,
+        "el contador de " .. clave .. " no baja del minimo del manifiesto"
+      )
+    else
+      check(false, "el panel no tiene ningun control para " .. clave)
+    end
+  end
 end
 
 -- Resultado ------------------------------------------------------------------

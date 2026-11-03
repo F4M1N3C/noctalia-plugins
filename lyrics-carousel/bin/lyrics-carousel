@@ -535,7 +535,10 @@ class PlayerWatcher:
 # letras
 # --------------------------------------------------------------------------
 
-LRC_TAG = re.compile(r"\[(?:(\d{1,3}):)?(\d{1,2}):(\d{1,2})(?:[.:](\d{1,6}))?\]")
+# Los minutos admiten tres digitos ([100:00] son 100 minutos): con dos, una
+# letra larga se descartaba entera. Las horas se distinguen por el segundo
+# grupo de dos puntos ([01:02:03] es una hora, dos minutos y tres segundos).
+LRC_TAG = re.compile(r"\[(?:(\d{1,3}):)?(\d{1,3}):(\d{1,2})(?:[.:](\d{1,6}))?\]")
 LRC_OFFSET = re.compile(r"\[offset:([+-]?\d+)\]", re.I)
 # Solo las etiquetas de tiempo mejoradas (<00:12.34>): un patron generico
 # <[^>]*> se comia texto normal entre angulos, como "I <3 you > me".
@@ -1121,22 +1124,96 @@ def estimate_times(lines, duration: float):
     Una letra puede traer unas líneas con tiempo (LRC a medias) y otras sin
     él: pisar las que ya lo tienen descoloca el resaltado y la letra deja de
     seguir la canción.
+
+    Las líneas sin tiempo se reparten por el hueco que les toca según su
+    posición en la lista: entre dos líneas con tiempo se quedan en medio,
+    detrás de la última si van al final y antes de la primera si van al
+    principio. Repartirlas todas desde el principio (como se hacía) deja que
+    una línea del final de la lista empiece a sonar en el segundo 6, por
+    delante de la parte que sí tiene tiempos.
     """
-    untimed = [line for line in lines if line.text and line.start < 0]
-    if not untimed:
+    sin_tiempo = [
+        (index, line)
+        for index, line in enumerate(lines)
+        if line.text and line.start < 0
+    ]
+    if not sin_tiempo:
         return lines
+
+    # Hueco por defecto entre líneas: cuatro segundos.
+    hueco = 4.0
     if duration and duration > 20:
-        start = min(6.0, duration * 0.05)
-        end = max(start + 1, duration - 4.0)
-        step = (end - start) / max(1, len(untimed))
-    else:
-        start = 1.0
-        step = 4.0
-    for index, line in enumerate(untimed):
-        line.start = start + index * step
-        if line.duration <= 0:
-            line.duration = step * 0.92
+        hueco = max(1.0, (duration - 4.0) / max(1, len(sin_tiempo)))
+
+    # Anclas: las líneas con tiempo real y su posición en la lista.
+    anclas = [
+        (index, line.start)
+        for index, line in enumerate(lines)
+        if line.start >= 0
+    ]
+
+    # Cada línea sin tiempo se asigna al hueco que la rodea (la anterior con
+    # tiempo y la siguiente con tiempo).
+    grupos = []
+    for indice, linea in sin_tiempo:
+        antes = None
+        despues = None
+        for pos, inicio in anclas:
+            if pos < indice and (antes is None or pos > antes[0]):
+                antes = (pos, inicio)
+            if pos > indice and (despues is None or pos < despues[0]):
+                despues = (pos, inicio)
+        for grupo in grupos:
+            if grupo["antes"] == antes and grupo["despues"] == despues:
+                grupo["lineas"].append(linea)
+                break
+        else:
+            grupos.append(
+                {"antes": antes, "despues": despues, "lineas": [linea]}
+            )
+
+    for grupo in grupos:
+        miembros = grupo["lineas"]
+        antes = grupo["antes"]
+        despues = grupo["despues"]
+        total = len(miembros)
+        if antes and despues:
+            # Entre dos líneas con tiempo: se reparten el hueco intermedio.
+            span = despues[1] - antes[1]
+            paso = span / (total + 1) if span > 0 else hueco
+            if paso <= 0:
+                paso = hueco
+            for indice, linea in enumerate(miembros):
+                linea.start = antes[1] + (indice + 1) * paso
+                if linea.duration <= 0:
+                    linea.duration = paso * 0.92
+        elif antes:
+            # Detrás de la última línea con tiempo.
+            for indice, linea in enumerate(miembros):
+                linea.start = antes[1] + (indice + 1) * hueco
+                if linea.duration <= 0:
+                    linea.duration = hueco * 0.92
+        elif despues:
+            # Antes de la primera línea con tiempo.
+            for indice, linea in enumerate(miembros):
+                linea.start = max(0.0, despues[1] - (total - indice) * hueco)
+                if linea.duration <= 0:
+                    linea.duration = hueco * 0.92
+        else:
+            # Ninguna línea tiene tiempo: se reparte desde el principio.
+            if duration and duration > 20:
+                inicio = min(6.0, duration * 0.05)
+                fin = max(inicio + 1, duration - 4.0)
+                paso = (fin - inicio) / max(1, total)
+            else:
+                inicio = 1.0
+                paso = 4.0
+            for indice, linea in enumerate(miembros):
+                linea.start = inicio + indice * paso
+                if linea.duration <= 0:
+                    linea.duration = paso * 0.92
     return lines
+
 
 def fetch_lyrics(track: Track, force: bool, log):
     if not force:
@@ -1486,8 +1563,19 @@ def apply_geometry(cfg):
         return False
     if screen_w <= 0 or screen_h <= 0:
         return False
-    width = int(cfg["width"])
-    height = int(cfg["height"])
+    # La ventana nunca puede ser mayor que el monitor (igual que el
+    # panel): si no, Hyprland acepta una ventana de 3840x2160 en una
+    # pantalla de 1920x1080 y la posición calculada sale negativa.
+    try:
+        width = int(cfg["width"])
+    except (TypeError, ValueError):
+        width = int(DEFAULTS.get("width", 1200))
+    try:
+        height = int(cfg["height"])
+    except (TypeError, ValueError):
+        height = int(DEFAULTS.get("height", 820))
+    width = max(1, min(width, screen_w))
+    height = max(1, min(height, screen_h))
     anchor = normalize_anchor(cfg.get("anchor", "center"))
     margin = 16
     if anchor == "custom":
@@ -1921,6 +2009,29 @@ class LyricsCarousel:
         pairs.sort(key=lambda pair: pair[0])
         return pairs
 
+    def next_timed_start(self, index):
+        """Inicio de la siguiente linea con tiempo real (o None).
+
+        Las lineas sin marca de tiempo valen -1: si el relleno del karaoke
+        toma "la siguiente de la lista" como final, la linea activa se
+        queda con un final de -1 (o se acorta de golpe) y el resaltado se
+        descuadra. Aqui se busca el menor tiempo real posterior al de la
+        linea, que es lo que marca cuando empieza la siguiente.
+
+        Devuelve None si no hay ninguna linea con tiempo despues.
+        """
+        if index < 0 or index >= len(self.lines):
+            return None
+        actual = self.lines[index].start
+        if actual < 0:
+            # Una linea sin tiempo no tiene final por karaoke.
+            return None
+        siguiente = None
+        for line in self.lines:
+            if line.start > actual and (siguiente is None or line.start < siguiente):
+                siguiente = line.start
+        return siguiente
+
     def scroll_state(self, position):
         """(línea cantada, línea en el centro, progreso de la transición)."""
         if not self.lines:
@@ -2123,7 +2234,6 @@ class LyricsCarousel:
         if not self.lines:
             return
         active = self.active_index
-        times = [line.start for line in self.lines]
         step = float(self.spacing)
 
         # Durante el desplazamiento el bloque se atenua un poco (motion
@@ -2164,8 +2274,9 @@ class LyricsCarousel:
             prefix_color = fg(theme.accent, bold=True) if (highlight and self.cfg["marker"]) else fg(theme.background)
             if highlight and self.karaoke:
                 end = line.start + (line.duration or 4.0)
-                if index + 1 < len(times) and times[index + 1] > line.start:
-                    end = min(end, times[index + 1]) if line.duration else times[index + 1]
+                siguiente = self.next_timed_start(index)
+                if siguiente is not None and siguiente > line.start:
+                    end = min(end, siguiente) if line.duration else siguiente
                 fraction = clamp((position - line.start) / max(0.35, end - line.start), 0.0, 1.0)
                 if line.chars and len(line.chars) >= len(text):
                     count = 0

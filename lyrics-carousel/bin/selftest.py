@@ -693,7 +693,7 @@ def check_titulo_vacio_no_rebusca():
                 app._apply_track(tema)
             check(
                 "un tema sin título no relanza la búsqueda",
-                len(arranques) <= 1,
+                len(arranques) == 1,
                 "búsquedas=%d" % len(arranques),
             )
 
@@ -946,6 +946,118 @@ def check_lyrics_settings_state_dir():
         )
 
 
+def check_karaoke_usa_tiempos_reales():
+    """El karaoke usa el siguiente tiempo real, no el de la siguiente linea.
+
+    Las lineas sin marca de tiempo valen -1: si el relleno del karaoke
+    toma "la siguiente de la lista", la linea activa se queda sin final
+    (o se acorta de golpe) y el resaltado se descuadra.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.lines = [
+                mod.LyricLine(10.0, 0, "primera"),
+                mod.LyricLine(-1, 0, "sin tiempo"),
+                mod.LyricLine(20.0, 0, "tercera"),
+            ]
+            siguiente = getattr(app, "next_timed_start", None)
+            ok = siguiente is not None and siguiente(0) == 20.0
+            check("el karaoke usa el siguiente tiempo real", ok, str(siguiente))
+            if siguiente is not None:
+                check(
+                    "la ultima linea no tiene tiempo siguiente",
+                    siguiente(2) is None,
+                    str(siguiente(2)),
+                )
+
+
+def check_estimate_times_no_adelanta_las_sin_tiempo():
+    """Las líneas sin tiempo no se colocan delante de las reales.
+
+    Una letra con LRC a medias (unas líneas con tiempo y otras sin él) no
+    puede repartir los tiempos al azar: si la línea sin tiempo está al
+    final de la lista, no puede empezar a sonar en el segundo 6 y dejarse
+    la parte con tiempos reales sin resaltar.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+
+            # Caso del revisor: la línea sin tiempo va al final.
+            lines = [
+                mod.LyricLine(30.0, 0, "con tiempo"),
+                mod.LyricLine(60.0, 0, "con tiempo"),
+                mod.LyricLine(-1, 0, "sin tiempo"),
+            ]
+            mod.estimate_times(lines, 200.0)
+            check(
+                "la línea sin tiempo no adelanta a las reales",
+                lines[2].start > lines[1].start,
+                str([line.start for line in lines]),
+            )
+            check(
+                "los tiempos reales no se mueven",
+                abs(lines[0].start - 30.0) < 0.01 and abs(lines[1].start - 60.0) < 0.01,
+                str([line.start for line in lines]),
+            )
+
+            # Una línea sin tiempo en medio queda entre sus vecinas.
+            lines = [
+                mod.LyricLine(10.0, 0, "primera"),
+                mod.LyricLine(-1, 0, "sin tiempo"),
+                mod.LyricLine(20.0, 0, "tercera"),
+            ]
+            mod.estimate_times(lines, 200.0)
+            check(
+                "la línea sin tiempo queda entre las reales",
+                lines[0].start < lines[1].start < lines[2].start,
+                str([line.start for line in lines]),
+            )
+
+
+def check_geometria_se_recorta_a_la_pantalla():
+    """La ventana nunca puede ser más grande que la pantalla.
+
+    El panel recorta el ancho y el alto al monitor; el script hacía su
+    propia cuenta y no lo hacía: el mismo ajuste daba geometrías
+    distintas según quién la aplicase, y Hyprland aceptaba una ventana
+    mayor que el monitor.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            llamadas = []
+            original_monitor = mod.focused_monitor
+            original_run = mod.subprocess.run
+            try:
+                mod.focused_monitor = lambda: {"width": 800, "height": 600}
+                mod.subprocess.run = lambda args, **kwargs: (
+                    llamadas.append(args[-1])
+                    or types.SimpleNamespace(returncode=0, stdout="", stderr="")
+                )
+                cfg = dict(mod.DEFAULTS)
+                cfg["width"] = 2000
+                cfg["height"] = 1500
+                cfg["anchor"] = "center"
+                mod.apply_geometry(cfg)
+            finally:
+                mod.focused_monitor = original_monitor
+                mod.subprocess.run = original_run
+            resize = [c for c in llamadas if "resize" in c]
+            check(
+                "la ventana se recorta al ancho de la pantalla",
+                bool(resize) and "x = 800" in resize[0],
+                str(llamadas),
+            )
+            check(
+                "la ventana se recorta al alto de la pantalla",
+                bool(resize) and "y = 600" in resize[0],
+                str(llamadas),
+            )
+
+
 def check_lrc_horas():
     """Un LRC con horas ([01:02:03]) no se descarta."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
@@ -959,8 +1071,21 @@ def check_lrc_horas():
             )
 
 
+def check_lrc_minutos():
+    """Un LRC con mas de 99 minutos ([100:00]) no se descarta."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            lines = mod.parse_lrc("[100:00]hola")
+            check(
+                "un LRC con tres digitos de minutos se interpreta",
+                len(lines) == 1 and abs(lines[0].start - 6000.0) < 0.01,
+                str([line.start for line in lines]),
+            )
+
+
 def check_lrc_decimales():
-    """Un LRC con cuatro decimales no se descarta."""
+    """Un LRC con cuatro o seis decimales no se descarta."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
         with env_temporal({"XDG_CACHE_HOME": cache}):
             mod = script_module()
@@ -968,6 +1093,14 @@ def check_lrc_decimales():
             check(
                 "un LRC con cuatro decimales se interpreta",
                 len(lines) == 1 and abs(lines[0].start - 12.1234) < 0.001,
+                str([line.start for line in lines]),
+            )
+            # Seis decimales: el tiempo se guarda con milisegundos (lo que
+            # necesita el karaoke), pero la linea no se descarta.
+            lines = mod.parse_lrc("[00:12.123456]hola")
+            check(
+                "un LRC con seis decimales se interpreta",
+                len(lines) == 1 and abs(lines[0].start - 12.123) < 0.001,
                 str([line.start for line in lines]),
             )
 
@@ -1366,6 +1499,44 @@ def check_limites_desde_el_manifiesto():
     if bajo is not None:
         check("el helper recorta por abajo", guardar(str(bajo - 1000)) == bajo, str(bajo))
 
+    # El script tambien recorta, y con los mismos limites: si el script
+    # aceptara mas que el manifiesto, la pagina de ajustes y la ventana no
+    # contarian la misma historia.
+    def cargar(valores: dict) -> dict:
+        with tempfile.TemporaryDirectory(prefix="lyrics-carousel-limites-") as temporal:
+            estado = os.path.join(temporal, "state")
+            ajustes = os.path.join(estado, "noctalia", "settings.toml")
+            os.makedirs(os.path.dirname(ajustes), exist_ok=True)
+            with open(ajustes, "w", encoding="utf-8") as handle:
+                handle.write('[plugin_settings."faminec/lyrics-carousel"]\n')
+                for clave, valor in valores.items():
+                    handle.write(f"{clave} = {valor}\n")
+            with env_temporal(
+                {
+                    "XDG_CACHE_HOME": os.path.join(temporal, "cache"),
+                    "XDG_STATE_HOME": estado,
+                    "NOCTALIA_STATE_HOME": estado,
+                }
+            ):
+                mod = script_module()
+                return mod.load_settings()
+
+    for etiqueta, elegir in (("arriba", lambda bajo, alto: alto), ("abajo", lambda bajo, alto: bajo)):
+        valores = {}
+        for clave, (bajo, alto) in limites.items():
+            valores[clave] = elegir(bajo, alto) + (1000 if etiqueta == "arriba" else -1000)
+        cfg = cargar(valores)
+        for clave, (bajo, alto) in limites.items():
+            esperado = alto if etiqueta == "arriba" else bajo
+            if esperado is None:
+                continue
+            obtenido = cfg.get(clave)
+            check(
+                f"el script recorta {clave} por {etiqueta}",
+                obtenido is not None and abs(float(obtenido) - float(esperado)) < 0.001,
+                str(obtenido),
+            )
+
 
 def main(argv):
     verbose = "--verbose" in argv
@@ -1469,7 +1640,11 @@ def main(argv):
     check_aviso_se_limpia()
     check_lyrics_settings_state_dir()
     check_lrc_horas()
+    check_lrc_minutos()
     check_lrc_decimales()
+    check_karaoke_usa_tiempos_reales()
+    check_estimate_times_no_adelanta_las_sin_tiempo()
+    check_geometria_se_recorta_a_la_pantalla()
     check_texto_entre_angulos()
     check_cache_no_objeto()
     check_espacio_no_rompe()

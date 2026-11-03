@@ -128,12 +128,19 @@ the window has to be opened again for them to change.
 - Slow source adapters get 22 seconds instead of 3, so NetEase and QQ Music are not
   killed in the middle of an answer.
 - Estimated times never overwrite real LRC times, and lines without a time no longer
-  break the highlight order.
-- A failed image renderer stays disabled instead of re-arming on every settings reload.
-- `[hh:mm:ss]` and up to six decimals are accepted in LRC files, text between angle
-  brackets (`I <3 you`) is preserved, only the winning provider writes the cache, and
-  the lyrics settings and adapter are found under `NOCTALIA_STATE_HOME` /
-  `XDG_STATE_HOME`.
+  break the highlight order: they keep their place in the song instead of starting
+  to sing six seconds in.
+- The karaoke fill ends at the next real timestamp, not at the next line of the list
+  (lines without a time are not timestamps and used to cut the fill short).
+- A failed image renderer stays disabled instead of re-arming on every settings
+  reload, and it can be switched on again on request.
+- `[hh:mm:ss]`, three-digit minutes and up to six decimals are accepted in LRC files,
+  text between angle brackets (`I <3 you`) is preserved, only the winning provider
+  writes the cache, and the lyrics settings and adapter are found under
+  `NOCTALIA_STATE_HOME` / `XDG_STATE_HOME`.
+- The window is always clipped to the monitor, also when it is resized over IPC.
+- The font family can be typed by hand (the manifest declares it as free text), and
+  the bar icon and the custom colour are validated before they are saved.
 
 ### 2.0.0
 

@@ -272,8 +272,7 @@ id = "panel"
 entry = "panel.luau"
 width = 470
 height = 760
-placement = "floating"
-position = "center"
+placement = "attached"
 open_near_click = true
 # El panel tiene campos de texto (X e Y): si se cierra al pulsar fuera, el
 # usuario pierde lo que estaba escribiendo. Con foco exclusivo, las teclas

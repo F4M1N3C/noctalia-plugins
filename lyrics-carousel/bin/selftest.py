@@ -700,6 +700,29 @@ def check_panel_cubre_manifiesto():
         check(f"el panel expone `{key}`", expuesto, key)
 
 
+def check_panel_attached():
+    """El panel se abre pegado al widget, no en el centro de la pantalla."""
+    try:
+        import tomllib
+
+        with open(os.path.join(PLUGIN_DIR, "plugin.toml"), "rb") as handle:
+            manifest = tomllib.load(handle)
+    except Exception as error:  # noqa: BLE001
+        check("el manifiesto se puede leer para la colocacion", False, repr(error)[:120])
+        return
+    panel = (manifest.get("panel") or [{}])[0]
+    check(
+        "el panel se abre attached",
+        panel.get("placement") == "attached",
+        str(panel.get("placement")),
+    )
+    check(
+        "el panel se abre junto al widget",
+        panel.get("open_near_click") is True,
+        str(panel.get("open_near_click")),
+    )
+
+
 def check_salida_al_cerrar():
     """El script sale cuando la salida se cierra (la terminal se cierra).
 
@@ -840,6 +863,7 @@ def main(argv):
     check_idioma_ventana()
     check_limites_ajustes()
     check_panel_cubre_manifiesto()
+    check_panel_attached()
 
     # 4e) el README documenta lo que el manifiesto declara: si el manifiesto
     #     cambia y el README no, la tienda rechaza el plugin.

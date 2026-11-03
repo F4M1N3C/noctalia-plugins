@@ -1702,7 +1702,10 @@ class LyricsCarousel:
         return min(elapsed, self.demo_duration), self.demo_duration
 
     def _apply_track(self, track: Track):
-        if track.key == self.track_key and self.track.title:
+        # La clave basta para saber que es el mismo tema. Exigir ademas un
+        # titulo hacia que un tema sin titulo (solo artista) se volviera a
+        # buscar en cada sondeo, sin fin.
+        if track.key == self.track_key and self.track_key:
             self.track = track
             return
         self.track = track

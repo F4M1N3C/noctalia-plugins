@@ -659,6 +659,44 @@ def check_readme():
         )
 
 
+def check_titulo_vacio_no_rebusca():
+    """Un tema sin titulo (solo artista) no relanza la busqueda en bucle.
+
+    La guarda de _apply_track comparaba la clave y ademas exigia que el tema
+    nuevo tuviera titulo. Con un tema sin titulo la condicion nunca se
+    cumplia y cada sondeo volvia a pedir la letra.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.args = types.SimpleNamespace(force=False)
+            app.track = mod.Track()
+            app.track_key = ""
+            app.state = "idle"
+            app.lines = []
+            app.source = ""
+            app.synced = False
+            app.dirty = False
+            app.last_fetch = 0.0
+            app.log = lambda message: None
+            arranques = []
+
+            class FetcherFalso:
+                def start(self, track, force=False):
+                    arranques.append(track.key)
+
+            app.fetcher = FetcherFalso()
+            tema = mod.Track("", "Artista", "Album", 100.0)
+            for _ in range(5):
+                app._apply_track(tema)
+            check(
+                "un tema sin título no relanza la búsqueda",
+                len(arranques) <= 1,
+                "búsquedas=%d" % len(arranques),
+            )
+
+
 def check_panel_cubre_manifiesto():
     """Cada ajuste del manifiesto se puede cambiar desde el panel.
 
@@ -862,6 +900,7 @@ def main(argv):
     check_rutas_estado()
     check_idioma_ventana()
     check_limites_ajustes()
+    check_titulo_vacio_no_rebusca()
     check_panel_cubre_manifiesto()
     check_panel_attached()
 

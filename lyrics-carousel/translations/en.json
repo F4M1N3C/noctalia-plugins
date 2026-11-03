@@ -10,6 +10,7 @@
   "accent_yellow": "yellow",
   "active_scale": "Active line size",
   "anchor": "Window position",
+  "animation_ms": "Transition (ms)",
   "anchor_bottom_center": "bot mid",
   "anchor_bottom_left": "bot left",
   "anchor_bottom_right": "bot right",
@@ -27,6 +28,7 @@
   "font_size": "Size",
   "footer": "Time bar",
   "ghost": "Soft transitions",
+  "glyph": "Bar icon",
   "header": "Header (title / artist)",
   "height": "Height",
   "hint": "Changes apply live. In text mode the font restarts the window.",
@@ -41,6 +43,7 @@
   "launch_failed": "Could not open the terminal.",
   "marker": "Active line marker",
   "mode_image": "image",
+  "offset_ms": "Lyrics offset (ms)",
   "mode_text": "text",
   "open_settings": "Open settings",
   "render_mode": "Rendering",
@@ -48,6 +51,7 @@
   "section_font": "Font",
   "section_lyrics": "Lyrics",
   "section_window": "Window",
+  "spacing": "Line spacing",
   "settings": {
     "accent": {
       "description": "The primary colour follows the wallpaper; the rest are ANSI colours from the theme.",

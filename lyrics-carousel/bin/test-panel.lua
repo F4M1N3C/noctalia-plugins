@@ -525,6 +525,61 @@ config.footer = false
 overrides.footer = nil
 settingsModule.refresh()
 
+-- 16. Los cinco ajustes que faltaban estan en el panel ----------------------
+--
+-- El panel tiene que ser un espejo del manifiesto: si un ajuste solo se
+-- puede cambiar desde la pagina de ajustes de Noctalia, el usuario cree que
+-- el panel esta completo y no lo esta.
+
+overrides = {}
+config.anchor = "center"
+onConfigChanged()
+
+local function sliderFor(key)
+  return findByKey("slider", key)
+end
+
+check(sliderFor("spacing") ~= nil, "el panel tiene el control de spacing")
+check(sliderFor("animation_ms") ~= nil, "el panel tiene el control de animation_ms")
+check(sliderFor("offset_ms") ~= nil, "el panel tiene el control de offset_ms")
+check(findByKey("input", "custom_color") ~= nil, "el panel tiene el campo del color")
+check(findByKey("input", "glyph") ~= nil, "el panel tiene el campo del glifo")
+
+if sliderFor("spacing") ~= nil then
+  sliderFor("spacing").props.onChange("4")
+  eq(overrides.spacing, 4, "el control de spacing guarda un entero")
+  sliderFor("spacing").props.onChange("2.9")
+  eq(overrides.spacing, 2, "el control de spacing trunca a entero")
+end
+
+if sliderFor("animation_ms") ~= nil then
+  sliderFor("animation_ms").props.onChange("900")
+  eq(overrides.animation_ms, 900, "el control de animacion guarda milisegundos")
+end
+
+if sliderFor("offset_ms") ~= nil then
+  sliderFor("offset_ms").props.onChange("-250")
+  eq(overrides.offset_ms, -250, "el control de desfase guarda un negativo")
+end
+
+local colorInput = findByKey("input", "custom_color")
+if colorInput ~= nil then
+  colorInput.props.onChange("#12ab34")
+  eq(overrides.custom_color, "#12ab34", "un hex valido se guarda")
+  colorInput.props.onChange("rojo")
+  eq(overrides.custom_color, "#12ab34", "un color invalido no se guarda")
+  colorInput.props.onChange("#12AB3")
+  eq(overrides.custom_color, "#12ab34", "un hex corto no se guarda")
+end
+
+local glyphInput = findByKey("input", "glyph")
+if glyphInput ~= nil then
+  glyphInput.props.onChange("headphones")
+  eq(overrides.glyph, "headphones", "el glifo se guarda")
+  glyphInput.props.onChange("Music!")
+  eq(overrides.glyph, "headphones", "un glifo invalido no se guarda")
+end
+
 -- Resultado ------------------------------------------------------------------
 
 if failures > 0 then

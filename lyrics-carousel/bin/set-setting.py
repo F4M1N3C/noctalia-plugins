@@ -44,7 +44,7 @@ ALLOWED = {
     "karaoke", "equalizer", "footer", "hints", "header", "spacing",
     "animation_ms", "ghost", "offset_ms", "width", "height", "anchor",
     "custom_x", "custom_y", "accent", "custom_color", "active_scale",
-    "visible_above", "visible_below", "language",
+    "visible_above", "visible_below", "language", "glyph",
 }
 
 BOOL_KEYS = {

@@ -10,6 +10,7 @@
   "accent_yellow": "amarillo",
   "active_scale": "Tamaño de la línea activa",
   "anchor": "Posición de la ventana",
+  "animation_ms": "Transición (ms)",
   "anchor_bottom_center": "inf centro",
   "anchor_bottom_left": "inf izq",
   "anchor_bottom_right": "inf der",
@@ -27,6 +28,7 @@
   "font_size": "Tamaño",
   "footer": "Barra de tiempo",
   "ghost": "Transiciones suaves",
+  "glyph": "Icono de la barra",
   "header": "Cabecera (título / artista)",
   "height": "Alto",
   "hint": "Los cambios se aplican en caliente. En modo texto la tipografía reinicia la ventana.",
@@ -41,6 +43,7 @@
   "launch_failed": "No se pudo abrir la terminal.",
   "marker": "Marca de la línea activa",
   "mode_image": "imagen",
+  "offset_ms": "Desfase de la letra (ms)",
   "mode_text": "texto",
   "open_settings": "Abrir ajustes",
   "render_mode": "Renderizado",
@@ -48,6 +51,7 @@
   "section_font": "Tipografía",
   "section_lyrics": "Letra",
   "section_window": "Ventana",
+  "spacing": "Espaciado entre líneas",
   "settings": {
     "accent": {
       "description": "El color primario sigue al fondo de pantalla; el resto son colores ANSI del tema.",

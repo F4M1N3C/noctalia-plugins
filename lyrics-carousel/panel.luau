@@ -711,6 +711,57 @@ local function sizeStepper(key, label, min, max, step)
   })
 end
 
+-- Deslizador con su etiqueta y el valor a la derecha. Los limites son los
+-- del manifiesto: el panel no puede ofrecer mas de lo que el script acepta.
+local function sliderRow(key, label, min, max, step, integer)
+  local current = tonumber(numberOf(key)) or min
+  local fmt = integer and "%d" or "%.2f"
+  return ui.column({ gap = 4 }, {
+    ui.row({ align = "center", gap = 8 }, {
+      ui.label({ text = label, fontSize = 11, color = "on_surface_variant", flexGrow = 1 }),
+      ui.label({ text = string.format(fmt, current), fontSize = 11, color = "on_surface" }),
+    }),
+    ui.slider({
+      key = key,
+      min = min,
+      max = max,
+      step = step,
+      value = current,
+      flexGrow = 1,
+      onChange = function(value)
+        local number = tonumber(value)
+        if number == nil then
+          return
+        end
+        if integer then
+          number = math.floor(number)
+        end
+        setSetting(key, number)
+      end,
+    }),
+  })
+end
+
+-- Campo de texto con validacion. Solo se guarda lo que cumple el patron: un
+-- color a medias o un nombre de glifo con mayusculas dejaria la ventana sin
+-- color o sin icono.
+local function inputRow(key, label, placeholder, pattern)
+  return ui.column({ gap = 4 }, {
+    ui.label({ text = label, fontSize = 11, color = "on_surface_variant" }),
+    ui.input({
+      key = key,
+      value = tostring(valueOf(key)),
+      placeholder = placeholder,
+      controlSize = "sm",
+      onChange = function(value)
+        if type(value) == "string" and value:match(pattern) then
+          setSetting(key, value)
+        end
+      end,
+    }),
+  })
+end
+
 render = function()
   local direction = tostring(valueOf("direction"))
   local mode = tostring(valueOf("render_mode"))
@@ -832,6 +883,7 @@ render = function()
         end,
       }),
     }),
+    inputRow("glyph", tr("glyph"), "music", "^[a-z0-9-]+$"),
     toggleRow("karaoke", tr("karaoke"), "sun"),
     toggleRow("marker", tr("marker"), "chevron-right"),
     toggleRow("header", tr("header"), "heading"),
@@ -849,9 +901,13 @@ render = function()
       ui.column({ flexGrow = 1, gap = 4 }, { countChips("visible_above", tr("visible_above")) }),
       ui.column({ flexGrow = 1, gap = 4 }, { countChips("visible_below", tr("visible_below")) }),
     }),
+    sliderRow("spacing", tr("spacing"), 1, 6, 1, true),
+    sliderRow("animation_ms", tr("animation_ms"), 0, 3000, 50, true),
+    sliderRow("offset_ms", tr("offset_ms"), -3000, 3000, 10, true),
     ui.column({ gap = 4 }, {
       ui.label({ text = tr("accent"), fontSize = 11, color = "on_surface_variant" }),
       accentChips(),
+      inputRow("custom_color", tr("custom_color"), "#rrggbb", "^#%x%x%x%x%x%x$"),
     }),
     ui.separator({ thickness = 1, spacing = 6 }),
     ui.label({ text = tr("section_window"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),

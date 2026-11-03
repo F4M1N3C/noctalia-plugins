@@ -659,6 +659,47 @@ def check_readme():
         )
 
 
+def check_panel_cubre_manifiesto():
+    """Cada ajuste del manifiesto se puede cambiar desde el panel.
+
+    La pagina de ajustes de Noctalia y el panel tienen que ofrecer lo mismo:
+    un ajuste que solo exista en la pagina de ajustes hace que el usuario
+    crea que el panel esta completo cuando no lo esta.
+    """
+    try:
+        import tomllib
+
+        with open(os.path.join(PLUGIN_DIR, "plugin.toml"), "rb") as handle:
+            manifest = tomllib.load(handle)
+    except Exception as error:  # noqa: BLE001
+        check("el manifiesto se puede leer para el panel", False, repr(error)[:120])
+        return
+    try:
+        with open(os.path.join(PLUGIN_DIR, "panel.luau"), encoding="utf-8") as handle:
+            panel = handle.read()
+    except OSError as error:
+        check("el panel se puede leer", False, repr(error)[:120])
+        return
+    for setting in manifest.get("setting", []):
+        key = setting.get("key", "")
+        # El panel puede tocar el ajuste de tres formas: escribirlo
+        # directamente (setSetting), a traves de una fila de interruptor
+        # (toggleRow) o con un control cuya clave es el propio ajuste
+        # (key = "...").
+        expuesto = (
+            f'setSetting("{key}"' in panel
+            or f'toggleRow("{key}"' in panel
+            or f'key = "{key}"' in panel
+            or f'numberOf("{key}")' in panel
+            or f'valueOf("{key}")' in panel
+            or f'countChips("{key}"' in panel
+            or f'sizeStepper("{key}"' in panel
+            or f'sliderRow("{key}"' in panel
+            or f'inputRow("{key}"' in panel
+        )
+        check(f"el panel expone `{key}`", expuesto, key)
+
+
 def check_salida_al_cerrar():
     """El script sale cuando la salida se cierra (la terminal se cierra).
 
@@ -798,6 +839,7 @@ def main(argv):
     check_rutas_estado()
     check_idioma_ventana()
     check_limites_ajustes()
+    check_panel_cubre_manifiesto()
 
     # 4e) el README documenta lo que el manifiesto declara: si el manifiesto
     #     cambia y el README no, la tienda rechaza el plugin.

@@ -37,6 +37,7 @@ local DEFAULTS = {
   visible_above = 6,
   visible_below = 6,
   language = "auto",
+  glyph = "music",
 }
 
 local BOOL_KEYS = {

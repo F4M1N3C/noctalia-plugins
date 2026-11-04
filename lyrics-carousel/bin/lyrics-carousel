@@ -1136,7 +1136,10 @@ def estimate_times(lines, duration: float):
     una línea fuera de la canción nunca llega a resaltarse. Con una lista
     desordenada (la siguiente ancla es anterior a la anterior) no existe
     un intervalo válido: la estimación se queda detrás de la anterior en
-    la lista, que es la que la precede en pantalla.
+    la lista, que es la que la precede en pantalla. Y si dos anclas
+    tienen el mismo tiempo tampoco hay hueco: la estimada se queda en ese
+    instante, porque detrás de la línea siguiente el resaltado volvería
+    hacia atrás (la línea que va después ya se habría cantado).
     """
     sin_tiempo = [
         (index, line)
@@ -1199,7 +1202,7 @@ def estimate_times(lines, duration: float):
                 span = min(span, limite - antes[1])
             if span > 0:
                 paso = span / (total + 1)
-            elif despues[1] <= antes[1]:
+            elif despues[1] < antes[1]:
                 # Lista desordenada: la siguiente ancla es anterior a la
                 # anterior. Se usa el hueco fijo detrás de la anterior,
                 # recortado a lo que quede de canción.
@@ -1211,8 +1214,11 @@ def estimate_times(lines, duration: float):
                         else 0.0
                     )
             else:
-                # La siguiente ancla cae al final de la canción o más
-                # allá: no hay hueco real entre las dos.
+                # La siguiente ancla tiene el mismo tiempo que la anterior
+                # (o cae al final de la canción): no hay hueco entre las
+                # dos. Poner la estimada detrás la dejaria despues de la
+                # linea siguiente de la lista, y el resaltado volveria
+                # hacia atras.
                 paso = 0.0
             for indice, linea in enumerate(miembros):
                 if paso > 0:

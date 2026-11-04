@@ -1267,6 +1267,22 @@ def check_estimate_times_dentro_de_la_cancion():
                 str(inicios),
             )
 
+            # Dos líneas reales con el MISMO tiempo no dejan hueco: la
+            # estimada no puede colocarse detrás de la siguiente, porque
+            # el resaltado volvería hacia atrás (la línea que va después
+            # en la lista ya se habría cantado).
+            lines = [
+                mod.LyricLine(10.0, 0, "primera"),
+                mod.LyricLine(-1, 0, "sin tiempo"),
+                mod.LyricLine(10.0, 0, "segunda"),
+            ]
+            mod.estimate_times(lines, 200.0)
+            check(
+                "sin hueco entre dos reales del mismo tiempo la estimada no va detrás",
+                lines[1].start <= lines[2].start,
+                str([line.start for line in lines]),
+            )
+
             # Sin ninguna ancla también manda la duración: una canción
             # corta no puede dejar líneas en el segundo 13.
             lines = [mod.LyricLine(-1, 0, "línea %d" % indice) for indice in range(10)]

@@ -63,7 +63,9 @@ FLOAT_KEYS = {"active_scale"}
 PATTERNS = {
     "glyph": r"^[a-z0-9-]+$",
     "custom_color": r"^#[0-9a-fA-F]{6}$",
-    "font_family": r"^.+$",
+    # Mismo patron que en lib/settings.luau: la fuente no puede estar
+    # vacia ni llevar saltos de linea (se pasa al comando de kitty).
+    "font_family": r"^[^\n]+$",
 }
 
 # Los limites (min/max) no se copian aqui: se leen del manifiesto, que es

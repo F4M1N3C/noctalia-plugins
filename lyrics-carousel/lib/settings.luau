@@ -89,8 +89,9 @@ local PATTERNS = {
   glyph = "^[a-z0-9-]+$",
   custom_color = "^#%x%x%x%x%x%x$",
   -- La fuente es texto libre, pero vacia dejaria la ventana sin tipografia:
-  -- el campo del panel y el IPC del widget tienen que rechazarla igual.
-  font_family = "^.+$",
+  -- el campo del panel y el IPC del widget tienen que rechazarla igual. Un
+  -- salto de linea tampoco vale: la fuente se pasa al comando de kitty.
+  font_family = "^[^\n]+$",
 }
 
 M.PATTERNS = PATTERNS

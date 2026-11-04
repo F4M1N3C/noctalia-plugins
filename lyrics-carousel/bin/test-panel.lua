@@ -639,6 +639,9 @@ if glyphInput ~= nil then
   eq(overrides.glyph, "headphones", "el glifo se guarda")
   glyphInput.props.onChange("Music!")
   eq(overrides.glyph, "headphones", "un glifo invalido no se guarda")
+  -- Los nombres de Tabler van con guiones: "music_note" no existe.
+  glyphInput.props.onChange("music_note")
+  eq(overrides.glyph, "headphones", "un glifo con guion bajo no se guarda")
 end
 
 -- 17. Los controles numericos respetan el rango del manifiesto --------------
@@ -787,6 +790,8 @@ overrides.glyph = nil
 overrides.custom_color = nil
 onIpcDelWidget("set", "glyph Music!")
 eq(overrides.glyph, nil, "el IPC del widget no guarda un glifo invalido")
+onIpcDelWidget("set", "glyph music_note")
+eq(overrides.glyph, nil, "el IPC del widget no guarda un glifo con guion bajo")
 onIpcDelWidget("set", "glyph headphones")
 eq(overrides.glyph, "headphones", "el IPC del widget guarda un glifo valido")
 onIpcDelWidget("set", "custom_color rojo")
@@ -836,6 +841,8 @@ if familyInput ~= nil then
   eq(overrides.font_family, "Iosevka", "el campo de font_family guarda la familia escrita")
   familyInput.props.onChange("")
   eq(overrides.font_family, "Iosevka", "el campo de font_family no guarda una familia vacia")
+  familyInput.props.onChange("Iosevka\nMono")
+  eq(overrides.font_family, "Iosevka", "el campo de font_family no guarda una familia con saltos de linea")
 end
 
 -- 25. El panel ofrece los rangos del manifiesto -----------------------------

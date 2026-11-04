@@ -1974,6 +1974,7 @@ def check_formatos_del_helper():
         ("custom_color", "rojo", "string", False),
         ("font_family", "Iosevka", "string", True),
         ("font_family", "", "string", False),
+        ("font_family", "Iosevka\nMono", "string", False),
     )
     for clave, valor, tipo, valido in casos:
         with tempfile.TemporaryDirectory(prefix="lyrics-carousel-formatos-") as temporal:

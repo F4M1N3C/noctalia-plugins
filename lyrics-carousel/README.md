@@ -129,7 +129,14 @@ the window has to be opened again for them to change.
   killed in the middle of an answer.
 - Estimated times never overwrite real LRC times, and lines without a time no longer
   break the highlight order: they keep their place in the song instead of starting
-  to sing six seconds in, and they never end up outside the song.
+  to sing six seconds in, and they never end up outside the song (including the
+  lines before the first real timestamp or after the last one).
+- Image mode is not re-armed by an unrelated settings reload after the script
+  disables it for repeated failures: only an explicit change back to `image`
+  turns it on again.
+- The settings helper validates formats as well as ranges, so a malformed
+  `glyph`, `custom_color` or an empty `font_family` cannot be written through
+  any entry point, not just the panel and the widget IPC.
 - The karaoke fill ends at the next real timestamp, not at the next line of the list
   (lines without a time are not timestamps and used to cut the fill short).
 - A failed image renderer stays disabled instead of re-arming on every settings

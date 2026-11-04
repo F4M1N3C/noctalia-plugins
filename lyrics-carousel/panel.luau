@@ -947,7 +947,9 @@ render = function()
     -- El manifiesto declara la fuente como texto libre: los chips son solo
     -- atajos, y sin este campo no se podria elegir una fuente que no este
     -- en la lista.
-    inputRow("font_family", tr("font_family"), tr("font_placeholder"), "^.+$"),
+    -- El patron vive en lib/settings.luau (PATTERNS), igual que en el IPC
+    -- del widget: el cuarto argumento antiguo se ignoraba en silencio.
+    inputRow("font_family", tr("font_family"), tr("font_placeholder")),
     sliderRow("font_size", tr("font_size"), 6, 96, 1, true),
     ui.label({ text = tr("image_only_fonts"), fontSize = 10, color = "on_surface_variant" }),
     imageOnlyFonts(),

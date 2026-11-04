@@ -57,6 +57,15 @@ INT_KEYS = {
 }
 FLOAT_KEYS = {"active_scale"}
 
+# Los mismos patrones que lib/settings.luau (PATTERNS). El panel y el IPC
+# del widget ya los aplican; el helper es otra via de escritura y sin esto
+# podria guardar un glifo inexistente o un color invalido.
+PATTERNS = {
+    "glyph": r"^[a-z0-9-]+$",
+    "custom_color": r"^#[0-9a-fA-F]{6}$",
+    "font_family": r"^.+$",
+}
+
 # Los limites (min/max) no se copian aqui: se leen del manifiesto, que es
 # la fuente de verdad. Si se codificaran, un cambio en plugin.toml
 # dejaria al plugin escribiendo valores que su propia pagina de ajustes
@@ -99,12 +108,21 @@ def manifest_limits() -> dict:
     return limits
 
 
+def _numero_toml(texto: str):
+    """Convierte un numero TOML (con +, exponente o _) a int/float."""
+    valor = float(texto.replace("_", ""))
+    return int(valor) if valor.is_integer() else valor
+
+
 def manifest_limits_sin_tomllib(manifest: str) -> dict:
     """Lee min/max del manifiesto con una expresion regular.
 
     Solo se usa cuando no hay tomllib. El formato del manifiesto es
-    sencillo (bloques [[setting]] con key/min/max), asi que una regular
-    basta: lo importante es que el recorte no desaparezca.
+    sencillo (bloques [[setting]] con key/min/max), pero el fallback no
+    puede suponer que sea el unico formato valido: acepta comillas simples
+    y numeros con signo +, exponente o separadores, y cierra el ajuste en
+    cualquier cabecera de tabla (un min/max de [[panel]] no pertenece al
+    ultimo ajuste).
     """
     limits = {}
     try:
@@ -112,33 +130,37 @@ def manifest_limits_sin_tomllib(manifest: str) -> dict:
             texto = handle.read()
     except OSError:
         return limits
+
+    def anadir(clave, minimo, maximo):
+        if clave is not None and (minimo is not None or maximo is not None):
+            limits[clave] = (minimo, maximo)
+
+    numero = r"[-+]?(?:\d[\d_]*(?:\.\d[\d_]*)?|\.\d[\d_]*)(?:[eE][-+]?\d[\d_]*)?"
     clave = None
     minimo = None
     maximo = None
     for linea in texto.splitlines():
         limpia = linea.strip()
-        if limpia == "[[setting]]":
-            if clave and minimo is not None or clave and maximo is not None:
-                limits[clave] = (minimo, maximo)
+        if not limpia or limpia.startswith("#"):
+            continue
+        if re.match(r"^\[\[.*\]\]\s*(?:#.*)?$", limpia) or re.match(
+            r"^\[[^\[].*\]\s*(?:#.*)?$", limpia
+        ):
+            anadir(clave, minimo, maximo)
             clave, minimo, maximo = None, None, None
             continue
-        encontrado = re.match(r'^key\s*=\s*"([^"]+)"', limpia)
+        encontrado = re.match(r"""^key\s*=\s*(?:"([^"]+)"|'([^']+)')""", limpia)
         if encontrado:
-            clave = encontrado.group(1)
+            clave = encontrado.group(1) or encontrado.group(2)
             continue
-        encontrado = re.match(r"^min\s*=\s*(-?\d+(?:\.\d+)?)", limpia)
+        encontrado = re.match(rf"^min\s*=\s*({numero})", limpia)
         if encontrado:
-            minimo = float(encontrado.group(1))
-            if minimo.is_integer():
-                minimo = int(minimo)
+            minimo = _numero_toml(encontrado.group(1))
             continue
-        encontrado = re.match(r"^max\s*=\s*(-?\d+(?:\.\d+)?)", limpia)
+        encontrado = re.match(rf"^max\s*=\s*({numero})", limpia)
         if encontrado:
-            maximo = float(encontrado.group(1))
-            if maximo.is_integer():
-                maximo = int(maximo)
-    if clave and (minimo is not None or maximo is not None):
-        limits[clave] = (minimo, maximo)
+            maximo = _numero_toml(encontrado.group(1))
+    anadir(clave, minimo, maximo)
     return limits
 
 
@@ -158,8 +180,14 @@ def clamp_value(key: str, value):
 
 
 def prepare(key: str, value, kind: str):
-    """Convierte el valor a su tipo y lo recorta con los limites."""
-    return clamp_value(key, parse_value(value, kind))
+    """Convierte el valor a su tipo, lo recorta y valida su formato."""
+    preparado = clamp_value(key, parse_value(value, kind))
+    patron = PATTERNS.get(key)
+    if patron is not None and (
+        not isinstance(preparado, str) or re.fullmatch(patron, preparado) is None
+    ):
+        raise ValueError(f"formato no válido para {key}: {value!r}")
+    return preparado
 
 
 def format_value(value: str, kind: str) -> str:
@@ -384,13 +412,26 @@ def merge_overrides() -> int:
         if key not in ALLOWED:
             continue
         if isinstance(value, bool):
-            pairs.append((key, "true" if value else "false", "bool"))
+            kind = "bool"
+            raw = "true" if value else "false"
         elif isinstance(value, int):
-            pairs.append((key, str(value), "int"))
+            kind = "int"
+            raw = str(value)
         elif isinstance(value, float):
-            pairs.append((key, str(value), "float"))
+            kind = "float"
+            raw = str(value)
         else:
-            pairs.append((key, str(value), "string"))
+            kind = "string"
+            raw = str(value)
+        try:
+            # Un override viejo con formato invalido (por ejemplo, un glifo
+            # con guion bajo guardado antes de validar) no puede volcarse:
+            # se descarta al cerrar el panel en vez de romper el volcado.
+            prepare(key, raw, kind)
+        except ValueError as error:
+            print(f"se descarta {key}: {error}", file=sys.stderr)
+            continue
+        pairs.append((key, raw, kind))
     if not pairs:
         try:
             os.remove(overrides_path_now())
@@ -437,7 +478,11 @@ def main(argv):
         if argv[2] not in ALLOWED:
             print(f"clave desconocida: {argv[2]}", file=sys.stderr)
             return 2
-        return set_override(argv[2], argv[3], argv[4])
+        try:
+            return set_override(argv[2], argv[3], argv[4])
+        except ValueError as error:
+            print(str(error), file=sys.stderr)
+            return 2
     if len(argv) >= 2 and argv[1] == "persist":
         if len(argv) < 5:
             print("uso: set-setting.py persist <clave> <valor> <tipo>", file=sys.stderr)
@@ -445,7 +490,11 @@ def main(argv):
         if argv[2] not in ALLOWED:
             print(f"clave desconocida: {argv[2]}", file=sys.stderr)
             return 2
-        return persist_override(argv[2], argv[3], argv[4])
+        try:
+            return persist_override(argv[2], argv[3], argv[4])
+        except ValueError as error:
+            print(str(error), file=sys.stderr)
+            return 2
     if len(argv) >= 2 and argv[1] == "merge":
         return merge_overrides()
     if len(argv) < 3:
@@ -462,7 +511,11 @@ def main(argv):
             print(f"clave desconocida: {key}", file=sys.stderr)
             return 2
 
-    return write_settings(pairs)
+    try:
+        return write_settings(pairs)
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
 
 
 def write_settings(pairs) -> int:

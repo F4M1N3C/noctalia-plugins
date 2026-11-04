@@ -72,6 +72,7 @@ local commands = {}
 local tree = nil
 local closed = false
 local notified = {}
+local logs = {}
 -- El panel se redibuja en cada cambio; algunos callbacks llegan tarde.
 local renders = 0
 -- Fallos simulados: el volcado de overrides y playerctl.
@@ -177,7 +178,9 @@ noctalia = {
   notifyError = function(title, body)
     table.insert(notified, { title = title, body = body })
   end,
-  log = function() end,
+  log = function(message)
+    table.insert(logs, tostring(message))
+  end,
   runAsync = function(argv, callback)
     local exitCode = 0
     if type(argv) == "table" then
@@ -790,6 +793,13 @@ onIpcDelWidget("set", "custom_color rojo")
 eq(overrides.custom_color, nil, "el IPC del widget no guarda un color invalido")
 onIpcDelWidget("set", "custom_color #12ab34")
 eq(overrides.custom_color, "#12ab34", "el IPC del widget guarda un color valido")
+overrides.font_family = nil
+onIpcDelWidget("set", "font_family=")
+eq(overrides.font_family, nil, "el IPC del widget no guarda una familia vacia")
+check(
+  #logs > 0 and logs[#logs]:match("font_family") ~= nil,
+  "un valor rechazado por IPC deja un aviso en el log"
+)
 
 overrides.glyph = "volume"
 settingsModule.refresh()
@@ -824,6 +834,8 @@ check(familyInput ~= nil, "font_family se puede escribir")
 if familyInput ~= nil then
   familyInput.props.onChange("Iosevka")
   eq(overrides.font_family, "Iosevka", "el campo de font_family guarda la familia escrita")
+  familyInput.props.onChange("")
+  eq(overrides.font_family, "Iosevka", "el campo de font_family no guarda una familia vacia")
 end
 
 -- 25. El panel ofrece los rangos del manifiesto -----------------------------

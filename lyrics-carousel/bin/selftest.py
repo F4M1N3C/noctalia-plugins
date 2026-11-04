@@ -31,6 +31,10 @@ import time
 import types
 from contextlib import contextmanager
 
+# Cargar el script con SourceFileLoader (script_module) escribiria
+# bin/__pycache__/*.pyc: el autotest no debe dejar rastro en el plugin.
+sys.dont_write_bytecode = True
+
 HERE = os.path.dirname(os.path.realpath(__file__))
 PLUGIN_DIR = os.path.dirname(HERE)
 HELPER = os.path.join(HERE, "set-setting.py")
@@ -563,16 +567,6 @@ def check_idioma_ventana():
 def check_limites_ajustes():
     """Los limites del script son los del manifiesto."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-limites-") as temporal:
-        estado = os.path.join(temporal, "state")
-        ajustes = os.path.join(estado, "noctalia", "settings.toml")
-        os.makedirs(os.path.dirname(ajustes), exist_ok=True)
-        with open(ajustes, "w", encoding="utf-8") as handle:
-            handle.write(
-                '[plugin_settings."faminec/lyrics-carousel"]\n'
-                "width = 100\n"
-                "height = 100\n"
-                "offset_ms = 99999\n"
-            )
         with env_temporal(
             {
                 "XDG_CACHE_HOME": os.path.join(temporal, "cache"),
@@ -805,6 +799,10 @@ def check_modo_imagen_no_se_rearma():
     que el modo imagen no se rearma solo (si se rearmara, el fallo se
     repetiria en bucle). Solo se rearma cuando el usuario lo pide otra
     vez: entonces el valor efectivo pasa de "text" a "image".
+
+    La prueba monta la secuencia real: tres fallos de draw_image (que
+    antes dejaban self.cfg["render_mode"]="text" en memoria) y una
+    recarga que todavia trae "image" porque el helper no ha escrito.
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
         with env_temporal({"XDG_CACHE_HOME": cache}):
@@ -833,15 +831,73 @@ def check_modo_imagen_no_se_rearma():
                 app.status_message = ""
                 app.dirty = False
                 app.need_clear = False
+                app.pending_overrides = {}
                 return app
 
             original = mod.load_settings
+            original_graphics = sys.modules.get("graphics")
             try:
-                # 1) El modo imagen fallo y sigue pedido en los ajustes
-                #    (la escritura de "text" todavia no ha llegado), pero
-                #    el usuario cambio otra cosa: el modo imagen no se
-                #    rearma (si se rearmara, volveria a fallar en bucle).
+                # 0) Secuencia real de fallos: tres renders que revientan
+                #    desactivan el modo imagen y dejan "text" guardado.
+                guardados = []
+
+                class RenderizadorQueFalla:
+                    gfx = types.SimpleNamespace(supported=True)
+
+                    def render(self):
+                        raise RuntimeError("fallo simulado")
+
                 app = app_nuevo("image", 22)
+                app.image_disabled = False
+                app.image_failures = 0
+                app.image = RenderizadorQueFalla()
+                app.last_mode = "image"
+                app._save_override = (
+                    lambda key, value, kind="string": guardados.append(
+                        (key, value, kind)
+                    )
+                )
+                app._draw_text_frame = lambda force=False: None
+                for _ in range(3):
+                    app.draw_image()
+                check(
+                    "tres fallos desactivan el modo imagen",
+                    app.image_disabled is True and app.image_failures >= 3,
+                    "image_disabled=%s fallos=%s"
+                    % (app.image_disabled, app.image_failures),
+                )
+                check(
+                    "el script deja el modo texto guardado tras los fallos",
+                    guardados == [("render_mode", "text", "string")],
+                    str(guardados),
+                )
+                check(
+                    "draw_image no cambia la configuracion en memoria",
+                    app.cfg.get("render_mode") == "image",
+                    "render_mode=%s" % app.cfg.get("render_mode"),
+                )
+
+                # use_image no es tautologico: hay un renderizador que si
+                # soporta imagenes y terminal_cells devuelve tamaño. Aun
+                # asi no se usa porque el modo esta desactivado.
+                falso = types.ModuleType("graphics")
+                falso.terminal_cells = lambda: (80, 24, 1920, 1080)
+                sys.modules["graphics"] = falso
+                check(
+                    "un modo imagen desactivado no se usa aunque el renderizador sirva",
+                    app.use_image() is False,
+                    "render_mode=%s" % app.cfg.get("render_mode"),
+                )
+                app.image_disabled = False
+                check(
+                    "control: sin el fallo el renderizador se usaria",
+                    app.use_image() is True,
+                    "render_mode=%s" % app.cfg.get("render_mode"),
+                )
+                app.image_disabled = True
+
+                # La recarga trae "image" (el helper aun no ha escrito
+                # "text"): no puede rearmar el modo que acaba de fallar.
                 mod.load_settings = lambda: {
                     **mod.DEFAULTS,
                     "render_mode": "image",
@@ -850,13 +906,9 @@ def check_modo_imagen_no_se_rearma():
                 app._reload_config()
                 check(
                     "un cambio que no es el modo no rearma el modo imagen",
-                    app.image_disabled is True,
-                    "image_disabled=%s" % app.image_disabled,
-                )
-                check(
-                    "el modo imagen desactivado no se usa para dibujar",
-                    app.use_image() is False,
-                    "render_mode=%s" % app.cfg.get("render_mode"),
+                    app.image_disabled is True and app.image_failures >= 3,
+                    "image_disabled=%s fallos=%s"
+                    % (app.image_disabled, app.image_failures),
                 )
 
                 # 2) El usuario pide el modo imagen otra vez (el valor
@@ -895,6 +947,10 @@ def check_modo_imagen_no_se_rearma():
                 )
             finally:
                 mod.load_settings = original
+                if original_graphics is None:
+                    sys.modules.pop("graphics", None)
+                else:
+                    sys.modules["graphics"] = original_graphics
 
 
 def _app_de_config(mod):
@@ -1163,6 +1219,62 @@ def check_estimate_times_dentro_de_la_cancion():
             check(
                 "las líneas sin tiempo del final se reparten en orden",
                 inicios[1] < inicios[2] < inicios[3] < inicios[4] < inicios[5],
+                str(inicios),
+            )
+
+            # La última línea real puede caer justo al final (o más allá):
+            # las estimadas no pueden acabar en el segundo 104 de una
+            # canción de 100 s.
+            lines = [
+                mod.LyricLine(100.0, 0, "con tiempo"),
+                mod.LyricLine(-1, 0, "sin tiempo"),
+                mod.LyricLine(-1, 0, "sin tiempo 2"),
+            ]
+            mod.estimate_times(lines, 100.0)
+            inicios = [line.start for line in lines]
+            check(
+                "las estimadas tras una real al final no se salen de la canción",
+                all(0.0 <= inicio <= 100.0 for inicio in inicios[1:]),
+                str(inicios),
+            )
+
+            # Entre dos reales, la siguiente puede estar más allá del final
+            # de la canción: el hueco se recorta a la duración.
+            lines = [
+                mod.LyricLine(10.0, 0, "con tiempo"),
+                mod.LyricLine(-1, 0, "sin tiempo"),
+                mod.LyricLine(200.0, 0, "con tiempo"),
+            ]
+            mod.estimate_times(lines, 100.0)
+            check(
+                "una estimada entre dos reales no se sale de la canción",
+                0.0 <= lines[1].start <= 100.0,
+                str([line.start for line in lines]),
+            )
+
+            # La primera real en el segundo 0 no deja hueco delante: las
+            # estimadas se quedan en el origen, no saltan detrás de ella.
+            lines = [
+                mod.LyricLine(-1, 0, "sin tiempo"),
+                mod.LyricLine(-1, 0, "sin tiempo 2"),
+                mod.LyricLine(0.0, 0, "con tiempo"),
+            ]
+            mod.estimate_times(lines, 100.0)
+            inicios = [line.start for line in lines]
+            check(
+                "sin hueco antes de la primera real las estimadas no se adelantan",
+                inicios[0] <= inicios[2] and inicios[1] <= inicios[2] and inicios[0] <= inicios[1],
+                str(inicios),
+            )
+
+            # Sin ninguna ancla también manda la duración: una canción
+            # corta no puede dejar líneas en el segundo 13.
+            lines = [mod.LyricLine(-1, 0, "línea %d" % indice) for indice in range(10)]
+            mod.estimate_times(lines, 10.0)
+            inicios = [line.start for line in lines]
+            check(
+                "sin anclas las estimadas caben en una canción corta",
+                all(0.0 <= inicio <= 10.0 for inicio in inicios),
                 str(inicios),
             )
 
@@ -1477,6 +1589,9 @@ def entorno_de_prueba(base: str) -> dict:
         "lyrics-carousel",
         "overrides.json",
     )
+    # Los subprocesos importan paths/graphics/image_renderer: sin esto
+    # dejarian bin/__pycache__/*.pyc en el plugin.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     env.pop("COLUMNS", None)
     env.pop("LINES", None)
     return env
@@ -1710,6 +1825,40 @@ def check_limites_desde_el_manifiesto():
             sin_tomllib == esperado_limites,
             f"regex={sorted(sin_tomllib.items())} manifiesto={sorted(esperado_limites.items())}",
         )
+
+        # El fallback no puede depender de que el manifiesto use solo el
+        # formato mas simple: cualquier bloque que no sea [[setting]] debe
+        # cortar el ajuste anterior, y los valores pueden ir entre comillas
+        # simples, con signo + o en notacion cientifica.
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".toml", delete=False, encoding="utf-8"
+        ) as handle:
+            handle.write(
+                "[[setting]]\n"
+                'key = "font_size"\n'
+                "min = +6\n"
+                "max = 1e2\n"
+                "\n"
+                "[[panel]]\n"
+                "min = 1\n"
+                "max = 2\n"
+                "\n"
+                "[[setting]]\n"
+                "key = 'active_scale'\n"
+                "min = 1.0\n"
+                "max = 2.5\n"
+            )
+            manifiesto_raro = handle.name
+        try:
+            limites_raros = helper.manifest_limits_sin_tomllib(manifiesto_raro)
+        finally:
+            os.unlink(manifiesto_raro)
+        check(
+            "el fallback corta en cualquier bloque y acepta otros formatos",
+            limites_raros == {"font_size": (6, 100), "active_scale": (1, 2.5)},
+            str(limites_raros),
+        )
+
         # Y el recorte tiene que funcionar con esos limites.
         original_tomllib = helper.tomllib
         try:
@@ -1791,6 +1940,71 @@ def check_limites_desde_el_manifiesto():
             )
 
 
+def check_formatos_del_helper():
+    """El helper valida el formato, no solo los rangos.
+
+    El panel y el IPC del widget aplican los patrones de lib/settings.luau
+    (glifo, color, familia). El helper es otra via de escritura: si no
+    validara, cualquier llamada podria dejar un icono inexistente o un
+    color invalido en los ajustes. Un valor rechazado no se guarda ni en
+    los overrides ni en el settings.toml.
+    """
+    casos = (
+        ("glyph", "headphones", "string", True),
+        ("glyph", "music_note", "string", False),
+        ("glyph", "Music!", "string", False),
+        ("custom_color", "#12ab34", "string", True),
+        ("custom_color", "#fff", "string", False),
+        ("custom_color", "rojo", "string", False),
+        ("font_family", "Iosevka", "string", True),
+        ("font_family", "", "string", False),
+    )
+    for clave, valor, tipo, valido in casos:
+        with tempfile.TemporaryDirectory(prefix="lyrics-carousel-formatos-") as temporal:
+            env = entorno_de_prueba(temporal)
+            estado = os.path.join(temporal, ".local", "state", "noctalia")
+            os.makedirs(estado, exist_ok=True)
+            ajustes_path = os.path.join(estado, "settings.toml")
+            with open(ajustes_path, "w", encoding="utf-8") as handle:
+                handle.write("")
+            proceso = subprocess.run(
+                [sys.executable, HELPER, "persist", clave, valor, tipo],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=env,
+            )
+            overrides_path = os.path.join(
+                estado,
+                "plugins",
+                "data",
+                "faminec",
+                "lyrics-carousel",
+                "overrides.json",
+            )
+            try:
+                with open(overrides_path, encoding="utf-8") as handle:
+                    overrides = json.load(handle)
+            except (OSError, ValueError):
+                overrides = {}
+            ajustes = leer_ajustes(ajustes_path)
+            if valido:
+                check(
+                    f"el helper guarda {clave}={valor!r}",
+                    proceso.returncode == 0
+                    and ajustes.get(clave) == valor,
+                    f"código={proceso.returncode} ajustes={ajustes.get(clave)!r}",
+                )
+            else:
+                check(
+                    f"el helper rechaza {clave}={valor!r}",
+                    proceso.returncode != 0
+                    and clave not in overrides
+                    and clave not in ajustes,
+                    f"código={proceso.returncode} overrides={overrides!r} ajustes={ajustes.get(clave)!r}",
+                )
+
+
 def main(argv):
     verbose = "--verbose" in argv
 
@@ -1819,6 +2033,13 @@ def main(argv):
         "faminec",
         "lyrics-carousel",
         "overrides.json",
+    )
+    os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+    # Bytecode que ya hubiera (de una ejecucion anterior): al final solo
+    # se avisa de los .pyc nuevos, que son los que deja este autotest.
+    cache_plugin = os.path.join(HERE, "__pycache__")
+    bytecode_antes = (
+        set(os.listdir(cache_plugin)) if os.path.isdir(cache_plugin) else set()
     )
 
     # 1) el helper tiene que estar al lado del script (ruta real, no la del
@@ -1911,6 +2132,7 @@ def main(argv):
     check_idioma_ventana()
     check_limites_ajustes()
     check_limites_desde_el_manifiesto()
+    check_formatos_del_helper()
     check_titulo_vacio_no_rebusca()
     check_timeout_adaptador()
     check_tiempos_reales_no_se_pisan()
@@ -2003,6 +2225,14 @@ def main(argv):
     if os.path.isdir(cache):
         leftovers = [n for n in os.listdir(cache) if n.startswith("lyrics-carousel")]
     check("sin bytecode en el lanzador", not leftovers, ", ".join(leftovers))
+    nuevos = []
+    if os.path.isdir(cache_plugin):
+        nuevos = sorted(
+            name
+            for name in os.listdir(cache_plugin)
+            if name.endswith(".pyc") and name not in bytecode_antes
+        )
+    check("sin bytecode nuevo en el plugin", not nuevos, ", ".join(nuevos))
 
     failed = 0
     for name, ok, detail in results:

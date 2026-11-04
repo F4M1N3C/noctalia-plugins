@@ -1131,6 +1131,12 @@ def estimate_times(lines, duration: float):
     principio. Repartirlas todas desde el principio (como se hacía) deja que
     una línea del final de la lista empiece a sonar en el segundo 6, por
     delante de la parte que sí tiene tiempos.
+
+    Si la duración se conoce, todas las estimaciones se recortan a ella:
+    una línea fuera de la canción nunca llega a resaltarse. Con una lista
+    desordenada (la siguiente ancla es anterior a la anterior) no existe
+    un intervalo válido: la estimación se queda detrás de la anterior en
+    la lista, que es la que la precede en pantalla.
     """
     sin_tiempo = [
         (index, line)
@@ -1175,6 +1181,10 @@ def estimate_times(lines, duration: float):
                 {"antes": antes, "despues": despues, "lineas": [linea]}
             )
 
+    # Si la duración se conoce, ninguna estimación puede caer fuera de la
+    # canción: el último instante útil es el final.
+    limite = duration if duration and duration > 0 else None
+
     for grupo in grupos:
         miembros = grupo["lineas"]
         antes = grupo["antes"]
@@ -1182,53 +1192,105 @@ def estimate_times(lines, duration: float):
         total = len(miembros)
         if antes and despues:
             # Entre dos líneas con tiempo: se reparten el hueco intermedio.
+            # La siguiente puede estar más allá del final (un LRC con
+            # tiempos rotos): el hueco se recorta a la duración.
             span = despues[1] - antes[1]
-            paso = span / (total + 1) if span > 0 else hueco
-            if paso <= 0:
+            if span > 0 and limite is not None:
+                span = min(span, limite - antes[1])
+            if span > 0:
+                paso = span / (total + 1)
+            elif despues[1] <= antes[1]:
+                # Lista desordenada: la siguiente ancla es anterior a la
+                # anterior. Se usa el hueco fijo detrás de la anterior,
+                # recortado a lo que quede de canción.
                 paso = hueco
+                if limite is not None:
+                    paso = (
+                        min(hueco, (limite - antes[1]) / (total + 1))
+                        if limite > antes[1]
+                        else 0.0
+                    )
+            else:
+                # La siguiente ancla cae al final de la canción o más
+                # allá: no hay hueco real entre las dos.
+                paso = 0.0
             for indice, linea in enumerate(miembros):
-                linea.start = antes[1] + (indice + 1) * paso
+                if paso > 0:
+                    linea.start = antes[1] + (indice + 1) * paso
+                else:
+                    linea.start = (
+                        min(antes[1], limite)
+                        if limite is not None
+                        else antes[1]
+                    )
+                if linea.start < 0:
+                    linea.start = 0.0
                 if linea.duration <= 0:
-                    linea.duration = paso * 0.92
+                    linea.duration = max(0.1, paso * 0.92) if paso > 0 else 0.1
         elif antes:
             # Detrás de la última línea con tiempo. Si la canción se sabe
             # y no caben todas las líneas antes de que termine, el paso se
             # recorta: una línea fuera de la canción nunca se resaltaba.
-            paso = hueco
-            if duration and duration > antes[1]:
-                paso = min(hueco, (duration - antes[1]) / (total + 1))
+            if limite is None:
+                paso = hueco
+            elif limite > antes[1]:
+                paso = min(hueco, (limite - antes[1]) / (total + 1))
+            else:
+                # La última real ya está en el final (o más allá): no queda
+                # sitio detrás sin salirse de la canción.
+                paso = 0.0
             for indice, linea in enumerate(miembros):
-                linea.start = antes[1] + (indice + 1) * paso
+                if paso > 0:
+                    linea.start = antes[1] + (indice + 1) * paso
+                else:
+                    linea.start = (
+                        min(antes[1], limite)
+                        if limite is not None
+                        else antes[1]
+                    )
+                if linea.start < 0:
+                    linea.start = 0.0
                 if linea.duration <= 0:
-                    linea.duration = max(0.1, paso * 0.92)
+                    linea.duration = max(0.1, paso * 0.92) if paso > 0 else 0.1
         elif despues:
             # Antes de la primera línea con tiempo. Se reparte hacia atrás
-            # sin salirse del origen: si no, varias líneas sin tiempo
-            # delante de una real muy temprana acaban todas en el segundo
-            # 0 y se resaltan a la vez.
-            inicio = max(0.0, despues[1] - total * hueco)
-            paso = (despues[1] - inicio) / (total + 1)
+            # sin salirse del origen ni de la canción: si no, varias
+            # líneas sin tiempo delante de una real muy temprana acaban
+            # todas en el segundo 0 y se resaltan a la vez.
+            fin = despues[1]
+            if limite is not None:
+                fin = min(fin, limite)
+            inicio = max(0.0, fin - total * hueco)
+            paso = (fin - inicio) / (total + 1)
             if paso <= 0:
-                # La línea real llega en el segundo 0: no hay hueco antes,
-                # pero al menos las líneas no comparten el mismo instante.
-                paso = 0.001
+                # La línea real llega en el segundo 0 (o la canción es tan
+                # corta que no hay hueco): se quedan en el origen.
+                paso = 0.0
             for indice, linea in enumerate(miembros):
                 linea.start = inicio + indice * paso
                 if linea.duration <= 0:
-                    linea.duration = max(0.1, paso * 0.92)
+                    linea.duration = max(0.1, paso * 0.92) if paso > 0 else 0.1
         else:
-            # Ninguna línea tiene tiempo: se reparte desde el principio.
-            if duration and duration > 20:
-                inicio = min(6.0, duration * 0.05)
-                fin = max(inicio + 1, duration - 4.0)
+            # Ninguna línea tiene tiempo: se reparte desde el principio y,
+            # si la duración se conoce, sin pasarse del final.
+            if limite is not None and limite > 20:
+                inicio = min(6.0, limite * 0.05)
+                fin = max(inicio + 1, limite - 4.0)
                 paso = (fin - inicio) / max(1, total)
+            elif limite is not None:
+                inicio = min(1.0, limite * 0.1)
+                paso = (limite - inicio) / (total + 1)
+                if paso <= 0:
+                    paso = 0.0
             else:
                 inicio = 1.0
                 paso = 4.0
             for indice, linea in enumerate(miembros):
                 linea.start = inicio + indice * paso
+                if limite is not None:
+                    linea.start = min(linea.start, limite)
                 if linea.duration <= 0:
-                    linea.duration = paso * 0.92
+                    linea.duration = max(0.1, paso * 0.92) if paso > 0 else 0.1
     return lines
 
 
@@ -1890,7 +1952,11 @@ class LyricsCarousel:
             if key in self.cfg
         ) and set(cfg.keys()) == set(self.cfg.keys()):
             return
-        previous = self.cfg
+        # Copia congelada de la configuracion anterior: comparar contra el
+        # mismo diccionario que se va a reemplazar permite que cualquier
+        # mutacion local (por ejemplo, la que hacia draw_image al fallar)
+        # se confunda con una peticion nueva del usuario.
+        previous = dict(self.cfg)
         # El modo texto pedido desde los ajustes es una eleccion explicita:
         # limpia el fallo anterior y permite volver a pedir imagen despues.
         # Si en cambio la configuracion sigue pidiendo imagen y el modo se
@@ -2450,7 +2516,11 @@ class LyricsCarousel:
             if self.image_failures >= 3:
                 self.log("modo imagen desactivado tras varios fallos")
                 self.image_disabled = True
-                self.cfg["render_mode"] = "text"
+                # No se toca self.cfg: es la configuracion leida, y
+                # _reload_config la compara para decidir si el usuario ha
+                # pedido imagen otra vez. Mutarla aqui hacia que la
+                # siguiente recarga pareciera una peticion nueva y rearmara
+                # el modo que acaba de fallar.
                 # Se guarda el cambio: si la configuracion siguiera pidiendo
                 # imagen, cada recarga volveria a activar el modo que falla.
                 self._save_override("render_mode", "text", "string")
@@ -2465,7 +2535,7 @@ class LyricsCarousel:
             if self.image_failures >= 3:
                 self.log("modo imagen desactivado: no se puede dibujar")
                 self.image_disabled = True
-                self.cfg["render_mode"] = "text"
+                # Igual que arriba: la configuracion en memoria no se muta.
                 self._save_override("render_mode", "text", "string")
             self.last_mode = ""
             self.need_clear = True

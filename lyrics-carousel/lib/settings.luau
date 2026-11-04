@@ -88,6 +88,9 @@ M.LIMITS = LIMITS
 local PATTERNS = {
   glyph = "^[a-z0-9-]+$",
   custom_color = "^#%x%x%x%x%x%x$",
+  -- La fuente es texto libre, pero vacia dejaria la ventana sin tipografia:
+  -- el campo del panel y el IPC del widget tienen que rechazarla igual.
+  font_family = "^.+$",
 }
 
 M.PATTERNS = PATTERNS
@@ -399,6 +402,9 @@ function M.apply(key, value)
     -- IPC y su valor tiene que ser el mismo que veria el panel.
     value = M.clamp(key, value)
     if value == nil then
+      -- Rechazar en silencio deja al usuario (y al log) sin saber por que
+      -- el IPC no ha cambiado nada.
+      noctalia.log("lyrics-carousel: valor fuera de rango para " .. tostring(key))
       return nil
     end
     -- Lo mismo con el formato: un glifo con mayusculas o un color que
@@ -406,6 +412,7 @@ function M.apply(key, value)
     -- sin color.
     value = M.validate(key, value)
     if value == nil then
+      noctalia.log("lyrics-carousel: formato no válido para " .. tostring(key))
       return nil
     end
   end

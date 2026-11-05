@@ -644,10 +644,27 @@ local function clearLyricsCache()
     end
     -- El script ya no guarda nada: la ventana abierta tiene que olvidarse de
     -- lo que tenía y volver a buscar la canción que suena ahora.
-    runAsync({ "pkill", "-USR1", "-f", "lyrics-carousel" }, function()
+    --
+    -- Se señaliza el PID que la ventana deja escrito, no se busca el proceso
+    -- por su línea de comandos: SIGUSR1 mata por defecto, así que un
+    -- `pkill -f lyrics-carousel` alcanzaría también a un editor que tenga el
+    -- fichero abierto.
+    local datos = noctalia.pluginDataDir()
+    local pid = ""
+    if datos ~= nil and datos ~= "" then
+      pid = tostring(noctalia.readFile(datos .. "/window.pid") or ""):gsub("%s+", "")
+    end
+    local function avisar()
       safe("notify", noctalia.notify, tr("title"), tr("clear_cache_done"))
       render()
-    end)
+    end
+    if pid:match("^%d+$") then
+      runAsync({ "kill", "-USR1", pid }, avisar)
+      return
+    end
+    -- No hay ventana abierta: la caché queda vacía y la próxima ya buscará
+    -- de cero. No es un error, así que se avisa igualmente.
+    avisar()
   end)
 end
 

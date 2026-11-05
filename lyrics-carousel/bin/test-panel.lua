@@ -621,19 +621,36 @@ end
 local clearCache = findByKey("button", "clear-cache")
 check(clearCache ~= nil, "el panel tiene un boton para vaciar la cache")
 if clearCache ~= nil then
+  -- La ventana abierta deja su PID en el directorio de datos. Se señaliza
+  -- ese PID y no se busca por línea de comandos: SIGUSR1 mata por defecto.
+  local pidLeido = nil
+  noctalia.readFile = function(path)
+    if path:match("window%.pid$") then
+      pidLeido = path
+      return "4242\n"
+    end
+    reads = reads + 1
+    return encodeOverrides()
+  end
   clearCache.props.onClick()
+  noctalia.readFile = function()
+    reads = reads + 1
+    return encodeOverrides()
+  end
+
   local lanzado = false
-  local senal = false
+  local senal = nil
   for _, argv in ipairs(commands) do
     if argv[#argv] == "--clear-cache" then
       lanzado = true
     end
-    if argv[2] == "-USR1" then
-      senal = true
+    if argv[2] == "-USR1" and argv[3] then
+      senal = argv[3]
     end
   end
   check(lanzado, "el boton lanza el script con --clear-cache")
-  check(senal, "el vaciado avisa a la ventana abierta (SIGUSR1)")
+  check(senal == "4242", "el vaciado avisa a la ventana abierta por su PID")
+  check(pidLeido ~= nil, "el PID se lee del directorio de datos del plugin")
 
   local aviso = nil
   for _, entry in ipairs(notified) do
@@ -652,6 +669,34 @@ if clearCache ~= nil then
     end
   end
   check(pista ~= nil, "el panel explica cuando hace falta vaciar la cache")
+
+  -- Sin ventana abierta no hay PID: la caché queda vacía y la próxima ventana
+  -- buscará de cero. No es un error, así que se avisa igualmente.
+  local avisosAntes = #notified
+  local comandosAntes = #commands
+  noctalia.readFile = function(path)
+    if path:match("window%.pid$") then
+      return ""
+    end
+    reads = reads + 1
+    return encodeOverrides()
+  end
+  clearCache.props.onClick()
+  noctalia.readFile = function()
+    reads = reads + 1
+    return encodeOverrides()
+  end
+  check(
+    #notified > avisosAntes,
+    "sin ventana abierta el vaciado tambien avisa"
+  )
+  local senalNueva = false
+  for i = comandosAntes + 1, #commands do
+    if commands[i][2] == "-USR1" then
+      senalNueva = true
+    end
+  end
+  check(not senalNueva, "sin ventana abierta no se señaliza a nadie")
 end
 
 -- 14. Un interruptor lee bien un valor que llega como cadena ---------------------

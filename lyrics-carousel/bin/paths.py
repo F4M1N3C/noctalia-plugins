@@ -46,6 +46,17 @@ def data_dir() -> str:
     return os.path.join(state_dir(), "plugins", "data", *PLUGIN_ID.split("/"))
 
 
+def pid_path() -> str:
+    """Ruta del fichero con el PID de la ventana abierta.
+
+    El panel necesita avisar a la ventana cuando vacía la caché. Se señaliza
+    el PID Guardado y no se busca el proceso por su línea de comandos: SIGUSR1
+    mata por defecto, así que un `pkill -f lyrics-carousel` podría alcanzar a
+    un editor que tenga el fichero abierto.
+    """
+    return os.path.join(data_dir(), "window.pid")
+
+
 def overrides_path() -> str:
     """Ruta del fichero de overrides.
 

@@ -146,8 +146,10 @@ the window has to be opened again for them to change.
   `direction = down` the future used to enter on the wrong side and the neighbours
   overlapped the active block.
 - Emptying the lyrics cache from the panel now tells the open window to look the
-  song up again (`SIGUSR1`), confirms with a notification and explains when it is
-  actually needed. For a single song, `r` in the window is enough.
+  song up again (`SIGUSR1` sent to the PID the window leaves in
+  `window.pid`, never to a `pkill -f` match: SIGUSR1 kills by default), confirms
+  with a notification and explains when it is actually needed. For a single song,
+  `r` in the window is enough.
 - The bar icon is no longer in the panel: it belongs to the bar widget and is
   changed in Settings → Plugins → Lyrics Carousel, the only setting left in the
   manifest. Everything else is panel-only, and the panel reads the saved values

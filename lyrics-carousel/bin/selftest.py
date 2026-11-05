@@ -1188,6 +1188,29 @@ def check_recarga_por_senal():
                 "llamadas=%s" % (llamadas,),
             )
 
+            # El PID de la ventana: el panel señaliza ese proceso y no busca
+            # por línea de comandos (SIGUSR1 mata por defecto).
+            app.reload_requested = False
+            app.log = lambda message: None
+            app._announce_pid()
+            ruta = mod.pid_path()
+            try:
+                with open(ruta, encoding="utf-8") as handle:
+                    escrito = handle.read().strip()
+            except OSError:
+                escrito = ""
+            check(
+                "la ventana deja escrito su PID",
+                escrito == str(os.getpid()),
+                "escrito=%r" % (escrito,),
+            )
+            app._forget_pid()
+            check(
+                "al cerrarse la ventana borra su PID",
+                not os.path.exists(ruta),
+                ruta,
+            )
+
 
 def check_tamano_terminal_real():
     """update_size() respeta las celdas reales de la terminal.

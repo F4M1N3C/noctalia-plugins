@@ -72,7 +72,13 @@ except Exception as error:  # noqa: BLE001  (el modo imagen es opcional)
 # Las rutas del estado (settings.toml y overrides) viven en un modulo
 # propio: el script y el helper tienen que buscar el mismo sitio o uno
 # escribiria donde el otro lee.
-from paths import data_dir, overrides_path, settings_path, state_dir  # noqa: E402
+from paths import (  # noqa: E402
+    data_dir,
+    overrides_path,
+    pid_path,
+    settings_path,
+    state_dir,
+)
 
 CACHE_DIR = os.path.join(
     os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
@@ -2928,6 +2934,7 @@ class LyricsCarousel:
     def run(self):
         interactive = not self.args.once
         self._setup_terminal(interactive)
+        self._announce_pid()
         try:
             while not self.stop_requested:
                 self.update_size()
@@ -2950,7 +2957,31 @@ class LyricsCarousel:
                         break
                 time.sleep(0.033)
         finally:
+            self._forget_pid()
             self._restore_terminal(interactive)
+
+    # -- PID de la ventana -------------------------------------------------
+
+    def _announce_pid(self):
+        """Deja escrito el PID para que el panel pueda avisar a esta ventana.
+
+        Sin esto, el panel tendria que buscar el proceso por su linea de
+        comandos, y SIGUSR1 mata por defecto: un `pkill -f lyrics-carousel`
+        alcanzaria tambien a un editor que tenga el fichero abierto.
+        """
+        try:
+            os.makedirs(data_dir(), exist_ok=True)
+            with open(pid_path(), "w", encoding="utf-8") as handle:
+                handle.write(str(os.getpid()))
+        except OSError as error:
+            self.log(f"no se pudo guardar el PID: {error!r}")
+
+    def _forget_pid(self):
+        """Borra el PID: la ventana ya no está, señalizarla no tiene sentido."""
+        try:
+            os.unlink(pid_path())
+        except OSError:
+            pass
 
     def _setup_terminal(self, interactive: bool):
         if not interactive or not sys.stdin.isatty():

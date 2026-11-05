@@ -98,7 +98,7 @@ window that is already open.
 | `custom_y` | `int` | `100` | Custom vertical position (only with anchor = custom). |
 | `accent` | `select` | `primary` | Colour of the active line: `primary` (follows the wallpaper), an ANSI colour or `custom`. |
 | `custom_color` | `string` | `#e46767` | Hex colour used when `accent = custom`. |
-| `active_scale` | `double` | `1.35` | Size multiplier of the line being sung (image and text mode). |
+| `active_scale` | `double` | `1.35` | Size multiplier of the line being sung (image and text mode). In text mode it is drawn with kitty's text sizing protocol (`OSC 66`), which can only draw a few sizes: the line is drawn at `s × n/d`, the closest one to the factor, and it takes two rows of the grid. |
 | `visible_above` | `int` | `6` | Lines visible above the active one. |
 | `visible_below` | `int` | `6` | Lines visible below the active one. |
 | `language` | `select` | `auto` | Language of the texts inside the window: `auto` (the system language), `en` or `es`. |
@@ -113,6 +113,20 @@ the window has to be opened again for them to change.
 
 ### 2.1.0
 
+- The panel is rebuilt around the settings that change the look of the window: one
+  font dropdown (with the fonts kitty accepts and an option to type any other),
+  the nine anchor positions of the window as a 3×3 grid with their names, the
+  accent colours as a palette of chips, and the colour, the bar icon and the
+  visualiser in their own sections. The custom colour only shows up when the
+  accent is `custom`, and the visualiser is replaced by a note when the header
+  is on.
+- The active line is drawn at the right size in text mode: it uses kitty's text
+  sizing protocol with the metadata that kitty understands (`s × n/d`), so the
+  factor is applied instead of being drawn at 20% of its size, and the text is
+  split into the blocks that kitty needs to keep the characters together.
+- The window uses the real size of the terminal. It used to assume a minimum of
+  30×12 cells, which made every row overflow and the lyrics break apart in
+  windows with a large font.
 - The panel now exposes every setting of the manifest: `spacing`, `animation_ms`,
   `offset_ms`, `custom_color` and `glyph` are no longer settings-page only.
 - Numeric controls use sliders with the manifest ranges (`font_size`, `active_scale`,

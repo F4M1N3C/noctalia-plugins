@@ -481,6 +481,175 @@ def check_ecualizador_fila():
             )
 
 
+def bloques_osc66(linea):
+    """Extrae los bloques OSC 66 de una fila: (metadatos, texto)."""
+    patron = re.compile("\x1b\\]66;([^;]*);([^\x07]*)\x07")
+    return patron.findall(linea)
+
+
+def texto_visible(linea):
+    """Quita las secuencias de control de una fila y deja el texto.
+
+    El texto de los bloques OSC 66 va dentro de la secuencia, asi que de
+    esos se recupera solo el payload.
+    """
+    linea = re.sub("\x1b\\]66;[^;]*;([^\x07]*)\x07", r"\1", linea)
+    return re.sub("\x1b\\][^\x07]*\x07|\x1b\\[[0-9;]*m", "", linea)
+
+
+def metadatos_osc66(metadatos):
+    """Convierte 's=2:n=6:d=10:w=7' en un diccionario."""
+    datos = {}
+    for parte in metadatos.split(":"):
+        if "=" in parte:
+            clave, valor = parte.split("=", 1)
+            datos[clave] = valor
+    return datos
+
+
+def factor_osc66(datos):
+    """Factor de tamaño que calcula kitty con esos metadatos.
+
+    Kitty multiplica el tamaño de la fuente por s y lo reduce despues por
+    la fraccion n/d. Con s=1 y n/d=2/10 el texto sale al 20% de su tamaño.
+    """
+    escala = int(datos.get("s", 1))
+    numerador = int(datos.get("n", 0))
+    denominador = int(datos.get("d", 0))
+    if numerador and denominador:
+        return escala * numerador / denominador
+    return float(escala)
+
+
+def check_escala_linea_activa():
+    """La línea activa se dibuja al tamaño pedido con el protocolo de kitty.
+
+    Kitty separa los metadatos con ':' y el texto empieza tras el ultimo
+    ';'. Ademas calcula el tamaño real como s * (n/d): un factor de 1.2
+    necesita s=2 con n/d=6/10, porque con s=1 el maximo es 1.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.theme = mod.Theme()
+            app.cfg = dict(mod.DEFAULTS)
+            app.cfg.update(
+                {
+                    "ghost": False,
+                    "marker": False,
+                    "active_scale": 1.2,
+                    "visible_above": 6,
+                    "visible_below": 6,
+                }
+            )
+            app.width = 80
+            app.height = 21
+            app.lines = [
+                mod.LyricLine(0.0, 4.0, "linea anterior"),
+                mod.LyricLine(4.0, 4.0, "hola mundo"),
+                mod.LyricLine(8.0, 4.0, "linea posterior"),
+            ]
+            app.active_index = 1
+            app.spacing = 1
+            app.direction = 1
+            app.scroll = 1.0
+            app.moving = False
+            app.karaoke = False
+            app.next_timed_start = lambda index: None
+            rows = [""] * app.height
+            app._render_lyrics(rows, 0.0, 5.0, 0, app.height - 1)
+            linea = next((row for row in rows if "hola mundo" in texto_visible(row)), "")
+            bloques = bloques_osc66(linea)
+            check(
+                "la línea activa usa el protocolo de tamaño de kitty",
+                bool(bloques),
+                repr(linea[-120:]),
+            )
+            factor = 0.0
+            if bloques:
+                factor = factor_osc66(metadatos_osc66(bloques[0][0]))
+                check(
+                    "el tamaño dibujado es el pedido",
+                    abs(factor - 1.2) < 0.05,
+                    "factor=%s metadatos=%s" % (factor, bloques[0][0]),
+                )
+            check(
+                "la secuencia no deja n/d como texto visible",
+                "n=2;d=10" not in linea and ";n=" not in linea,
+                repr(linea[-120:]),
+            )
+
+            # Con w=0 kitty coloca un caracter por bloque de s x s celdas y
+            # el texto queda disperso con huecos. Con w explicito los
+            # caracteres se pegan y la linea ocupa lo que pide el factor.
+            avance = 0
+            for metadatos, texto in bloques:
+                datos = metadatos_osc66(metadatos)
+                escala = int(datos.get("s", 1))
+                ancho = int(datos.get("w", 0))
+                avance += (ancho or len(texto)) * escala
+            check(
+                "el texto escalado ocupa lo que pide el factor",
+                avance <= int(len("hola mundo") * factor) + 2,
+                "avance=%s factor=%s bloques=%s" % (avance, factor, bloques),
+            )
+
+            # Con escala 2 la linea activa ocupa dos filas: la de abajo
+            # tiene que quedar libre porque kitty borra el glifo grande si
+            # se escribe encima.
+            fila_activa = next(
+                (i for i, row in enumerate(rows) if "hola mundo" in row), -1
+            )
+            check(
+                "la fila de debajo de la línea activa queda libre",
+                fila_activa >= 0 and rows[fila_activa + 1] == "",
+                "fila=%s siguientes=%r" % (fila_activa, rows[fila_activa + 1 : fila_activa + 3]),
+            )
+
+            # La escala entera no lleva fraccion: solo s=, sin n/d.
+            app.cfg["active_scale"] = 2.0
+            rows = [""] * app.height
+            app._render_lyrics(rows, 0.0, 5.0, 0, app.height - 1)
+            linea = next((row for row in rows if "hola mundo" in texto_visible(row)), "")
+            bloques = bloques_osc66(linea)
+            check(
+                "la escala entera no manda una fraccion vacia",
+                bool(bloques)
+                and "n=" not in bloques[0][0]
+                and factor_osc66(metadatos_osc66(bloques[0][0])) == 2.0,
+                repr(linea[-120:]),
+            )
+
+
+def check_tamano_terminal_real():
+    """update_size() respeta las celdas reales de la terminal.
+
+    La ventana puede tener menos de 30x12 celdas (por ejemplo con una
+    fuente grande). Inventar ese minimo hace que cada fila se desborde y
+    la letra se parta en trozos.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.width = 0
+            app.height = 0
+            app.prev_rows = []
+            app.need_clear = False
+            app.dirty = False
+            original = mod.shutil.get_terminal_size
+            mod.shutil.get_terminal_size = lambda fallback=None: os.terminal_size(
+                (23, 9)
+            )
+            try:
+                app.update_size()
+            finally:
+                mod.shutil.get_terminal_size = original
+            check("el ancho usa las celdas reales", app.width == 23, str(app.width))
+            check("el alto usa las celdas reales", app.height == 9, str(app.height))
+
+
 def check_rutas_estado():
     """El directorio de estado respeta NOCTALIA_STATE_HOME y XDG_STATE_HOME."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
@@ -532,22 +701,33 @@ def check_rutas_estado():
 
 
 def check_idioma_ventana():
-    """La ventana habla el idioma pedido (--lang en / --lang es)."""
+    """La ventana habla el idioma del ajuste y del --lang.
+
+    El ajuste `language` es el que usa el panel y la pagina de ajustes; si
+    solo se probara --lang, un fallo al leer settings.toml pasaria
+    desapercibido. Tambien se comprueba el estado: en español "synced" sin
+    traducir hacia que cambiar de idioma no se notara en la ventana.
+    """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-idioma-") as temporal:
         estado = os.path.join(temporal, ".local", "state", "noctalia")
         os.makedirs(estado, exist_ok=True)
         ajustes = os.path.join(estado, "settings.toml")
-        with open(ajustes, "w", encoding="utf-8") as handle:
-            handle.write(
-                '[plugin_settings."faminec/lyrics-carousel"]\n'
-                "hints = true\n"
-                'render_mode = "text"\n'
-            )
+        overrides = os.path.join(
+            estado,
+            "plugins",
+            "data",
+            "faminec",
+            "lyrics-carousel",
+            "overrides.json",
+        )
+        os.makedirs(os.path.dirname(overrides), exist_ok=True)
         entorno = entorno_de_prueba(temporal)
-        for lang, esperado in (("en", "[q] quit"), ("es", "[q] salir")):
+
+        def ejecutar(argumentos):
             try:
-                proceso = subprocess.run(
-                    [sys.executable, SCRIPT, "--demo", "--once", "--lang", lang],
+                return subprocess.run(
+                    [sys.executable, SCRIPT, "--demo", "--once", "--render-mode", "text"]
+                    + argumentos,
                     capture_output=True,
                     text=True,
                     timeout=30,
@@ -555,11 +735,74 @@ def check_idioma_ventana():
                     cwd="/",
                 )
             except (OSError, subprocess.SubprocessError) as error:
-                check("la ventana tiene los textos en %s" % lang, False, repr(error)[:120])
-                continue
+                check("la ventana arranca para probar el idioma", False, repr(error)[:120])
+                return None
+
+        for lang, aviso, estado_texto in (
+            ("en", "[q] quit", "[synced]"),
+            ("es", "[q] salir", "[sincronizada]"),
+        ):
+            with open(ajustes, "w", encoding="utf-8") as handle:
+                handle.write(
+                    '[plugin_settings."faminec/lyrics-carousel"]\n'
+                    "hints = true\n"
+                    'render_mode = "text"\n'
+                    "header = true\n"
+                    'language = "%s"\n' % lang
+                )
+            if os.path.exists(overrides):
+                os.remove(overrides)
+            proceso = ejecutar([])
+            if proceso is not None:
+                salida = proceso.stdout
+                check(
+                    "el ajuste language pone los textos en %s" % lang,
+                    aviso in salida,
+                    "salida=%s" % salida[-160:].replace("\n", " "),
+                )
+                check(
+                    "el estado de la ventana esta traducido en %s" % lang,
+                    estado_texto in salida,
+                    "salida=%s" % salida[-160:].replace("\n", " "),
+                )
+
+        # La capa de overrides es la que escribe el panel: tiene que mandar
+        # sobre el settings.toml aunque este diga otro idioma.
+        with open(ajustes, "w", encoding="utf-8") as handle:
+            handle.write(
+                '[plugin_settings."faminec/lyrics-carousel"]\n'
+                "hints = true\n"
+                'render_mode = "text"\n'
+                "header = true\n"
+                'language = "en"\n'
+            )
+        with open(overrides, "w", encoding="utf-8") as handle:
+            json.dump({"language": "es"}, handle)
+        proceso = ejecutar([])
+        if proceso is not None:
             check(
-                "la ventana tiene los textos en %s" % lang,
-                esperado in proceso.stdout,
+                "los overrides del panel mandan sobre el idioma guardado",
+                "[q] salir" in proceso.stdout and "[sincronizada]" in proceso.stdout,
+                "salida=%s" % proceso.stdout[-160:].replace("\n", " "),
+            )
+
+        # --lang sigue mandando sobre el ajuste (es el atajo de linea de
+        # ordenes), incluso con los overrides en otro idioma.
+        with open(ajustes, "w", encoding="utf-8") as handle:
+            handle.write(
+                '[plugin_settings."faminec/lyrics-carousel"]\n'
+                "hints = true\n"
+                'render_mode = "text"\n'
+                "header = true\n"
+                'language = "es"\n'
+            )
+        if os.path.exists(overrides):
+            os.remove(overrides)
+        proceso = ejecutar(["--lang", "en"])
+        if proceso is not None:
+            check(
+                "--lang manda sobre el ajuste de idioma",
+                "[q] quit" in proceso.stdout,
                 "salida=%s" % proceso.stdout[-160:].replace("\n", " "),
             )
 
@@ -2145,6 +2388,8 @@ def main(argv):
     check_busqueda_letra()
     check_reintento_letra()
     check_ecualizador_fila()
+    check_escala_linea_activa()
+    check_tamano_terminal_real()
     check_rutas_estado()
     check_idioma_ventana()
     check_limites_ajustes()

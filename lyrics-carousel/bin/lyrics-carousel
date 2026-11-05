@@ -112,8 +112,8 @@ TEXTS = {
         "brand": "lyrics",
         "searching": "buscando",
         "no_lyrics": "sin letra",
-        "synced": "synced",
-        "unsynced": "sin sync",
+        "synced": "sincronizada",
+        "unsynced": "sin sincronía",
         "paused": "pausa",
         "waiting": "en espera",
         "nothing_playing": "nada sonando",
@@ -204,6 +204,57 @@ def normalize_text(value: str) -> str:
     value = value.replace("\t", " ").replace("\r", " ").replace("\n", " ")
     value = "".join(ch for ch in value if ch == " " or unicodedata.category(ch)[0] != "C")
     return re.sub(r"\s+", " ", value).strip()
+
+
+# ---- tamaño del texto de kitty (OSC 66) --------------------------------
+#
+# Kitty multiplica el tamaño de la fuente por "s" y lo reduce despues por
+# la fracción "n/d", de modo que el tamaño real es s * (n/d). Con "s" solo
+# se piden números enteros: para un factor entre 1 y 2 hace falta s=2 con
+# una fracción (1.2 = s=2 con n/d=6/10).
+#
+# El ancho del bloque ("w") se mide en celdas escaladas y kitty solo
+# guarda 3 bits para el, asi que no pasa de 7. Con "w" en 0 kitty coloca
+# un caracter por bloque de s x s celdas: el glifo sale a su escala dentro
+# del bloque y el texto queda disperso, con huecos entre caracteres. Por
+# eso el texto se trocea en bloques de 7 celdas escaladas como mucho, con
+# "w" explicito: asi los caracteres quedan pegados.
+KITTY_MAX_BLOCK = 7
+KITTY_MAX_SCALE = 7
+KITTY_MAX_FRACTION = 15
+OSC_RESET = "\x1b]66;s=1;\x07"
+
+
+def kitty_scale_parts(factor: float):
+    """Metadatos de escala de kitty para dibujar al factor pedido.
+
+    Devuelve (s, n, d) o None si el factor no necesita escala. La
+    fracción n/d es la que más se acerca al factor con d <= 15, que es lo
+    que admite kitty, y siempre con n < d.
+    """
+    valor = float(factor)
+    if valor <= 1.0 + 1e-9:
+        return None
+    escala = max(1, min(KITTY_MAX_SCALE, int(math.ceil(valor - 1e-9))))
+    objetivo = valor / escala
+    if objetivo >= 1.0 - 1e-9:
+        # Factor entero: el glifo llena su bloque y no deja huecos.
+        return (escala, 0, 0)
+    mejor = None
+    for denominador in range(2, KITTY_MAX_FRACTION + 1):
+        for numerador in range(1, denominador):
+            error = abs(numerador / denominador - objetivo)
+            if mejor is None or error < mejor[0]:
+                mejor = (error, numerador, denominador)
+    return (escala, mejor[1], mejor[2])
+
+
+def kitty_scale_factor(partes) -> float:
+    """Factor de tamaño real que calcula kitty con esos metadatos."""
+    escala, numerador, denominador = partes
+    if numerador and denominador:
+        return escala * numerador / denominador
+    return float(escala)
 
 
 def mmss(seconds: float) -> str:
@@ -1825,8 +1876,11 @@ class LyricsCarousel:
 
     def update_size(self):
         size = shutil.get_terminal_size(fallback=(96, 30))
-        width = max(30, size.columns)
-        height = max(12, size.lines)
+        # Las celdas reales mandan: la ventana puede tener menos de 30x12
+        # celdas (por ejemplo con una fuente grande) y un minimo inventado
+        # hace que cada fila se desborde y la letra se parta en trozos.
+        width = size.columns if size.columns > 0 else 96
+        height = size.lines if size.lines > 0 else 30
         if width != self.width or height != self.height:
             self.width = width
             self.height = height
@@ -2317,6 +2371,85 @@ class LyricsCarousel:
         if center + 1 <= bottom:
             rows[center + 1] = " " * pad + fg(self.theme.accent) + eq + RESET
 
+    def _cuerpo_escalado(self, partes, segmentos, disponible):
+        """Cuerpo de la linea con el tamaño de texto de kitty.
+
+        Los segmentos son trozos de texto con su color, en orden. El texto
+        se trocea en bloques de 7 celdas escaladas como mucho, que es el
+        maximo que admite kitty; si un corte de color cae dentro de un
+        bloque, el bloque se parte en dos. El texto se recorta hasta que
+        los bloques caben en el ancho disponible: kitty no dibuja un
+        bloque mas ancho que la terminal y lo pasa a la linea de abajo,
+        lo que rompe el dibujo. Devuelve el cuerpo y el ancho que ocupa
+        en celdas.
+        """
+        escala, numerador, denominador = partes
+        if numerador:
+            maximo = max(1, KITTY_MAX_BLOCK * denominador // numerador)
+        else:
+            maximo = KITTY_MAX_BLOCK
+
+        def celdas_de(largo):
+            if numerador:
+                valor = int(math.ceil(largo * numerador / denominador))
+            else:
+                valor = largo
+            return max(1, min(KITTY_MAX_BLOCK, valor))
+
+        texto = "".join(trozo for trozo, _ in segmentos)
+        limites = []
+        cursor = 0
+        for trozo, color in segmentos:
+            limites.append((cursor, cursor + len(trozo), color))
+            cursor += len(trozo)
+
+        piezas = []
+        for inicio in range(0, len(texto), maximo):
+            fin = min(len(texto), inicio + maximo)
+            for desde, hasta, color in limites:
+                a = max(inicio, desde)
+                b = min(fin, hasta)
+                if a >= b:
+                    continue
+                piezas.append([a, b, color, celdas_de(b - a)])
+
+        recortado = False
+        while piezas and sum(pieza[3] for pieza in piezas) * escala > disponible:
+            ultima = piezas[-1]
+            if ultima[1] - ultima[0] <= 1:
+                piezas.pop()
+            else:
+                ultima[1] -= 1
+                ultima[3] = celdas_de(ultima[1] - ultima[0])
+            recortado = True
+
+        cuerpo = ""
+        ancho = 0
+        for inicio, fin, color, celdas in piezas:
+            trozo = texto[inicio:fin]
+            if recortado and (inicio, fin) == (piezas[-1][0], piezas[-1][1]):
+                trozo = trozo[:-1] + "…"
+            cuerpo += color + self._osc66(partes, celdas) + trozo + "\x07" + OSC_RESET
+            ancho += celdas * escala
+        return cuerpo + RESET, ancho
+
+    @staticmethod
+    def _osc66(partes, celdas):
+        """Inicio de la secuencia OSC 66 con el tamaño y el ancho del bloque.
+
+        v=0 alinea el glifo arriba del bloque y h=2 lo centra en el ancho,
+        que es lo que hace que la linea quede centrada y no con huecos.
+        """
+        escala, numerador, denominador = partes
+        if numerador:
+            return "\x1b]66;s=%d:n=%d:d=%d:w=%d:v=0:h=2;" % (
+                escala,
+                numerador,
+                denominador,
+                celdas,
+            )
+        return "\x1b]66;s=%d:w=%d:v=0:h=2;" % (escala, celdas)
+
     def _render_lyrics(self, rows, t, position, top, bottom):
         theme = self.theme
         center = (top + bottom) / 2.0
@@ -2333,11 +2466,29 @@ class LyricsCarousel:
 
         limit_above = self.cfg["visible_above"]
         limit_below = self.cfg["visible_below"]
+
+        # La linea activa puede dibujarse escalada con el protocolo de
+        # tamaño de kitty. El bloque que dibuja kitty ocupa s filas hacia
+        # abajo, asi que hay que reservarlas: si se escribe encima, kitty
+        # borra el glifo grande.
+        partes = kitty_scale_parts(float(self.cfg.get("active_scale", 1.0)))
+        filas = partes[0] if partes else 1
+        factor = kitty_scale_factor(partes) if partes else 1.0
+        fila_activa = int(round(center + self.direction * (self.scroll - active * step)))
+        if filas > 1:
+            fila_activa = max(top, min(fila_activa, bottom - filas + 1))
+
         for index, line in enumerate(self.lines):
             if index < active - limit_above or index > active + limit_below:
                 continue
             pos = index * step
-            y = int(round(center + self.direction * (self.scroll - pos)))
+            if index == active:
+                y = fila_activa
+            else:
+                y = int(round(center + self.direction * (self.scroll - pos)))
+                # Las filas del bloque de la linea activa quedan libres.
+                if filas > 1 and fila_activa <= y < fila_activa + filas:
+                    y = fila_activa + filas
             if y < top or y > bottom:
                 continue
             highlight = index == active and position >= line.start - 0.05
@@ -2355,11 +2506,13 @@ class LyricsCarousel:
             if not highlight:
                 base_color = blend(theme.background, base_color, motion)
             prefix = "> " if (self.cfg["marker"] and index == active) else "  "
-            max_text = max(4, self.width - 8)
+            if partes and index == active:
+                # Cada caracter de la linea escalada ocupa "factor" celdas.
+                max_text = max(4, int((self.width - 8) / factor))
+            else:
+                max_text = max(4, self.width - 8)
             text = truncate(line.text, max_text)
             plain = prefix + text
-            left = max(0, (self.width - cell_width(plain)) // 2)
-            pad = " " * left
             prefix_color = fg(theme.accent, bold=True) if (highlight and self.cfg["marker"]) else fg(theme.background)
             if highlight and self.karaoke:
                 end = line.start + (line.duration or 4.0)
@@ -2376,46 +2529,24 @@ class LyricsCarousel:
                 else:
                     cut = int(round(len(text) * fraction))
                 cut = max(0, min(len(text), cut))
-                active_scale = float(self.cfg.get("active_scale", 1.0))
-                osc_start = ""
-                osc_end = ""
-                osc_reset = ""
-                if highlight and active_scale > 1.05:
-                    s = max(1, int(active_scale))
-                    frac = active_scale - s
-                    if frac > 0.01:
-                        n = min(15, max(0, int(round(frac * 10))))
-                        d = 10
-                        osc_start = f"\x1b]66;s={s};n={n};d={d};"
-                    else:
-                        osc_start = f"\x1b]66;s={s};"
-                    osc_end = "\x07"
-                    osc_reset = "\x1b]66;s=1;\x07"
-
                 sung = blend(theme.background, theme.accent, 1.0)
                 unsung = blend(theme.background, theme.accent, 0.42)
-                body = (
-                    fg(sung, bold=True) + osc_start + text[:cut] + osc_end + osc_reset
-                    + fg(unsung) + osc_start + text[cut:] + osc_end + osc_reset
-                    + RESET
-                )
+                segmentos = [
+                    (text[:cut], fg(sung, bold=True)),
+                    (text[cut:], fg(unsung)),
+                ]
             else:
-                active_scale = float(self.cfg.get("active_scale", 1.0))
-                osc_start = ""
-                osc_end = ""
-                osc_reset = ""
-                if highlight and active_scale > 1.05:
-                    s = max(1, int(active_scale))
-                    frac = active_scale - s
-                    if frac > 0.01:
-                        n = min(15, max(0, int(round(frac * 10))))
-                        d = 10
-                        osc_start = f"\x1b]66;s={s};n={n};d={d};"
-                    else:
-                        osc_start = f"\x1b]66;s={s};"
-                    osc_end = "\x07"
-                    osc_reset = "\x1b]66;s=1;\x07"
-                body = fg(base_color, bold=highlight) + osc_start + text + osc_end + osc_reset + RESET
+                segmentos = [(text, fg(base_color, bold=highlight))]
+            if partes and index == active:
+                body, ancho = self._cuerpo_escalado(
+                    partes, segmentos, max(4, self.width - cell_width(prefix) - 2)
+                )
+                visible = cell_width(prefix) + ancho
+            else:
+                body = "".join(color + trozo + RESET for trozo, color in segmentos)
+                visible = cell_width(plain)
+            left = max(0, (self.width - visible) // 2)
+            pad = " " * left
             rows[y] = pad + prefix_color + prefix + RESET + body
 
     def build_frame(self):

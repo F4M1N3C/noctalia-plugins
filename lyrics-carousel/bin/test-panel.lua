@@ -91,6 +91,66 @@ local function parseValue(value, kind)
   return value
 end
 
+-- Serializa una tabla plana (claves de texto, escalares) como JSON.
+local function encodeTable(tabla)
+  local parts = {}
+  local keys = {}
+  for key in pairs(tabla) do
+    table.insert(keys, key)
+  end
+  table.sort(keys)
+  for _, key in ipairs(keys) do
+    local value = tabla[key]
+    local texto
+    if type(value) == "string" then
+      texto = string.format('%q', value)
+    else
+      texto = tostring(value)
+    end
+    table.insert(parts, string.format('%q: %s', key, texto))
+  end
+  return "{" .. table.concat(parts, ", ") .. "}"
+end
+
+-- Lo que devuelve `set-setting.py read`: la configuracion guardada en el
+-- settings.toml. El panel la pide porque el manifiesto ya no declara esos
+-- ajustes, asi que el doble tiene que responderla para que el render vea los
+-- valores reales y no los de por defecto.
+local function encodeConfig()
+  return encodeTable(config)
+end
+
+local function encodeOverrides()
+  return encodeTable(overrides)
+end
+
+-- Decodificador mínimo: el helper solo devuelve objetos planos con escalares
+-- ({"clave": valor, ...}). Antes el doble devolvia siempre los overrides
+-- pasara lo que pasara, así que no se podia probar la lectura de los valores
+-- guardados: las dos respuestas se confundian.
+--
+-- Ojo con los patrones de Lua: no tienen alternación, así que el valor se
+-- captura suelto (hasta la coma o el cierre) y se convierte después.
+local function jsonDecode(text)
+  local tabla = {}
+  if type(text) ~= "string" then
+    return tabla
+  end
+  for clave, valor in text:gmatch('"([%w_]+)"%s*:%s*([^,}]+)') do
+    valor = valor:match("^%s*(.-)%s*$")
+    if valor == "true" then
+      tabla[clave] = true
+    elseif valor == "false" then
+      tabla[clave] = false
+    elseif valor:sub(1, 1) == '"' then
+      tabla[clave] = valor:sub(2, -2)
+    else
+      tabla[clave] = tonumber(valor)
+    end
+  end
+  return tabla
+end
+
 local function node(kind)
   return function(props, children)
     return { kind = kind, props = props or {}, children = children or {} }
@@ -144,7 +204,7 @@ noctalia = {
   end,
   readFile = function()
     reads = reads + 1
-    return "{}"
+    return encodeOverrides()
   end,
   writeFile = function()
     return true
@@ -157,16 +217,9 @@ noctalia = {
   end,
   json = {
     encode = function()
-      return "{}"
+      return encodeOverrides()
     end,
-    decode = function()
-      -- El shell devuelve el contenido del overrides.json.
-      local copy = {}
-      for key, value in pairs(overrides) do
-        copy[key] = value
-      end
-      return copy
-    end,
+    decode = jsonDecode,
   },
   outputs = function()
     return { { name = "DP-1", width = 1920, height = 1080, focused = true } }
@@ -183,6 +236,7 @@ noctalia = {
   end,
   runAsync = function(argv, callback)
     local exitCode = 0
+    local salida = ""
     if type(argv) == "table" then
       table.insert(commands, argv)
       -- Un playerctl lento: el callback llega despues de cerrar el panel.
@@ -201,15 +255,27 @@ noctalia = {
           end
         elseif modo == "merge" and failMerge then
           exitCode = 1
+        elseif modo == "read" then
+          -- El panel pide los valores reales del settings.toml: el doble
+          -- responde con la configuracion montada para la prueba.
+          salida = encodeConfig()
         end
       end
     end
     if callback then
-      callback({ exitCode = exitCode, stdout = "", stderr = exitCode == 0 and "" or "boom" })
+      callback({
+        exitCode = exitCode,
+        stdout = salida,
+        stderr = exitCode == 0 and "" or "boom",
+      })
     end
     return true
   end,
 }
+
+-- La capa de overrides caduca a los 2 s (os.time). Toda la prueba corre
+-- dentro del mismo segundo: quien necesite una lectura fresca la pide con
+-- settingsModule.refresh() antes (el widget, abajo).
 
 -- `require` relativo: Noctalia lo resuelve desde el directorio de la entrada.
 local settingsModule = nil
@@ -547,18 +613,45 @@ if langEs ~= nil then
 end
 
 -- 13. El boton de vaciar la cache lanza el script con --clear-cache ------------
+--
+-- Tras vaciarla, la ventana abierta tiene que enterarse: si no, seguiría
+-- mostrando la letra que tenía en memoria y el usuario pensaría que no ha
+-- servido de nada. El panel se lo dice con SIGUSR1 y avisa del resultado.
 
 local clearCache = findByKey("button", "clear-cache")
 check(clearCache ~= nil, "el panel tiene un boton para vaciar la cache")
 if clearCache ~= nil then
   clearCache.props.onClick()
   local lanzado = false
+  local senal = false
   for _, argv in ipairs(commands) do
     if argv[#argv] == "--clear-cache" then
       lanzado = true
     end
+    if argv[2] == "-USR1" then
+      senal = true
+    end
   end
   check(lanzado, "el boton lanza el script con --clear-cache")
+  check(senal, "el vaciado avisa a la ventana abierta (SIGUSR1)")
+
+  local aviso = nil
+  for _, entry in ipairs(notified) do
+    if entry.body == "clear_cache_done" then
+      aviso = entry
+    end
+  end
+  check(aviso ~= nil, "el vaciado avisa de que ha funcionado")
+
+  -- La explicación de cuándo hace falta: vaciar la caché no es algo que el
+  -- usuario deba hacer a diario, y un botón sin contexto parece obligatorio.
+  local pista = nil
+  for _, item in ipairs(collect(tree, "label")) do
+    if item.props and item.props.text == "clear_cache_hint" then
+      pista = item
+    end
+  end
+  check(pista ~= nil, "el panel explica cuando hace falta vaciar la cache")
 end
 
 -- 14. Un interruptor lee bien un valor que llega como cadena ---------------------
@@ -639,7 +732,10 @@ end
 check(sliderFor("spacing") ~= nil, "el panel tiene el control de spacing")
 check(sliderFor("animation_ms") ~= nil, "el panel tiene el control de animation_ms")
 check(sliderFor("offset_ms") ~= nil, "el panel tiene el control de offset_ms")
-check(findByKey("input", "glyph") ~= nil, "el panel tiene el campo del glifo")
+-- El icono de la barra no está en el panel: pertenece al widget de la barra
+-- y se cambia en Ajustes → Plugins → Lyrics Carousel. El panel solo ofrece lo
+-- que afecta a la ventana de letras.
+check(findByKey("input", "glyph") == nil, "el panel no tiene el campo del glifo")
 
 -- El color personalizado solo tiene sentido con el acento "custom": si se
 -- ofrece siempre, el usuario escribe un hex que el script ignora.
@@ -708,18 +804,7 @@ config.accent = "primary"
 overrides.accent = nil
 onConfigChanged()
 
-local glyphInput = findByKey("input", "glyph")
-if glyphInput ~= nil then
-  glyphInput.props.onChange("headphones")
-  eq(overrides.glyph, "headphones", "el glifo se guarda")
-  glyphInput.props.onChange("Music!")
-  eq(overrides.glyph, "headphones", "un glifo invalido no se guarda")
-  -- Los nombres de Tabler van con guiones: "music_note" no existe.
-  glyphInput.props.onChange("music_note")
-  eq(overrides.glyph, "headphones", "un glifo con guion bajo no se guarda")
-end
-
--- 17. Los controles numericos respetan el rango del manifiesto --------------
+-- 17. Los controles numericos respetan el rango del panel --------------------
 --
 -- Un valor fuera de rango deja la ventana fuera de la pantalla o la fuente
 -- vacia. Los limites del panel tienen que ser los mismos que los del
@@ -896,10 +981,8 @@ eq(glyphUsado, "volume", "el widget usa el glifo de los overrides")
 -- El panel se cerró en el apartado 21: sin abrirlo otra vez, los cambios
 -- no redibujan y las comprobaciones mirarían un árbol viejo.
 onOpen()
-local glyphInput = findByKey("input", "glyph")
-if glyphInput ~= nil then
-  eq(glyphInput.props.placeholder, "glyph_placeholder", "el placeholder del glifo pasa por la traduccion")
-end
+-- El campo del glifo salió del panel: su traducción ya no se usa aquí.
+check(findByKey("input", "glyph") == nil, "el panel sigue sin el campo del glifo")
 
 config.accent = "custom"
 overrides.accent = nil
@@ -989,47 +1072,35 @@ overrides.font_family = nil
 settingsModule.refresh()
 onConfigChanged()
 
--- 25. El panel ofrece los rangos del manifiesto -----------------------------
+-- 25. El panel ofrece los rangos que despues aplica el script ---------------
 --
--- El manifiesto es la fuente de verdad. Si el panel ofrece un deslizador
--- de 6 a 120 y el manifiesto dice 6 a 96, el usuario puede elegir un valor
--- que el script va a descartar. Este test lee los limites del manifiesto y
--- los compara con los controles que el panel dibuja de verdad (no con el
--- codigo fuente).
+-- Los rangos viven en lib/settings.luau: el manifiesto ya no los declara
+-- (solo queda el icono de la barra). Este test los lee de ahí y los compara
+-- con los controles que el panel dibuja de verdad (no con el código fuente):
+-- si un deslizador se pasa de rango, el usuario puede elegir un valor que la
+-- ventana después descarta.
 
-local function manifestLimits(path)
+local function panelLimits(path)
   local limites = {}
   local file = io.open(path, "r")
   if file == nil then
     return nil
   end
-  local clave, minimo, maximo
-  local function cerrar()
-    if clave and minimo and maximo then
-      limites[clave] = { min = tonumber(minimo), max = tonumber(maximo) }
-    end
-    clave, minimo, maximo = nil, nil, nil
-  end
+  local dentro = false
   for linea in file:lines() do
-    local texto = linea:match("^%s*(.-)%s*$")
-    if texto == "[[setting]]" then
-      cerrar()
-    else
-      local k = texto:match('^key%s*=%s*"([^"]+)"')
-      if k then
-        clave = k
-      end
-      local mn = texto:match("^min%s*=%s*(%-?%d+%.?%d*)")
-      if mn then
-        minimo = mn
-      end
-      local mx = texto:match("^max%s*=%s*(%-?%d+%.?%d*)")
-      if mx then
-        maximo = mx
+    if linea:match("^local LIMITS") then
+      dentro = true
+    elseif dentro and linea:match("^}") then
+      dentro = false
+    elseif dentro then
+      local clave, mn, mx = linea:match(
+        "^%s*(%w+)%s*=%s*{%s*(%-?%d+%.?%d*)%s*,%s*(%-?%d+%.?%d*)%s*}"
+      )
+      if clave then
+        limites[clave] = { min = tonumber(mn), max = tonumber(mx) }
       end
     end
   end
-  cerrar()
   file:close()
   return limites
 end
@@ -1048,8 +1119,8 @@ eq(overrides.anchor, "custom", "la posicion personalizada queda elegida")
 settingsModule.refresh()
 onConfigChanged()
 
-local limites = manifestLimits(pluginDir .. "/plugin.toml")
-check(limites ~= nil and next(limites) ~= nil, "el manifiesto declara limites")
+local limites = panelLimits(pluginDir .. "/lib/settings.luau")
+check(limites ~= nil and next(limites) ~= nil, "la libreria declara limites")
 if limites ~= nil then
   for clave, limite in pairs(limites) do
     local control = findByKey("slider", clave)
@@ -1057,12 +1128,12 @@ if limites ~= nil then
       eq(
         control.props.min,
         limite.min,
-        "el deslizador de " .. clave .. " empieza en el minimo del manifiesto"
+        "el deslizador de " .. clave .. " empieza en el minimo del panel"
       )
       eq(
         control.props.max,
         limite.max,
-        "el deslizador de " .. clave .. " acaba en el maximo del manifiesto"
+        "el deslizador de " .. clave .. " acaba en el maximo del panel"
       )
       check(
         control.props.step ~= nil and control.props.step > 0,
@@ -1073,7 +1144,7 @@ if limites ~= nil then
       -- recorte lo hace la libreria al escribir.
     elseif findByKey("button", clave .. "-dec") ~= nil then
       -- Los contadores +/- no llevan rango en sus props: se comprueba que
-      -- no bajan del minimo que declara el manifiesto.
+      -- no bajan del minimo que declara la libreria.
       config[clave] = limite.min
       overrides[clave] = nil
       settingsModule.refresh()
@@ -1084,13 +1155,55 @@ if limites ~= nil then
       end
       check(
         overrides[clave] == nil or overrides[clave] >= limite.min,
-        "el contador de " .. clave .. " no baja del minimo del manifiesto"
+        "el contador de " .. clave .. " no baja del minimo del panel"
       )
     else
       check(false, "el panel no tiene ningun control para " .. clave)
     end
   end
 end
+
+-- 26. El panel ve los valores guardados aunque getConfig no los dé ----------
+--
+-- El manifiesto solo declara el icono de la barra. `noctalia.getConfig`
+-- unicamente devuelve las claves que conoce, así que para las demás el panel
+-- las lee del settings.toml con el helper (`set-setting.py read`). Sin esa
+-- lectura, el panel enseñaría los valores por defecto en lugar de los del
+-- usuario: el usuario movería un deslizador que ya estaba donde él lo dejó.
+
+-- getConfig deja de responder a las claves que el manifiesto ya no declara.
+local getConfigDeVerdad = noctalia.getConfig
+noctalia.getConfig = function(key)
+  if key == "glyph" then
+    return config[key]
+  end
+  return nil
+end
+local escrito = nil
+local leerGuardados = function()
+  settingsModule.refresh()
+  onConfigChanged()
+  escrito = encodeConfig()
+end
+leerGuardados()
+overrides.font_size = nil
+eq(
+  sliderFor("font_size") and sliderFor("font_size").props.value,
+  config.font_size,
+  "el deslizador muestra el valor guardado, no el de por defecto"
+)
+-- Y un valor que solo existe en el settings.toml (nunca en el manifiesto)
+-- también tiene que llegar al panel. El override se limpia antes: manda
+-- sobre lo guardado, así que si lo dejamos puesto el panel enseñaría ese.
+overrides.font_size = nil
+config.font_size = 20
+leerGuardados()
+eq(
+  sliderFor("font_size") and sliderFor("font_size").props.value,
+  20,
+  "al cambiar el valor guardado el panel lo refleja"
+)
+noctalia.getConfig = getConfigDeVerdad
 
 -- Resultado ------------------------------------------------------------------
 

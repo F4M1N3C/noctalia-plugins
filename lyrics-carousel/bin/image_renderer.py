@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import sys
@@ -18,6 +19,11 @@ except ImportError:  # pragma: no cover
     Image = None
 
 FALLBACK_FONT = "/usr/share/fonts/TTF/DejaVuSansMono.ttf"
+
+# Cuadros por segundo del modo imagen. La ventana manda la imagen entera
+# cada vez que cambia, así que 20 bastan para que el karaoke y el
+# visualizador se vean fluidos sin saturar el canal de kitty.
+IMAGE_FPS = 20
 
 
 def mmss(seconds):
@@ -117,19 +123,122 @@ class ImageRenderer:
         draw.text((x, center_y), text, font=font, fill=color, anchor="lm")
         return width
 
-    def _draw_karaoke(self, draw, text, center_y, size, sung, unsung, cut, family):
+    @staticmethod
+    def _imagen_de(draw):
+        """La imagen completa que está dibujando `draw`.
+
+        ImageDraw no guarda la imagen: `draw.im` es el núcleo interno (sirve
+        para saber el tamaño, pero no para componer capas). La imagen entera
+        hace falta para recortar y pegar el trozo cantado, así que se busca
+        primero la de verdad.
+        """
+        for atributo in ("_image", "image", "im"):
+            candidata = getattr(draw, atributo, None)
+            if candidata is not None and hasattr(candidata, "crop"):
+                return candidata
+        return None
+
+    def _draw_karaoke(self, draw, text, center_y, size, sung, unsung, amount, family):
+        """Rellena la línea cantada de izquierda a derecha, píxel a píxel.
+
+        `amount` son los caracteres cantados con decimales. El avance se
+        interpola dentro del glifo en curso, así que el relleno no salta
+        de letra en letra pero sigue el ritmo real de la letra: una
+        sílaba larga tarda más en llenarse, que es lo que hacía parecer
+        que reconocía la velocidad de la canción.
+
+        El resplandor se hace con la misma frase repetida un píxel
+        alrededor en un tono apagado: es un halo barato (sin desenfoque)
+        que da el brillo de las primeras versiones.
+        """
         font = self.font(family, size)
         if font is None:
             return
+        base = self._imagen_de(draw)
+        if base is None:
+            return
         total = text_width(draw, text, font)
-        x = (draw.im.size[0] - total) / 2
-        head = text[:cut]
-        tail = text[cut:]
-        if head:
-            draw.text((x, center_y), head, font=font, fill=sung, anchor="lm")
-            x += text_width(draw, head, font)
-        if tail:
-            draw.text((x, center_y), tail, font=font, fill=unsung, anchor="lm")
+        x = (base.size[0] - total) / 2
+        length = len(text)
+        draw.text((x, center_y), text, font=font, fill=unsung, anchor="lm")
+        if length <= 0:
+            return
+        amount = max(0.0, min(float(length), amount))
+        if amount <= 0.0:
+            return
+        if amount >= length:
+            sung_px = total
+        else:
+            steps = max(1, int(amount))
+            sung_px = 0.0
+            for index in range(steps):
+                sung_px += text_width(draw, text[index], font)
+            if steps < length:
+                sung_px += (amount - steps) * text_width(draw, text[steps], font)
+        if sung_px <= 0.0:
+            return
+
+        left, top, right, bottom = draw.textbbox(
+            (x, center_y), text, font=font, anchor="lm"
+        )
+        pad = max(2, int(size * 0.5))
+        box = (
+            max(0, int(left) - pad),
+            max(0, int(top) - pad),
+            min(base.size[0], int(math.ceil(right)) + pad),
+            min(base.size[1], int(math.ceil(bottom)) + pad),
+        )
+        width = box[2] - box[0]
+        height = box[3] - box[1]
+        if width <= 0 or height <= 0:
+            return
+
+        # Borde cantado, en píxeles dentro de la caja de la línea.
+        limit = max(1, int(math.ceil(sung_px + x - box[0])))
+
+        def capa(color):
+            """La frase entera sobre una capa recortada a la línea."""
+            layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            ImageDraw.Draw(layer).text(
+                (x - box[0], center_y - box[1]),
+                text,
+                font=font,
+                fill=color,
+                anchor="lm",
+            )
+            return layer
+
+        glow = self._mix(sung, unsung, 0.35)
+        # El trozo cantado se recorta con crop (un píxel más no cambia nada):
+        # así el borde del relleno cae dentro del glifo en curso y el avance
+        # es continuo en vez de saltar de palabra en palabra.
+        corte = (0, 0, max(1, min(width, limit)), height)
+        halo = capa(glow).crop(corte)
+        claro = capa(sung).crop(corte)
+
+        def fundir(zona, capa_recortada):
+            """Compone una capa ya recortada sobre el trozo de imagen."""
+            zona.alpha_composite(capa_recortada, (0, 0))
+            return zona
+
+        ancho_imagen, alto_imagen = base.size
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                origen = (box[0] + dx, box[1] + dy)
+                if (
+                    origen[0] < 0
+                    or origen[1] < 0
+                    or origen[0] + width > ancho_imagen
+                    or origen[1] + height > alto_imagen
+                ):
+                    continue
+                base.paste(
+                    fundir(base.crop((origen[0], origen[1], origen[0] + width, origen[1] + height)), halo),
+                    origen,
+                )
+        base.paste(fundir(base.crop(box), claro), box)
 
     def _draw_left(self, draw, text, x, y, size, color, family, anchor="lm"):
         font = self.font(family, size)
@@ -164,22 +273,22 @@ class ImageRenderer:
 
         if down:
             # Arriba las líneas que vienen, abajo las que ya han pasado.
-            cursor = center_y - big_h / 2 - gap
+            cursor = center_y - big_h / 2 - gap - small_h / 2
             for index in range(focus + 1, focus + 1 + above):
-                positions[index] = cursor + small_h / 2
+                positions[index] = cursor
                 cursor -= small_h + gap
-            cursor = center_y + big_h / 2 + gap
+            cursor = center_y + big_h / 2 + gap + small_h / 2
             for index in range(focus - 1, focus - 1 - below, -1):
-                positions[index] = cursor - small_h / 2
+                positions[index] = cursor
                 cursor += small_h + gap
         else:
-            cursor = center_y - big_h / 2 - gap
+            cursor = center_y - big_h / 2 - gap - small_h / 2
             for index in range(focus - 1, focus - 1 - above, -1):
-                positions[index] = cursor - small_h / 2
+                positions[index] = cursor
                 cursor -= small_h + gap
-            cursor = center_y + big_h / 2 + gap
+            cursor = center_y + big_h / 2 + gap + small_h / 2
             for index in range(focus + 1, focus + 1 + below):
-                positions[index] = cursor + small_h / 2
+                positions[index] = cursor
                 cursor += small_h + gap
         return positions
 
@@ -269,18 +378,13 @@ class ImageRenderer:
             cfg["karaoke"], cfg["marker"], cfg["header"], cfg["footer"],
             cfg["hints"], cfg["equalizer"], cfg["spacing"], cfg["ghost"],
         ]
-        if app.lines and index < len(app.lines) and cfg["karaoke"]:
-            # La huella usa el número de caracteres cantados (no la fracción),
-            # así solo cambia cuando avanza una letra.
-            line = app.lines[index]
-            end = line.start + (line.duration or 4.0)
-            siguiente = app.next_timed_start(index)
-            if siguiente is not None and siguiente > line.start:
-                end = siguiente if not line.duration else min(end, siguiente)
-            fraction = max(
-                0.0, min(1.0, (position - line.start) / max(0.35, end - line.start))
-            )
-            parts.append(int(fraction * max(1, len(line.text))))
+        if cfg["karaoke"] or cfg["equalizer"] or app.state != "lyrics":
+            # El karaoke y el visualizador avanzan con el tiempo, pero
+            # 20 cuadros por segundo bastan: la imagen es grande y
+            # reenviarla en cada iteración del bucle satura la terminal.
+            # El progreso sigue siendo continuo porque dentro del mismo
+            # cuadro el relleno no cambia.
+            parts.append(round(position * IMAGE_FPS))
         return tuple(parts)
 
     def _draw_lyrics(self, draw, center_y, size, scale, family, accent, position, area_top, area_bottom):
@@ -342,13 +446,13 @@ class ImageRenderer:
                 siguiente = app.next_timed_start(line_index)
                 if siguiente is not None and siguiente > line.start:
                     end = siguiente if not line.duration else min(end, siguiente)
-                fraction = max(
-                    0.0, min(1.0, (position - line.start) / max(0.35, end - line.start))
-                )
-                cut = int(round(len(text) * fraction))
+                # El mismo cálculo que el modo texto: si el adaptador da
+                # tiempos por carácter el relleno los respeta, y si no
+                # reparte la duración de la línea entre los caracteres.
+                amount = app.karaoke_amount(line, text, position, end)
                 unsung = self._mix(accent, background, 0.45)
                 self._draw_karaoke(
-                    draw, text, y, line_size, accent, unsung, cut, family
+                    draw, text, y, line_size, accent, unsung, amount, family
                 )
             else:
                 self._draw_centered(draw, text, y, line_size, color, family)

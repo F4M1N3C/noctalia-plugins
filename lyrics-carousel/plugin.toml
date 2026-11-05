@@ -4,12 +4,20 @@
 # adaptador de fuentes del plugin Lyrics de Noctalia) y la dibuja en una
 # ventana flotante de kitty con desplazamiento vertical.
 #
-# El script de Python lee estos mismos ajustes (settings.toml) y un fichero de
-# overrides que escribe el panel para los interruptores rápidos.
+# Ajustes: aqui solo queda el icono de la barra. El resto se cambia en el panel
+# del plugin (el que se abre desde el widget), que es el sitio que el usuario
+# tiene a mano. Declararlos aqui los duplicaba: la pagina de ajustes de Noctalia
+# y el panel ofrecian lo mismo con dos limites distintos, y los valores se
+# leian por dos caminos. Noctalia conserva en el settings.toml las claves
+# guardadas aunque no esten declaradas, y el panel las lee de ahi (ver
+# lib/settings.luau y `set-setting.py read`), asi que nada se pierde.
+#
+# El script de Python lee esos mismos ajustes del settings.toml, mas un fichero
+# de overrides que escribe el panel para los interruptores rapidos.
 
 id = "faminec/lyrics-carousel"
 name = "Lyrics Carousel"
-version = "2.1.0"
+version = "2.2.0"
 plugin_api = 34
 author = "faminec"
 license = "MIT"
@@ -18,244 +26,8 @@ tags = ["music", "system", "utility", "media"]
 icon = "music"
 description = "Carrusel de letras sincronizadas en una ventana de terminal flotante, con letra grande para la linea activa."
 
-[[setting]]
-key = "font_family"
-type = "string"
-label_key = "settings.font_family.label"
-description_key = "settings.font_family.description"
-default = "Departure Mono"
-
-[[setting]]
-key = "font_size"
-type = "int"
-label_key = "settings.font_size.label"
-description_key = "settings.font_size.description"
-default = 22
-min = 6
-max = 96
-
-[[setting]]
-key = "render_mode"
-type = "select"
-label_key = "settings.render_mode.label"
-description_key = "settings.render_mode.description"
-default = "image"
-options = [
-  { value = "image", label_key = "settings.render_mode.image" },
-  { value = "text", label_key = "settings.render_mode.text" },
-]
-
-[[setting]]
-key = "direction"
-type = "select"
-label_key = "settings.direction.label"
-description_key = "settings.direction.description"
-default = "down"
-options = [
-  { value = "down", label_key = "settings.direction.down" },
-  { value = "up", label_key = "settings.direction.up" },
-]
-
-[[setting]]
-key = "marker"
-type = "bool"
-label_key = "settings.marker.label"
-description_key = "settings.marker.description"
-default = false
-
-[[setting]]
-key = "karaoke"
-type = "bool"
-label_key = "settings.karaoke.label"
-description_key = "settings.karaoke.description"
-default = true
-
-[[setting]]
-key = "equalizer"
-type = "bool"
-label_key = "settings.equalizer.label"
-description_key = "settings.equalizer.description"
-default = false
-
-[[setting]]
-key = "footer"
-type = "bool"
-label_key = "settings.footer.label"
-description_key = "settings.footer.description"
-default = false
-
-[[setting]]
-key = "hints"
-type = "bool"
-label_key = "settings.hints.label"
-description_key = "settings.hints.description"
-default = false
-
-[[setting]]
-key = "header"
-type = "bool"
-label_key = "settings.header.label"
-description_key = "settings.header.description"
-default = false
-
-[[setting]]
-key = "spacing"
-type = "int"
-label_key = "settings.spacing.label"
-description_key = "settings.spacing.description"
-default = 2
-min = 1
-max = 6
-advanced = true
-
-[[setting]]
-key = "animation_ms"
-type = "int"
-label_key = "settings.animation_ms.label"
-description_key = "settings.animation_ms.description"
-default = 650
-min = 0
-max = 3000
-advanced = true
-
-[[setting]]
-key = "ghost"
-type = "bool"
-label_key = "settings.ghost.label"
-description_key = "settings.ghost.description"
-default = true
-
-[[setting]]
-key = "offset_ms"
-type = "int"
-label_key = "settings.offset_ms.label"
-description_key = "settings.offset_ms.description"
-default = 0
-min = -3000
-max = 3000
-advanced = true
-
-[[setting]]
-key = "width"
-type = "int"
-label_key = "settings.width.label"
-description_key = "settings.width.description"
-default = 1200
-min = 400
-max = 3840
-
-[[setting]]
-key = "height"
-type = "int"
-label_key = "settings.height.label"
-description_key = "settings.height.description"
-default = 820
-min = 200
-max = 2160
-
-[[setting]]
-key = "anchor"
-type = "select"
-label_key = "settings.anchor.label"
-description_key = "settings.anchor.description"
-default = "center"
-options = [
-  { value = "top-left", label_key = "anchor_top_left" },
-  { value = "top-center", label_key = "anchor_top_center" },
-  { value = "top-right", label_key = "anchor_top_right" },
-  { value = "left-center", label_key = "anchor_left_center" },
-  { value = "center", label_key = "anchor_center" },
-  { value = "right-center", label_key = "anchor_right_center" },
-  { value = "bottom-left", label_key = "anchor_bottom_left" },
-  { value = "bottom-center", label_key = "anchor_bottom_center" },
-  { value = "bottom-right", label_key = "anchor_bottom_right" },
-  { value = "custom", label_key = "anchor_custom" },
-]
-
-[[setting]]
-key = "custom_x"
-type = "int"
-label_key = "settings.custom_x.label"
-description_key = "settings.custom_x.description"
-default = 100
-min = 0
-max = 10000
-advanced = true
-
-[[setting]]
-key = "custom_y"
-type = "int"
-label_key = "settings.custom_y.label"
-description_key = "settings.custom_y.description"
-default = 100
-min = 0
-max = 10000
-advanced = true
-
-[[setting]]
-key = "accent"
-type = "select"
-label_key = "settings.accent.label"
-description_key = "settings.accent.description"
-default = "primary"
-options = [
-  { value = "primary", label_key = "settings.accent.primary" },
-  { value = "green", label_key = "settings.accent.green" },
-  { value = "yellow", label_key = "settings.accent.yellow" },
-  { value = "blue", label_key = "settings.accent.blue" },
-  { value = "magenta", label_key = "settings.accent.magenta" },
-  { value = "cyan", label_key = "settings.accent.cyan" },
-  { value = "red", label_key = "settings.accent.red" },
-  { value = "custom", label_key = "settings.accent.custom" },
-]
-
-[[setting]]
-key = "custom_color"
-type = "string"
-label_key = "settings.custom_color.label"
-description_key = "settings.custom_color.description"
-default = "#e46767"
-
-[[setting]]
-key = "active_scale"
-type = "double"
-label_key = "settings.active_scale.label"
-description_key = "settings.active_scale.description"
-default = 1.35
-min = 1.0
-max = 2.5
-advanced = true
-
-[[setting]]
-key = "visible_above"
-type = "int"
-label_key = "settings.visible_above.label"
-description_key = "settings.visible_above.description"
-default = 6
-min = 0
-max = 20
-
-[[setting]]
-key = "visible_below"
-type = "int"
-label_key = "settings.visible_below.label"
-description_key = "settings.visible_below.description"
-default = 6
-min = 0
-max = 20
-
-[[setting]]
-key = "language"
-type = "select"
-label_key = "settings.language.label"
-description_key = "settings.language.description"
-default = "auto"
-options = [
-  { value = "auto", label_key = "language_auto" },
-  { value = "en", label_key = "language_en" },
-  { value = "es", label_key = "language_es" },
-]
-
+# Lo unico que no esta en el panel: el icono es del widget de la barra, que se
+# configura en esta pagina y no en la ventana de letras.
 [[setting]]
 key = "glyph"
 type = "glyph"

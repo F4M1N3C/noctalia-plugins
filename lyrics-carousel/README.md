@@ -66,14 +66,23 @@ configuration, so a panel that happened to be open at that moment is closed.
 
 ## Settings
 
-Configure the plugin in **Settings → Plugins → Lyrics Carousel** or from the panel.
-The panel mirrors all the settings of the manifest — including the custom accent
-colour, the line spacing, the transition and offset times, and the bar icon — with the
-same `min`/`max`/`step` ranges. It keeps its own changes in a small overrides file and
+Everything is configured from the **panel** (the button on the bar widget), which is
+where the user has it at hand. It keeps its own changes in a small overrides file and
 pours them into `settings.toml` when it is closed, so the settings page and the panel
 always end up showing the same values without the panel closing under the user's
 fingers. The script re-reads the settings every 0.5 s, so changes apply live to a
 window that is already open.
+
+The plugin manifest (`plugin.toml`) only declares `glyph`, the bar icon: everything
+else is panel-only. Noctalia keeps the saved keys in `settings.toml` even when the
+manifest does not declare them, and the panel reads them back with
+`set-setting.py read` (so it shows the real values, not the defaults), but
+`noctalia.getConfig` only answers the keys it knows. That is why the ranges are
+declared in `lib/settings.luau` and applied both by the panel (before writing) and
+by the script (when reading).
+
+`glyph` is also the only setting left in **Settings → Plugins → Lyrics Carousel**:
+it belongs to the bar widget, not to the lyrics window.
 
 | Setting | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -102,7 +111,7 @@ window that is already open.
 | `visible_above` | `int` | `6` | Lines visible above the active one. |
 | `visible_below` | `int` | `6` | Lines visible below the active one. |
 | `language` | `select` | `auto` | Language of the texts inside the window: `auto` (the system language), `en` or `es`. |
-| `glyph` | `glyph` | `music` | Bar icon. |
+| `glyph` | `glyph` | `music` | Bar icon (only in the settings page). |
 
 The position and the size are applied live to the running window, without recreating
 it. In image mode the font family and the font size also apply live (the font cache
@@ -110,6 +119,41 @@ is invalidated on change); in text mode kitty fixes both when the window opens, 
 the window has to be opened again for them to change.
 
 ## Changelog
+
+### 2.2.0
+
+- The karaoke fill is pixel-smooth in both modes and follows the real timings: with
+  per-character times (the ones the source adapters provide) a long syllable takes
+  longer to light up, and within the character in progress the fill advances
+  continuously instead of jumping from word to word. In image mode it no longer
+  spreads the whole line duration across the characters, so the line keeps the
+  rhythm of the song. The sung part keeps the halo that surrounds it, which is what
+  makes it glow as in the earlier versions.
+- The active line in text mode is split into blocks that match the exact period of
+  the scale (`s × n/d`): with 1.2 the blocks are 10 characters, which occupy whole
+  cells, so the visible gaps every few characters are gone. The fill also advances
+  word by word, so the colour change falls on a space and no gap opens inside a
+  word.
+- The scroll uses `animation_ms` as its real duration (it was half of it), never
+  invades the following line (it fits in 80% of the gap), and both modes now ease
+  with the same curve: the block dims while it moves and the movement feels the
+  same in image and text mode.
+- The equaliser is seven bars with a central envelope and a slow wave, and it stays
+  symmetric when paused.
+- The time bar is centred in the window: the row used to start two columns in and
+  the remainder piled up on the right.
+- `visible_above` / `visible_below` count screen lines, not list lines: with
+  `direction = down` the future used to enter on the wrong side and the neighbours
+  overlapped the active block.
+- Emptying the lyrics cache from the panel now tells the open window to look the
+  song up again (`SIGUSR1`), confirms with a notification and explains when it is
+  actually needed. For a single song, `r` in the window is enough.
+- The bar icon is no longer in the panel: it belongs to the bar widget and is
+  changed in Settings → Plugins → Lyrics Carousel, the only setting left in the
+  manifest. Everything else is panel-only, and the panel reads the saved values
+  with `set-setting.py read` so it shows the real ones instead of the defaults.
+- The panel and the script clamp with the same ranges (declared in
+  `lib/settings.luau`, since the manifest no longer carries them).
 
 ### 2.1.0
 

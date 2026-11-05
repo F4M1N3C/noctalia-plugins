@@ -37,7 +37,6 @@
   "glyph": "Bar icon",
   "header": "Header (title / artist)",
   "height": "Height",
-  "hint": "Changes apply live. In text mode the font restarts the window.",
   "hints": "Keyboard hints",
   "image_only": "image only",
   "karaoke": "Karaoke glow",
@@ -53,7 +52,6 @@
   "mode_text": "text",
   "open_settings": "Open settings",
   "render_mode": "Rendering",
-  "section_bar": "Bar",
   "section_color": "Colour",
   "section_display": "Display",
   "section_font": "Font",
@@ -195,5 +193,7 @@
   "glyph_placeholder": "music",
   "clear_cache": "Clear the lyrics cache",
   "clear_cache_failed": "Could not clear the lyrics cache.",
+  "clear_cache_done": "Cache cleared. Looking for the lyrics again.",
+  "clear_cache_hint": "Only needed if you switched source, the saved lyrics are wrong, or you want to force a search. For one song just press \"r\" in the window.",
   "write_failed": "Could not save the setting."
 }

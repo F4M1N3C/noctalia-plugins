@@ -40,7 +40,7 @@ import urllib.parse
 import urllib.request
 
 APP = "lyrics-carousel"
-VERSION = "2.0.0"
+VERSION = "2.2.0"
 
 # Plazo de espera de la busqueda de letra (segundos). Los proveedores
 # tardan: con 4 s una letra que tarda 6 s se tiraba a la basura.
@@ -57,6 +57,12 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 IMAGE_ERROR = ""
+try:
+    from image_renderer import IMAGE_FPS  # noqa: F401  (el ritmo del modo imagen)
+except Exception:  # noqa: BLE001
+    # El modulo puede no estar (Pillow ausente): el modo imagen se apaga y el
+    # ritmo se queda en 20, que es el que usa image_renderer cuando si esta.
+    IMAGE_FPS = 20
 try:
     from image_renderer import ImageRenderer
 except Exception as error:  # noqa: BLE001  (el modo imagen es opcional)
@@ -264,6 +270,16 @@ def mmss(seconds: float) -> str:
 
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def ease_in_out(progress: float) -> float:
+    """Curva suave: empieza y termina sin velocidad (smoothstep).
+
+    La misma curva se usa en modo texto y en modo imagen para que el
+    desplazamiento no cambie de carácter al cambiar de modo.
+    """
+    value = clamp(progress, 0.0, 1.0)
+    return value * value * (3.0 - 2.0 * value)
 
 
 def blend(a, b, t: float):
@@ -1615,9 +1631,10 @@ def load_settings() -> dict:
     cfg["font_size"] = max(6, min(96, cfg["font_size"]))
     cfg["spacing"] = max(1, min(6, cfg["spacing"]))
     cfg["animation_ms"] = max(0, min(3000, cfg["animation_ms"]))
-    # Los limites son los del manifiesto (plugin.toml): si el script
-    # aceptara mas, el panel y la pagina de ajustes darian valores
-    # distintos a los que el script esta usando.
+    # Los limites son los del panel (lib/settings.luau, LIMITS): el
+    # manifiesto ya no los declara porque esos ajustes solo se cambian en el
+    # panel. El script los recorta al leer, asi que un valor que llegue
+    # fuera de rango (un IPC, un fichero editado a mano) no rompe nada.
     cfg["offset_ms"] = max(-3000, min(3000, cfg["offset_ms"]))
     cfg["width"] = max(400, min(3840, cfg["width"]))
     cfg["height"] = max(200, min(2160, cfg["height"]))
@@ -1802,6 +1819,9 @@ class LyricsCarousel:
         self.status_message = ""
         self.dirty = True
         self.stop_requested = False
+        # SIGUSR1: el panel avisa de que la caché se ha vaciado y la
+        # ventana abierta tiene que volver a buscar la canción actual.
+        self.reload_requested = False
         self.need_clear = True
         self.last_counters = 0.0
         self._player = PlayerWatcher(args.player) if not self.demo else None
@@ -2183,21 +2203,85 @@ class LyricsCarousel:
         if not timed:
             return 0, 0, 0.0
         times = [start for start, _ in timed]
-        slot = bisect.bisect_right(times, position + 0.05) - 1
+        # Sin tolerancia: la línea siguiente solo es la activa cuando
+        # empieza de verdad. Si se adelantara, el final de la transición
+        # volvería a progress 0 y el carrusel daría un tirón al llegar.
+        slot = bisect.bisect_right(times, position) - 1
         slot = max(0, min(slot, len(timed) - 1))
         index = timed[slot][1]
         focus = index
         progress = 0.0
-        duration = self.cfg["animation_ms"] / 1000.0
+        # El ajuste es la duración real del desplazamiento. Nunca se come
+        # más del 80 % del hueco hasta la línea siguiente: si la letra va
+        # rápida, la transición se acorta en vez de solaparse con la que
+        # viene.
+        duration = min(1.2, max(0.0, self.cfg["animation_ms"] / 1000.0))
         nxt = slot + 1
         if nxt < len(timed) and duration > 0:
             next_start = timed[nxt][0]
-            anticipation = min(1.2, max(0.2, duration * 0.5))
-            start = next_start - anticipation
-            if start <= position < next_start:
-                progress = (position - start) / anticipation
-                focus = timed[nxt][1]
+            gap = next_start - timed[slot][0]
+            anticipation = min(duration, gap * 0.8) if gap > 0 else 0.0
+            if anticipation > 0:
+                start = next_start - anticipation
+                if start <= position < next_start:
+                    progress = ease_in_out((position - start) / anticipation)
+                    focus = timed[nxt][1]
         return index, focus, progress
+
+    def karaoke_amount(self, line, text, position, end) -> float:
+        """Cuántos caracteres de la línea se han cantado, con decimales.
+
+        Con tiempos por carácter el avance se interpola dentro del carácter
+        en curso, así que el relleno no salta de letra en letra. Sin ellos
+        se reparte la duración de la línea entre los caracteres.
+        """
+        length = len(text)
+        if length <= 0:
+            return 0.0
+        chars = line.chars if line.chars and len(line.chars) >= length else []
+        if chars:
+            started = 0
+            for value in chars[:length]:
+                if value <= position:
+                    started += 1
+                else:
+                    break
+            if started <= 0:
+                return 0.0
+            if started >= length:
+                return float(length)
+            previous = chars[started - 1]
+            following = chars[started]
+            inner = 0.0
+            if following > previous:
+                inner = clamp((position - previous) / (following - previous), 0.0, 1.0)
+            return started - 1 + inner
+        start = line.start
+        fraction = clamp((position - start) / max(0.35, end - start), 0.0, 1.0)
+        return fraction * length
+
+    def karaoke_word_cut(self, line, text, position, end) -> int:
+        """Corte del karaoke en modo texto, siempre al final de una palabra.
+
+        El relleno avanza cuando empieza la palabra y se queda quieto hasta
+        la siguiente; así los cortes caen en un espacio y no queda un hueco
+        visible dentro de una palabra.
+        """
+        length = len(text)
+        if length <= 0:
+            return 0
+        amount = self.karaoke_amount(line, text, position, end)
+        if amount <= 0.0:
+            return 0
+        if amount >= length:
+            return length
+        index = min(length - 1, int(math.floor(amount)))
+        if text[index] == " ":
+            return index + 1
+        space = text.find(" ", index)
+        if space < 0:
+            return length
+        return space + 1
 
     def equalizer_text(self):
         return self._equalizer(time.monotonic(), self.track.playing or self.demo)
@@ -2219,30 +2303,14 @@ class LyricsCarousel:
         """
         if not self.lines:
             return
-        timed = self._timed_lines()
-        if not timed:
-            return
-        times = [start for start, _ in timed]
-        slot = bisect.bisect_right(times, position + 0.05) - 1
-        slot = max(0, min(slot, len(timed) - 1))
-        index = timed[slot][1]
+        index, focus, progress = self.scroll_state(position)
         step = float(self.spacing)
-        duration = self.cfg["animation_ms"] / 1000.0
         self.active_index = index
         self.last_active = index
         target = index * step
-        self.moving = False
-
-        nxt = slot + 1
-        if nxt < len(timed) and duration > 0:
-            next_start = timed[nxt][0]
-            anticipation = min(1.2, max(0.2, duration * 0.5))
-            start = next_start - anticipation
-            if start <= position < next_start:
-                progress = clamp((position - start) / max(0.001, anticipation), 0.0, 1.0)
-                eased = 1 - (1 - progress) ** 2
-                target = index * step + (timed[nxt][1] - index) * step * eased
-                self.moving = True
+        self.moving = focus != index and progress > 0.0
+        if self.moving:
+            target = index * step + (focus - index) * step * progress
         self.scroll = target
 
     # ---- colores ------------------------------------------------------
@@ -2257,14 +2325,22 @@ class LyricsCarousel:
     # ---- piezas de UI -------------------------------------------------
 
     def _equalizer(self, t, playing=True):
+        """Siete barras con envolvente central y una onda lenta.
+
+        La barra del centro es la más alta y las de los extremos bajan, así
+        que el dibujo se lee como un visualizador y no como una fila de
+        caracteres sueltos. En pausa queda una curva quieta y simétrica.
+        """
         bars = []
-        for index in range(5):
+        center = 3
+        for index in range(7):
+            envelope = 0.42 + 0.58 * (1.0 - abs(index - center) / center)
             if playing:
-                level = 0.18 + 0.82 * abs(math.sin(t * 3.1 + index * 0.9)) * (
-                    0.55 + 0.45 * abs(math.sin(t * 1.7 + index))
-                )
+                wave = 0.5 + 0.5 * math.sin(t * 2.0 + index * 0.62)
+                ripple = 0.5 + 0.5 * math.sin(t * 1.1 - index * 0.38)
+                level = envelope * (0.20 + 0.55 * wave + 0.25 * ripple)
             else:
-                level = 0.12 + index * 0.03
+                level = envelope * 0.55
             bars.append(EQ[min(len(EQ) - 1, int(level * (len(EQ) - 1)))])
         return "".join(bars)
 
@@ -2329,7 +2405,9 @@ class LyricsCarousel:
         width = self.width
         left = mmss(position)
         right = mmss(duration) if duration > 0 else "--:--"
-        bar_width = max(4, width - 2 * len(left) - 2 * len(right) - 8)
+        left_width = cell_width(left)
+        right_width = cell_width(right)
+        bar_width = max(4, width - 2 * left_width - 2 * right_width - 8)
         ratio = clamp(position / duration, 0.0, 1.0) if duration > 0 else 0.0
         filled = int(bar_width * ratio)
         bar = fg(theme.accent) + ("\u2501" * filled) + ("\u2578" if filled < bar_width else "") + RESET
@@ -2337,7 +2415,14 @@ class LyricsCarousel:
             bar += fg(blend(theme.background, theme.past, 0.5)) + "\u2500" * (bar_width - filled - 1) + RESET
         left_text = fg(theme.faint) + left + RESET
         right_text = fg(theme.faint) + right + RESET
-        rows[self.height - 2] = "  " + left_text + "  " + bar + "  " + right_text
+        # La fila entera se centra en la ventana; antes empezaba en la
+        # columna 2 y el sobrante quedaba todo a la derecha, así que la
+        # barra se veía desplazada hacia la izquierda.
+        plain_width = 2 + left_width + 2 + bar_width + 2 + right_width
+        pad = max(0, (width - plain_width) // 2)
+        rows[self.height - 2] = (
+            " " * pad + "  " + left_text + "  " + bar + "  " + right_text
+        )
 
     def _hints(self, rows):
         """Fila con los atajos de teclado (opcional)."""
@@ -2386,6 +2471,14 @@ class LyricsCarousel:
         escala, numerador, denominador = partes
         if numerador:
             maximo = max(1, KITTY_MAX_BLOCK * denominador // numerador)
+            # Kitty centra el texto dentro de cada bloque. Si el bloque no
+            # es un múltiplo exacto del periodo de la escala, el redondeo
+            # deja relleno a los lados y la línea activa aparece cortada
+            # cada pocos caracteres. Con 1.2 (n=3:d=5) el periodo son 5
+            # caracteres: bloques de 10 ocupan 12 celdas exactas.
+            periodo = denominador // math.gcd(numerador, denominador)
+            if periodo <= maximo:
+                maximo = max(periodo, (maximo // periodo) * periodo)
         else:
             maximo = KITTY_MAX_BLOCK
 
@@ -2464,8 +2557,16 @@ class LyricsCarousel:
         if self.cfg["ghost"] and self.moving:
             motion = 0.78
 
-        limit_above = self.cfg["visible_above"]
-        limit_below = self.cfg["visible_below"]
+        # visible_above/below son líneas de la pantalla. En "down" el
+        # futuro entra por arriba; en "up" el futuro queda abajo. Antes se
+        # contaban siempre por índice, así que al cambiar de dirección las
+        # líneas visibles eran las del lado contrario.
+        if self.direction > 0:
+            first_visible = active - self.cfg["visible_below"]
+            last_visible = active + self.cfg["visible_above"]
+        else:
+            first_visible = active - self.cfg["visible_above"]
+            last_visible = active + self.cfg["visible_below"]
 
         # La linea activa puede dibujarse escalada con el protocolo de
         # tamaño de kitty. El bloque que dibuja kitty ocupa s filas hacia
@@ -2479,7 +2580,7 @@ class LyricsCarousel:
             fila_activa = max(top, min(fila_activa, bottom - filas + 1))
 
         for index, line in enumerate(self.lines):
-            if index < active - limit_above or index > active + limit_below:
+            if index < first_visible or index > last_visible:
                 continue
             pos = index * step
             if index == active:
@@ -2519,16 +2620,10 @@ class LyricsCarousel:
                 siguiente = self.next_timed_start(index)
                 if siguiente is not None and siguiente > line.start:
                     end = min(end, siguiente) if line.duration else siguiente
-                fraction = clamp((position - line.start) / max(0.35, end - line.start), 0.0, 1.0)
-                if line.chars and len(line.chars) >= len(text):
-                    count = 0
-                    for value in line.chars[: len(text)]:
-                        if value <= position:
-                            count += 1
-                    cut = count
-                else:
-                    cut = int(round(len(text) * fraction))
-                cut = max(0, min(len(text), cut))
+                # Palabra a palabra: el corte cae siempre en un espacio,
+                # así el redondeo de los bloques OSC 66 no abre un hueco
+                # dentro de una palabra.
+                cut = self.karaoke_word_cut(line, text, position, end)
                 sung = blend(theme.background, theme.accent, 1.0)
                 unsung = blend(theme.background, theme.accent, 0.42)
                 segmentos = [
@@ -2682,9 +2777,10 @@ class LyricsCarousel:
 
     def draw(self, force=False):
         now = time.monotonic()
-        # El modo imagen dibuja a 12 fps: suficiente para el efecto karaoke
-        # y mucho más ligero que ir a 20.
-        interval = 0.08 if self.use_image() else 0.05
+        # El modo imagen dibuja a 20 fps (IMAGE_FPS): la ventana manda la
+        # imagen entera cada cuadro, asi que mas no se nota e iria peor.
+        # El texto si va a 20 fps: es una terminal, no una imagen.
+        interval = 1.0 / IMAGE_FPS if self.use_image() else 0.05
         if not force and now - self.last_draw < interval:
             return
         self.last_draw = now
@@ -2768,6 +2864,22 @@ class LyricsCarousel:
             pending.pop(key, None)
             self.log(f"no se pudo guardar {key}: {error}")
 
+    def _on_reload_signal(self, _signum, _frame):
+        """Marca la recarga; el bucle la atiende en el siguiente cuadro."""
+        self.reload_requested = True
+
+    def _consume_reload(self) -> bool:
+        """Atiende una recarga pedida por SIGUSR1 (una sola vez)."""
+        if not getattr(self, "reload_requested", False):
+            return False
+        self.reload_requested = False
+        if self.demo:
+            self._load_demo()
+            self.dirty = True
+        elif self.track.title or self.track.artist:
+            self.reload_lyrics(force=True)
+        return True
+
     def handle_key(self, key: str) -> bool:
         if key in ("q", "Q", "\x03"):
             return False
@@ -2820,6 +2932,7 @@ class LyricsCarousel:
             while not self.stop_requested:
                 self.update_size()
                 self._poll_data()
+                self._consume_reload()
                 # Con el desfase: si el scroll usara la posicion cruda, la
                 # linea resaltada (que si usa el desfase) no seria la que
                 # esta en el centro.
@@ -2980,6 +3093,10 @@ def main():
             signal.signal(sig, on_signal)
         except (ValueError, OSError):
             pass
+    try:
+        signal.signal(signal.SIGUSR1, app._on_reload_signal)
+    except (ValueError, OSError, AttributeError):
+        pass
 
     try:
         app.run()

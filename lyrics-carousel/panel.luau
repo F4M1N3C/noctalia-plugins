@@ -128,6 +128,24 @@ end
 local function refreshSettings()
   settings = {}
   settingsLib.refresh()
+  -- El manifiesto solo declara el icono de la barra: el resto de ajustes los
+  -- gestiona el panel. `noctalia.getConfig` no los devuelve, asi que el valor
+  -- real se lee del settings.toml con el helper (la misma fuente que lee el
+  -- script). Es asincrono: cuando llegue, el panel se redibuja con el valor
+  -- bueno en vez de con el de por defecto.
+  local dir = noctalia.pluginDir()
+  if dir == nil or dir == "" then
+    return
+  end
+  runAsync({ "python3", dir .. "/bin/set-setting.py", "read" }, function(result)
+    if result == nil or result.exitCode ~= 0 then
+      return
+    end
+    settingsLib.useSaved(result.stdout)
+    if not panelClosed then
+      render()
+    end
+  end)
 end
 
 local function valueOf(key)
@@ -153,7 +171,7 @@ local function numberOf(key)
   return tonumber(valueOf(key)) or settingsLib.DEFAULTS[key]
 end
 
--- Limites de los ajustes numericos, copiados del manifiesto (plugin.toml).
+-- Limites de los ajustes numericos (lib/settings.luau, LIMITS).
 -- El script recorta lo que le llegue; el panel no puede ofrecer mas de lo
 -- que el script acepta, o el usuario veria un valor que no se aplica.
 -- Ajustes que cambian la geometria de la ventana abierta: al tocarlos hay
@@ -607,6 +625,11 @@ end
 -- Vacía la caché de letras (el script la guarda en ~/.cache/lyrics-carousel).
 -- Se lanza el script con --clear-cache: es el que sabe qué son las letras y
 -- qué no (el log de diagnóstico se conserva).
+--
+-- No hace falta en el uso normal: para una canción concreta basta pulsar "r"
+-- en la ventana. Sirve para fuentes o credenciales cambiadas, letras
+-- incorrectas guardadas o el resultado negativo que dura 24 minutos. Tras
+-- vaciarla se avisa a la ventana abierta (SIGUSR1) para que vuelva a buscar.
 local function clearLyricsCache()
   local dir = noctalia.pluginDir()
   if dir == nil or dir == "" then
@@ -616,8 +639,15 @@ local function clearLyricsCache()
   runAsync({ "python3", dir .. "/bin/lyrics-carousel", "--clear-cache" }, function(result)
     if result == nil or result.exitCode ~= 0 then
       reportError(tr("clear_cache_failed"))
+      render()
+      return
     end
-    render()
+    -- El script ya no guarda nada: la ventana abierta tiene que olvidarse de
+    -- lo que tenía y volver a buscar la canción que suena ahora.
+    runAsync({ "pkill", "-USR1", "-f", "lyrics-carousel" }, function()
+      safe("notify", noctalia.notify, tr("title"), tr("clear_cache_done"))
+      render()
+    end)
   end)
 end
 
@@ -718,7 +748,7 @@ local function sizeStepper(key, min, max, step)
 end
 
 -- Deslizador con su etiqueta y el valor a la derecha. Los limites son los
--- del manifiesto: el panel no puede ofrecer mas de lo que el script acepta.
+-- del panel: no puede ofrecer mas de lo que el script acepta.
 local function sliderRow(key, label, min, max, step, integer)
   -- El valor mostrado se recorta: si el ajuste esta fuera de rango (por
   -- ejemplo escrito a mano en el settings.toml), el deslizador tiene que
@@ -1012,7 +1042,7 @@ render = function()
     ui.row({ gap = 10 }, {
       ui.column({ flexGrow = 1, gap = 4 }, {
         ui.label({ text = tr("width"), fontSize = 11, color = "on_surface_variant" }),
-        -- Los límites son los del manifiesto (plugin.toml): el script
+        -- Los límites son los de este panel: el script
         -- recorta lo que le llegue, así que el panel no puede ofrecer más.
         sizeStepper("width", 400, 3840, 100),
       }),
@@ -1022,11 +1052,9 @@ render = function()
       }),
     }),
 
-    -- Barra --------------------------------------------------------------
-    ui.separator({ thickness = 1, spacing = 6 }),
-    ui.label({ text = tr("section_bar"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
-    inputRow("glyph", tr("glyph"), tr("glyph_placeholder")),
-
+    -- Caché -----------------------------------------------------------------
+    -- El icono de la barra no está aquí: es de la barra, no de la ventana, y
+    -- se cambia en Ajustes → Plugins → Lyrics Carousel.
     ui.separator({ thickness = 1, spacing = 6 }),
     ui.button({
       key = "clear-cache",
@@ -1035,7 +1063,7 @@ render = function()
       fontSize = 11,
       onClick = clearLyricsCache,
     }),
-    ui.label({ text = tr("hint"), fontSize = 10, color = "on_surface_variant" }),
+    ui.label({ text = tr("clear_cache_hint"), fontSize = 10, color = "on_surface_variant" }),
   }
 
   if lastError ~= "" then
@@ -1101,7 +1129,7 @@ function onIpc(event, payload)
     -- Fija un ajuste: "set font_size=26 int" o "set font_size 26 int"
     local key, value = settingsLib.parse(payload)
     if key ~= nil then
-      -- setSetting recorta el valor a los limites del manifiesto y refresca
+      -- setSetting recorta el valor a los limites del panel y refresca
       -- la vista: escribir `settings` antes saltaria ese recorte.
       setSetting(key, value, { geometry = GEOMETRY_KEYS[key] == true })
     end

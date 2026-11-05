@@ -37,7 +37,6 @@
   "glyph": "Icono de la barra",
   "header": "Cabecera (título / artista)",
   "height": "Alto",
-  "hint": "Los cambios se aplican en caliente. En modo texto la tipografía reinicia la ventana.",
   "hints": "Atajos de teclado",
   "image_only": "solo imagen",
   "karaoke": "Efecto karaoke",
@@ -53,7 +52,6 @@
   "mode_text": "texto",
   "open_settings": "Abrir ajustes",
   "render_mode": "Renderizado",
-  "section_bar": "Barra",
   "section_color": "Color",
   "section_display": "Presentación",
   "section_font": "Tipografía",
@@ -195,5 +193,7 @@
   "glyph_placeholder": "music",
   "clear_cache": "Vaciar la caché de letras",
   "clear_cache_failed": "No se pudo vaciar la caché de letras.",
+  "clear_cache_done": "Caché vaciada. Buscando la letra otra vez.",
+  "clear_cache_hint": "Solo hace falta si cambiaste de fuente, la letra guardada está mal o quieres forzar la búsqueda. Para una canción concreta pulsa «r» en la ventana.",
   "write_failed": "No se pudo guardar el ajuste."
 }

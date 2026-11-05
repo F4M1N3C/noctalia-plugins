@@ -449,6 +449,75 @@ def merge_overrides() -> int:
     return code
 
 
+def _valor_toml(texto: str):
+    """Convierte un escalar TOML (true, 12, 1.5 o "texto") a su tipo."""
+    texto = texto.strip()
+    if texto == "true":
+        return True
+    if texto == "false":
+        return False
+    if len(texto) >= 2 and texto[0] == texto[-1] and texto[0] in "\"'":
+        return texto[1:-1]
+    numero = re.match(
+        r"^[-+]?(?:\d[\d_]*(?:\.\d[\d_]*)?|\.\d[\d_]*)(?:[eE][-+]?\d+)?$", texto
+    )
+    if numero is not None:
+        return _numero_toml(numero.group(0))
+    return texto
+
+
+def read_settings() -> dict:
+    """Ajustes guardados del plugin en el settings.toml (solo lectura).
+
+    El manifiesto solo declara el icono de la barra: el resto de ajustes los
+    gestiona el panel. Noctalia conserva las claves guardadas aunque no estén
+    declaradas, pero `noctalia.getConfig` únicamente devuelve las que conoce,
+    así que el panel necesita leer el fichero para ver el valor real. Es la
+    misma fuente que usa el script: si el panel enseñara otra cosa, el
+    usuario vería un valor que no se aplica.
+    """
+    try:
+        with open(settings_path(), encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        return {}
+    if tomllib is not None:
+        try:
+            data = tomllib.loads(text)
+        except (tomllib.TOMLDecodeError, ValueError):
+            return {}
+        section = (data.get("plugin_settings") or {}).get(PLUGIN_ID) or {}
+        return {key: section[key] for key in ALLOWED if key in section}
+    return read_settings_sin_tomllib(text)
+
+
+def read_settings_sin_tomllib(text: str) -> dict:
+    """Lee la sección del plugin con una expresión regular (Python < 3.11).
+
+    Solo se usa cuando no hay tomllib. El formato del fichero lo escribe
+    Noctalia (una sección `[plugin_settings."faminec/lyrics-carousel"]` con
+    claves escalares), pero el fallback se limita a lo que necesita el panel
+    y descarta cualquier línea que no entienda.
+    """
+    values = {}
+    dentro = False
+    for linea in text.splitlines():
+        limpia = linea.strip()
+        if not limpia or limpia.startswith("#"):
+            continue
+        if limpia.startswith("["):
+            dentro = limpia == SECTION
+            continue
+        if not dentro or "=" not in limpia:
+            continue
+        name, _, resto = limpia.partition("=")
+        name = name.strip()
+        if name not in ALLOWED:
+            continue
+        values[name] = _valor_toml(resto)
+    return values
+
+
 def persist_override(key: str, value: str, kind: str) -> int:
     """Guarda el ajuste y lo deja escrito en el settings.toml.
 
@@ -499,6 +568,11 @@ def main(argv):
             return 2
     if len(argv) >= 2 and argv[1] == "merge":
         return merge_overrides()
+    if len(argv) >= 2 and argv[1] == "read":
+        # Solo lectura: el panel la usa para ver el valor real de un ajuste
+        # que el manifiesto ya no declara. No escribe nada.
+        print(json.dumps(read_settings(), ensure_ascii=False, sort_keys=True))
+        return 0
     if len(argv) < 3:
         print("uso: set-setting.py <clave> <valor> [tipo] ...", file=sys.stderr)
         return 2

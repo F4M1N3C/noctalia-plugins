@@ -48,6 +48,13 @@ LAUNCHER = os.path.expanduser("~/.local/bin/lyrics-carousel")
 results = []
 
 
+def pixeles(imagen):
+    """Píxeles de una imagen, sin el método que Pillow va a retirar."""
+    if hasattr(imagen, "get_flattened_data"):
+        return imagen.get_flattened_data()
+    return list(imagen.getdata())
+
+
 def check(name: str, ok: bool, detail: str = ""):
     results.append((name, ok, detail))
     return ok
@@ -619,6 +626,566 @@ def check_escala_linea_activa():
                 and "n=" not in bloques[0][0]
                 and factor_osc66(metadatos_osc66(bloques[0][0])) == 2.0,
                 repr(linea[-120:]),
+            )
+
+
+def image_module():
+    """Carga image_renderer para probar la disposición de las líneas."""
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    import image_renderer
+
+    return image_renderer
+
+
+def check_layout_imagen():
+    """La disposición del modo imagen es simétrica y no solapa bloques.
+
+    En "down" las líneas futuras entran por arriba y las pasadas salen por
+    abajo; en "up" al revés. Un signo invertido mete las vecinas dentro del
+    bloque activo y el espaciado deja de ser uniforme.
+    """
+    mod = image_module()
+
+    class App:
+        pass
+
+    for direction in ("down", "up"):
+        app = App()
+        app.cfg = {
+            "visible_above": 2,
+            "visible_below": 2,
+            "direction": direction,
+            "spacing": 3,
+        }
+        renderer = mod.ImageRenderer(app)
+        center = 400.0
+        size = 20.0
+        scale = 1.2
+        pos = renderer._layout(5, center, size, scale)
+        small_h = size * 1.32
+        big_h = size * scale * 1.32
+        gap = size * 0.30 * 3
+        paso = big_h / 2 + gap + small_h / 2
+
+        check(
+            "el layout de imagen dibuja las cinco líneas",
+            sorted(pos) == [3, 4, 5, 6, 7],
+            repr(sorted(pos)),
+        )
+        check(
+            "el layout de imagen centra la línea activa",
+            pos.get(5) == center,
+            repr(pos.get(5)),
+        )
+        check(
+            "el layout de imagen deja el mismo hueco a los dos lados",
+            abs(abs(pos.get(6, 0) - center) - abs(pos.get(4, 0) - center)) < 1e-6,
+            "arriba=%.2f abajo=%.2f" % (pos.get(6, 0), pos.get(4, 0)),
+        )
+        check(
+            "el layout de imagen separa las vecinas del bloque activo",
+            abs(pos.get(6, 0) - center) >= paso - 1e-6
+            and abs(pos.get(4, 0) - center) >= paso - 1e-6,
+            "paso=%.2f real=%.2f/%.2f"
+            % (paso, abs(pos.get(6, 0) - center), abs(pos.get(4, 0) - center)),
+        )
+        if direction == "down":
+            check(
+                "en down las líneas futuras van arriba",
+                pos[7] < pos[6] < center < pos[4] < pos[3],
+                repr({k: round(v, 1) for k, v in pos.items()}),
+            )
+        else:
+            check(
+                "en up las líneas futuras van abajo",
+                pos[3] < pos[4] < center < pos[6] < pos[7],
+                repr({k: round(v, 1) for k, v in pos.items()}),
+            )
+
+
+def check_karaoke_imagen_pixel_a_pixel():
+    """El karaoke de imagen se rellena a nivel de píxel y con decimales.
+
+    `_draw_karaoke` recibe los caracteres cantados con decimales. El borde
+    del relleno se interpola dentro del glifo en curso, así que un
+    instante ilumina un trozo de letra y no un salto de palabra entera:
+    es lo que hacía parecer que reconocía la velocidad de la canción.
+    """
+    mod = image_module()
+    if mod.Image is None:
+        check("el karaoke de imagen se puede medir (Pillow)", False, "sin Pillow")
+        return
+
+    texto = "cantando suave la linea"
+    cantado = (0, 200, 0)
+    pendiente = (0, 90, 0)
+
+    def medir(amount):
+        imagen = mod.Image.new("RGBA", (1500, 90), (0, 0, 0, 0))
+        pincel = mod.ImageDraw.Draw(imagen)
+        renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
+        renderer.fonts = {}
+        renderer.font_files = {"prueba": mod.FALLBACK_FONT}
+        renderer._draw_karaoke(
+            pincel, texto, 45, 20, cantado, pendiente, amount, "prueba"
+        )
+        datos = pixeles(imagen)
+        return sum(1 for px in datos if px[0] == cantado[0] and px[1] == cantado[1])
+
+    def medir_pendiente(amount):
+        imagen = mod.Image.new("RGBA", (1500, 90), (0, 0, 0, 0))
+        pincel = mod.ImageDraw.Draw(imagen)
+        renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
+        renderer.fonts = {}
+        renderer.font_files = {"prueba": mod.FALLBACK_FONT}
+        renderer._draw_karaoke(
+            pincel, texto, 45, 20, cantado, pendiente, amount, "prueba"
+        )
+        datos = pixeles(imagen)
+        return sum(1 for px in datos if px[1] == pendiente[1])
+
+    total = len(texto)
+    check(
+        "sin cantar nada no hay píxeles cantados",
+        medir(0.0) == 0,
+        repr(medir(0.0)),
+    )
+
+    medios = medir(total / 2)
+    check(
+        "a mitad de línea está cantada la mitad",
+        medir(0.0) < medios < medir(float(total)),
+        "medio=%s" % (medios,),
+    )
+    check(
+        "al final no queda nada pendiente",
+        medir_pendiente(float(total)) == 0,
+        repr(medir_pendiente(float(total))),
+    )
+
+    # El relleno es más fino que un carácter: medio glifo ilumina un
+    # troco pequeño, no la letra siguiente entera.
+    salto_entero = medir(7.0) - medir(6.0)
+    salto_medio = medir(6.5) - medir(6.0)
+    check(
+        "medio carácter ilumina menos que uno entero",
+        0 < salto_medio < salto_entero,
+        "medio=%s entero=%s" % (salto_medio, salto_entero),
+    )
+    check(
+        "el relleno sigue creciendo dentro del mismo carácter",
+        medir(6.25) >= medir(6.0) and medir(6.75) >= medir(6.5),
+        "%s %s" % (medir(6.25), medir(6.75)),
+    )
+
+
+def check_karaoke_imagen_sigue_los_tiempos():
+    """El karaoke de imagen usa los tiempos por carácter, como el de texto.
+
+    Si el adaptador da tiempos por carácter, el relleno los respeta: con
+    caracteres de 0,2 s cada uno, a los 0,5 s van dos y medio. Antes se
+    repartía la duración de la línea entera, así que todas las palabras
+    se iluminaban al mismo ritmo y la línea perdía el compás.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            imagen = image_module()
+            texto = "hola mundo feliz"
+            line = mod.LyricLine(0.0, 6.0, texto)
+            line.chars = [round(index * 0.2, 3) for index in range(len(texto))]
+
+            class Tema:
+                background = (10, 10, 10)
+                foreground = (200, 200, 200)
+                past = (120, 120, 120)
+
+            class PincelFalso:
+                # ImageDraw no se usa: basta con lo que consulta el render.
+                im = types.SimpleNamespace(size=(1500, 900))
+
+                def textlength(self, text, font=None):
+                    return len(text) * 12.0
+
+            app = types.SimpleNamespace()
+            app.cfg = {
+                "karaoke": True,
+                "marker": False,
+                "ghost": False,
+                "direction": "down",
+                "spacing": 3,
+                "visible_above": 2,
+                "visible_below": 2,
+                "animation_ms": 0,
+            }
+            app.state = "lyrics"
+            app.lines = [line]
+            app.track = mod.Track()
+            app.theme = Tema()
+            app.karaoke = True
+            app.demo = False
+            app.position = lambda: 0.5
+            app.next_timed_start = lambda index: None
+            # Los métodos reales, enganchados al objeto de prueba: así la
+            # prueba comprueba el cálculo de verdad, no una copia.
+            app.scroll_state = types.MethodType(mod.LyricsCarousel.scroll_state, app)
+            app._timed_lines = types.MethodType(mod.LyricsCarousel._timed_lines, app)
+            app.karaoke_amount = types.MethodType(
+                mod.LyricsCarousel.karaoke_amount, app
+            )
+
+            renderer = imagen.ImageRenderer.__new__(imagen.ImageRenderer)
+            renderer.app = app
+            renderer.fonts = {}
+            renderer.font_files = {"prueba": imagen.FALLBACK_FONT}
+            renderer._measure_draw = PincelFalso()
+            vistas = []
+            renderer._draw_karaoke = lambda *args: vistas.append(args)
+
+            renderer._draw_lyrics(
+                PincelFalso(), 450.0, 20.0, 1.2, "prueba", (0, 200, 0), 0.5, 0, 900
+            )
+
+            check(
+                "el render de imagen dibuja el karaoke de la línea activa",
+                len(vistas) == 1,
+                "llamadas=%s" % (len(vistas),),
+            )
+            if len(vistas) == 1:
+                amount = vistas[0][6]
+                check(
+                    "el avance tiene decimales (relleno continuo)",
+                    abs(amount - round(amount)) > 1e-6,
+                    "amount=%r" % (amount,),
+                )
+                check(
+                    "el avance respeta los tiempos por carácter",
+                    abs(amount - 2.5) < 0.02,
+                    "amount=%r" % (amount,),
+                )
+
+
+def check_transicion_real():
+    """animation_ms es la duración real y la curva entra y sale suave."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.cfg = dict(mod.DEFAULTS)
+            app.cfg["animation_ms"] = 900
+            app.lines = [
+                mod.LyricLine(0.0, 0.0, "uno"),
+                mod.LyricLine(4.0, 0.0, "dos"),
+                mod.LyricLine(8.0, 0.0, "tres"),
+            ]
+
+            # La transición empieza 900 ms antes, no 450: la mitad del
+            # valor configurado hacía que el ajuste mintiera.
+            index, focus, progress = app.scroll_state(3.55)
+            check(
+                "la transición dura lo configurado",
+                index == 0 and focus == 1 and abs(progress - 0.5) < 1e-6,
+                "index=%s focus=%s progress=%.4f" % (index, focus, progress),
+            )
+            check(
+                "la curva empieza despacio",
+                0.0 < app.scroll_state(3.325)[2] < 0.20,
+                "progress=%.4f" % app.scroll_state(3.325)[2],
+            )
+            check(
+                "la curva termina despacio",
+                app.scroll_state(3.95)[2] > 0.95,
+                "progress=%.4f" % app.scroll_state(3.95)[2],
+            )
+
+            # No se puede invadir la línea siguiente: con 3 s de animación
+            # y solo 1 s de hueco, la ventana se queda en el 80 % del hueco.
+            app.cfg["animation_ms"] = 3000
+            app.lines = [
+                mod.LyricLine(0.0, 0.0, "uno"),
+                mod.LyricLine(1.0, 0.0, "dos"),
+            ]
+            progress = app.scroll_state(0.6)[2]
+            check(
+                "la transición no se come la línea siguiente",
+                0.0 < progress < 1.0,
+                "progress=%.4f" % progress,
+            )
+
+            app.cfg["animation_ms"] = 0
+            index, focus, progress = app.scroll_state(0.9)
+            check(
+                "con 0 ms el cambio es instantáneo",
+                index == 0 and focus == 0 and progress == 0.0,
+                "index=%s focus=%s progress=%s" % (index, focus, progress),
+            )
+
+
+def check_bloques_alineados():
+    """Los bloques de la línea activa no dejan huecos.
+
+    Cada bloque OSC 66 ocupa celdas enteras y kitty centra el texto dentro.
+    Si el bloque no coincide con un múltiplo exacto del periodo de la
+    escala, el redondeo deja relleno a los lados: con 1.2, bloques de 11
+    caracteres ocupan 14 celdas cuando deberían ocupar 13.2. La línea
+    "Ready for that long look that never ends" parte justo en tres
+    puntos visibles.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.theme = mod.Theme()
+            app.cfg = dict(mod.DEFAULTS)
+            app.cfg.update(
+                {
+                    "ghost": False,
+                    "marker": False,
+                    "karaoke": False,
+                    "active_scale": 1.2,
+                    "visible_above": 6,
+                    "visible_below": 6,
+                    "spacing": 1,
+                }
+            )
+            app.width = 200
+            app.height = 21
+            app.spacing = 1
+            texto = "Ready for that long look that never ends"
+            app.lines = [
+                mod.LyricLine(0.0, 4.0, "linea anterior"),
+                mod.LyricLine(4.0, 4.0, texto),
+                mod.LyricLine(8.0, 4.0, "linea posterior"),
+            ]
+            app.active_index = 1
+            app.direction = -1
+            app.scroll = 1.0
+            app.moving = False
+            app.karaoke = False
+            app.next_timed_start = lambda index: None
+            rows = [""] * app.height
+            app._render_lyrics(rows, 0.0, 5.0, 0, app.height - 1)
+            linea = next((row for row in rows if "Ready" in texto_visible(row)), "")
+            bloques = bloques_osc66(linea)
+            check(
+                "la línea activa se parte en bloques",
+                len(bloques) >= 4,
+                "bloques=%s" % (bloques,),
+            )
+            union = "".join(payload for _, payload in bloques)
+            check(
+                "los bloques conservan el texto entero",
+                union == texto,
+                "unido=%r" % (union,),
+            )
+            malos = []
+            for metadatos, payload in bloques:
+                datos = metadatos_osc66(metadatos)
+                escala = int(datos.get("s", 1))
+                ancho = int(datos.get("w", 0))
+                factor = factor_osc66(datos)
+                real = ancho * escala
+                ideal = len(payload) * factor
+                if abs(real - ideal) > 0.5:
+                    malos.append(
+                        "%r: %s celdas, ideal %.1f" % (payload, real, ideal)
+                    )
+            check(
+                "cada bloque ocupa exactamente su parte",
+                not malos,
+                "; ".join(malos),
+            )
+
+
+def check_karaoke_por_palabras():
+    """En texto el karaoke avanza por palabras y corta en un espacio."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.cfg = dict(mod.DEFAULTS)
+            app.cfg["karaoke"] = True
+            texto = "hola mundo feliz"
+            line = mod.LyricLine(0.0, 5.0, texto)
+            line.chars = [index * 0.1 for index in range(len(texto))]
+            end = 5.0
+
+            casos = [
+                (0.0, 0),
+                (0.05, 5),
+                (0.45, 5),
+                (0.55, 11),
+                (1.5, len(texto)),
+            ]
+            for position, esperado in casos:
+                obtenido = app.karaoke_word_cut(line, texto, position, end)
+                check(
+                    "el karaoke por palabras corta en %d (t=%.2f)" % (esperado, position),
+                    obtenido == esperado,
+                    "obtenido=%s" % (obtenido,),
+                )
+                if 0 < obtenido < len(texto):
+                    check(
+                        "el corte del karaoke cae en un espacio (t=%.2f)" % position,
+                        texto[obtenido - 1] == " ",
+                        "corte=%r" % (texto[max(0, obtenido - 2) : obtenido + 1],),
+                    )
+
+            # Sin tiempos por carácter se usa la fracción temporal, pero el
+            # corte sigue cayendo en el final de la palabra en curso.
+            line.chars = []
+            check(
+                "sin tiempos por carácter el corte también cae en el espacio",
+                app.karaoke_word_cut(line, texto, 2.5, 10.0) == 5,
+                repr(app.karaoke_word_cut(line, texto, 2.5, 10.0)),
+            )
+            check(
+                "la segunda palabra se canta entera al empezar",
+                app.karaoke_word_cut(line, texto, 3.5, 10.0) == 11,
+                repr(app.karaoke_word_cut(line, texto, 3.5, 10.0)),
+            )
+
+
+def check_limites_por_direccion():
+    """visible_above/below cuentan líneas de la pantalla, no del tiempo."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+
+            def filas_visibles(direction, above, below):
+                app = object.__new__(mod.LyricsCarousel)
+                app.theme = mod.Theme()
+                app.cfg = dict(mod.DEFAULTS)
+                app.cfg.update(
+                    {
+                        "ghost": False,
+                        "marker": False,
+                        "karaoke": False,
+                        "active_scale": 1.0,
+                        "visible_above": above,
+                        "visible_below": below,
+                        "spacing": 1,
+                    }
+                )
+                app.width = 80
+                app.height = 25
+                app.lines = [
+                    mod.LyricLine(index, 1.0, "linea %d" % index)
+                    for index in range(8)
+                ]
+                app.active_index = 3
+                app.spacing = app.cfg["spacing"]
+                app.direction = 1 if direction == "down" else -1
+                app.scroll = 3.0
+                app.moving = False
+                app.karaoke = False
+                app.next_timed_start = lambda index: None
+                rows = [""] * app.height
+                app._render_lyrics(rows, 0.0, 5.0, 0, app.height - 1)
+                salida = {}
+                for row, value in enumerate(rows):
+                    for index in range(8):
+                        if "linea %d" % index in texto_visible(value):
+                            salida[index] = row
+                return salida
+
+            # down: el futuro está arriba y el pasado abajo.
+            down = filas_visibles("down", 1, 0)
+            check(
+                "en down solo se ve la línea futura de arriba",
+                set(down) == {3, 4} and down[4] < down[3],
+                repr(down),
+            )
+            down = filas_visibles("down", 0, 1)
+            check(
+                "en down la línea pasada queda abajo",
+                set(down) == {2, 3} and down[2] > down[3],
+                repr(down),
+            )
+            # up: el pasado está arriba y el futuro abajo.
+            up = filas_visibles("up", 1, 0)
+            check(
+                "en up la línea pasada queda arriba",
+                set(up) == {2, 3} and up[2] < up[3],
+                repr(up),
+            )
+            up = filas_visibles("up", 0, 1)
+            check(
+                "en up la línea futura queda abajo",
+                set(up) == {3, 4} and up[4] > up[3],
+                repr(up),
+            )
+
+
+def check_visualizador():
+    """El visualizador tiene siete barras, envolvente central y pausa quieta."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.cfg = dict(mod.DEFAULTS)
+            app.track = mod.Track()
+            app.demo = False
+            pausa = app._equalizer(0.0, False)
+            check(
+                "el visualizador tiene siete barras",
+                len(pausa) == 7,
+                repr(pausa),
+            )
+            check(
+                "en pausa el visualizador es simétrico",
+                pausa == pausa[::-1],
+                repr(pausa),
+            )
+            check(
+                "en pausa el centro es la barra más alta",
+                bool(pausa) and pausa[3] == max(pausa),
+                repr(pausa),
+            )
+            activo = app._equalizer(0.0, True)
+            check(
+                "al sonar las barras cambian",
+                len(activo) == 7 and activo != pausa,
+                repr(activo),
+            )
+            check(
+                "las barras usan los caracteres del ecualizador",
+                all(char in EQ_CHARS for char in activo),
+                repr(activo),
+            )
+
+
+def check_recarga_por_senal():
+    """SIGUSR1 recarga la letra en la ventana abierta tras vaciar la caché."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.cfg = dict(mod.DEFAULTS)
+            app.demo = False
+            app.track = mod.Track("Tema", "Artista")
+            app.reload_requested = False
+            llamadas = []
+            app.reload_lyrics = lambda force=False: llamadas.append(force)
+
+            app._on_reload_signal(signal.SIGUSR1, None)
+            check(
+                "la señal deja pedida la recarga",
+                app.reload_requested is True,
+                repr(app.reload_requested),
+            )
+            check(
+                "la recarga pedida se atiende una sola vez",
+                app._consume_reload() is True
+                and llamadas == [True]
+                and app.reload_requested is False,
+                "llamadas=%s flag=%s" % (llamadas, app.reload_requested),
+            )
+            check(
+                "sin señal no se recarga nada",
+                app._consume_reload() is False and llamadas == [True],
+                "llamadas=%s" % (llamadas,),
             )
 
 
@@ -1735,6 +2302,11 @@ def check_panel_cubre_manifiesto():
         return
     for setting in manifest.get("setting", []):
         key = setting.get("key", "")
+        # El icono de la barra se configura en esta pagina y no en el panel:
+        # pertenece al widget de la barra, no a la ventana de letras. Es la
+        # unica clave que se permite fuera del panel.
+        if key == "glyph":
+            continue
         # El panel puede tocar el ajuste de tres formas: escribirlo
         # directamente (setSetting), a traves de una fila de interruptor
         # (toggleRow) o con un control cuya clave es el propio ajuste
@@ -1751,6 +2323,111 @@ def check_panel_cubre_manifiesto():
             or f'inputRow("{key}"' in panel
         )
         check(f"el panel expone `{key}`", expuesto, key)
+
+
+def check_barra_de_tiempo_centrada():
+    """La barra de tiempo se centra en la ventana.
+
+    La fila entera se centra. Antes empezaba en la columna 2, así que el
+    sobrante se acumulaba a la derecha y la barra se veía desplazada hacia
+    la izquierda aunque el texto de los minutos quedara a la izquierda.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.theme = mod.Theme()
+            app.cfg = dict(mod.DEFAULTS)
+            app.cfg.update({"footer": True, "spacing": 1, "karaoke": False})
+            app.width = 100
+            app.height = 24
+            app.lines = []
+            app.texts = {"hints": [""]}
+            rows = [""] * app.height
+            app._footer(rows, 95.0, 180.0)
+
+            fila = texto_visible(rows[app.height - 2])
+            check(
+                "la barra de tiempo se dibuja",
+                "01:35" in fila,
+                repr(fila),
+            )
+            # Sin color ni secuencias: el centro visible de la fila tiene
+            # que caer en el centro de la ventana.
+            inicio = len(fila) - len(fila.lstrip(" "))
+            final = inicio + len(fila.strip())
+            centro = (inicio + final) / 2.0
+            check(
+                "la fila de la barra queda centrada",
+                abs(centro - app.width / 2) <= 1.0,
+                "centro=%.1f ventana=%d" % (centro, app.width),
+            )
+            check(
+                "el minuto final se ve a la derecha",
+                "03:00" in fila,
+                repr(fila),
+            )
+
+
+def check_reparto_de_ajustes():
+    """El manifiesto no duplica lo que ya se cambia en el panel.
+
+    El usuario no considera necesarias las opciones de la configuracion de
+    Noctalia que ya estan en el panel, asi que el manifiesto solo declara lo
+    que el panel no ofrece. Si alguien vuelve a anadir una clave que el panel
+    ya controla, la pagina de ajustes y el panel vuelven a ofrecer lo mismo
+    con dos limites distintos.
+
+    La excepcion es `glyph`: es el icono del widget de la barra, que se
+    configura en esta pagina y no en la ventana de letras.
+    """
+    try:
+        import tomllib
+
+        with open(os.path.join(PLUGIN_DIR, "plugin.toml"), "rb") as handle:
+            manifest = tomllib.load(handle)
+    except Exception as error:  # noqa: BLE001
+        check("el manifiesto se puede leer para el reparto", False, repr(error)[:120])
+        return
+    declaradas = {
+        setting.get("key", "")
+        for setting in manifest.get("setting", [])
+        if setting.get("key")
+    }
+    solo_en_ajustes = {"glyph"}
+
+    # Lo que el panel controla: es la lista de claves de lib/settings.luau
+    # (DEFAULTS), no un texto suelto, para que la prueba no se quede vieja.
+    lib = os.path.join(PLUGIN_DIR, "lib", "settings.luau")
+    del_panel = set()
+    try:
+        with open(lib, encoding="utf-8") as handle:
+            texto = handle.read()
+    except OSError as error:
+        check("la lista de claves se puede leer", False, repr(error)[:120])
+        return
+    bloque = re.search(r"local DEFAULTS = \{(.*?)\n\}", texto, re.S)
+    if bloque:
+        for encontrado in re.finditer(r"^\s{2}(\w+)\s*=", bloque.group(1), re.M):
+            del_panel.add(encontrado.group(1))
+    check("la lista de claves del panel se puede leer", bool(del_panel))
+
+    duplicados = sorted((declaradas - solo_en_ajustes) & del_panel)
+    check(
+        "el manifiesto no repite los ajustes del panel",
+        not duplicados,
+        "duplicados=%s" % (duplicados,),
+    )
+    check(
+        "el manifiesto solo deja lo que no esta en el panel",
+        declaradas <= solo_en_ajustes,
+        "declaradas=%s" % (sorted(declaradas),),
+    )
+    check(
+        "el icono de la barra sigue en el manifiesto",
+        "glyph" in declaradas,
+        str(sorted(declaradas)),
+    )
 
 
 def check_panel_attached():
@@ -2003,67 +2680,65 @@ def check_estado_real_intocable():
         )
 
 
-def check_limites_desde_el_manifiesto():
-    """El helper recorta con los rangos que declara el manifiesto.
+def check_limites_del_panel_y_el_script():
+    """El panel y el script recortan con los mismos rangos.
 
-    Los limites viven en plugin.toml: si el helper los codificara, un
-    cambio en el manifiesto dejaria al plugin escribiendo valores que su
-    propia pagina de ajustes no permite. Ademas el recorte tiene que
-    aplicar a cualquier via de escritura (el IPC del widgetincluded).
+    El manifiesto solo declara el icono de la barra, asi que los rangos ya no
+    viven en plugin.toml: los aplica el panel antes de escribir
+    (lib/settings.luau) y el script al leerlos. Si divergieran, el panel
+    dejaria guardar un valor que la ventana despues descarta, y el usuario
+    veria un numero que no se aplica.
     """
-    import tomllib
-
-    manifiesto = os.path.join(os.path.dirname(HERE), "plugin.toml")
-    try:
-        with open(manifiesto, "rb") as handle:
-            datos = tomllib.load(handle)
-    except (OSError, ValueError) as error:
-        check("el manifiesto declara limites", False, repr(error)[:120])
-        return
-    limites = {}
-    for campo in datos.get("setting", []):
-        if campo.get("min") is not None or campo.get("max") is not None:
-            limites[campo["key"]] = (campo.get("min"), campo.get("max"))
-    check("el manifiesto declara limites", bool(limites), str(sorted(limites))[:120])
-    if not limites:
-        return
-
-    # La copia que usa la interfaz (lib/settings.luau) tiene que ser la
-    # misma que la del manifiesto: si divergen, el panel deja escribir
-    # valores que su propia pagina de ajustes no permite.
     lib = os.path.join(os.path.dirname(HERE), "lib", "settings.luau")
     copia = {}
     try:
         with open(lib, encoding="utf-8") as handle:
             texto = handle.read()
     except OSError as error:
-        check("los limites de la interfaz son los del manifiesto", False, repr(error)[:120])
-        texto = ""
+        check("el panel declara limites", False, repr(error)[:120])
+        return
     bloque = re.search(r"local LIMITS = \{(.*?)\n\}", texto, re.S)
     if bloque:
         for linea in bloque.group(1).splitlines():
             encontrado = re.match(
-                r"\s*(\w+)\s*=\s*\{\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\}", linea
+                r"\s*(\w+)\s*=\s*\{\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\}",
+                linea,
             )
             if encontrado:
                 copia[encontrado.group(1)] = (
                     float(encontrado.group(2)),
                     float(encontrado.group(3)),
                 )
-    esperado = {
-        clave: (float(bajo), float(alto))
-        for clave, (bajo, alto) in limites.items()
-        if bajo is not None and alto is not None
-    }
+    check("el panel declara limites", bool(copia), str(sorted(copia))[:120])
+    if not copia:
+        return
+
+    # La copia del script: los recortes de load_settings.
+    try:
+        with open(os.path.join(HERE, "lyrics-carousel"), encoding="utf-8") as handle:
+            guion = handle.read()
+    except OSError as error:
+        check("el script se puede leer", False, repr(error)[:120])
+        return
+    recortes = {}
+    for encontrado in re.finditer(
+        r'cfg\["(\w+)"\]\s*=\s*max\(\s*(-?[\d.]+)\s*,\s*min\(\s*(-?[\d.]+)\s*,',
+        guion,
+    ):
+        recortes[encontrado.group(1)] = (
+            float(encontrado.group(2)),
+            float(encontrado.group(3)),
+        )
     check(
-        "los limites de la interfaz son los del manifiesto",
-        copia == esperado,
-        f"interfaz={sorted(copia.items())} manifiesto={sorted(esperado.items())}",
+        "el script recorta con los rangos del panel",
+        recortes == copia,
+        f"script={sorted(recortes.items())} panel={sorted(copia.items())}",
     )
 
-    # Sin tomllib (Python < 3.11) el manifiesto se lee con una expresion
-    # regular: si no, el recorte desapareceria en silencio y el helper
-    # escribiria valores que la pagina de ajustes no permite.
+    # El helper ya no recorta rangos: el manifiesto no los declara. Lo que
+    # conserva es el formato (patrones) y la escritura atomica. Comprobar que
+    # NO recorta es tan importante como lo contrario: si alguien vuelve a
+    # poner limites en el manifiesto, el helper perderia valores en silencio.
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("set_setting_sin_tomllib", HELPER)
@@ -2072,18 +2747,45 @@ def check_limites_desde_el_manifiesto():
         spec.loader.exec_module(helper)
     except Exception as error:  # noqa: BLE001
         check("el helper se puede cargar", False, repr(error)[:120])
-        helper = None
-    if helper is not None and hasattr(helper, "manifest_limits_sin_tomllib"):
-        sin_tomllib = helper.manifest_limits_sin_tomllib(manifiesto)
-        esperado_limites = {
-            clave: (bajo, alto)
-            for clave, (bajo, alto) in limites.items()
-        }
-        check(
-            "sin tomllib se leen los mismos limites del manifiesto",
-            sin_tomllib == esperado_limites,
-            f"regex={sorted(sin_tomllib.items())} manifiesto={sorted(esperado_limites.items())}",
+        return
+    check(
+        "el helper tiene fallback para leer los limites",
+        hasattr(helper, "manifest_limits_sin_tomllib"),
+    )
+    if not hasattr(helper, "manifest_limits_sin_tomllib"):
+        return
+
+    # El fallback sin tomllib sigue leyendo lo que haya en el manifiesto: se
+    # prueba con un manifiesto de mentira porque el real ya no declara rangos.
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".toml", delete=False, encoding="utf-8"
+    ) as handle:
+        handle.write(
+            "[[setting]]\n"
+            'key = "font_size"\n'
+            "min = 6\n"
+            "max = 96\n"
+            "\n"
+            "[[panel]]\n"
+            "min = 1\n"
+            "max = 2\n"
         )
+        manifiesto_simple = handle.name
+    try:
+        if helper.tomllib is not None:
+            with open(manifiesto_simple, "rb") as handle:
+                datos = helper.tomllib.load(handle)
+            con_tomllib = {
+                campo["key"]: (campo.get("min"), campo.get("max"))
+                for campo in datos.get("setting", [])
+                if campo.get("min") is not None or campo.get("max") is not None
+            }
+            check(
+                "sin tomllib se leen los mismos limites",
+                helper.manifest_limits_sin_tomllib(manifiesto_simple) == con_tomllib,
+                f"regex={sorted(helper.manifest_limits_sin_tomllib(manifiesto_simple).items())}"
+                f" tomllib={sorted(con_tomllib.items())}",
+            )
 
         # El fallback no puede depender de que el manifiesto use solo el
         # formato mas simple: cualquier bloque que no sea [[setting]] debe
@@ -2118,56 +2820,23 @@ def check_limites_desde_el_manifiesto():
             str(limites_raros),
         )
 
-        # Y el recorte tiene que funcionar con esos limites.
-        original_tomllib = helper.tomllib
+        # Y el recorte del helper funciona si el manifiesto los trae de verdad.
+        original = helper._MANIFEST_LIMITS
         try:
-            helper.tomllib = None
-            helper._MANIFEST_LIMITS = None
+            helper._MANIFEST_LIMITS = {"font_size": (6, 96)}
             check(
-                "sin tomllib el helper sigue recortando",
-                helper.clamp_value("font_size", 9999) == limites.get("font_size", (0, 0))[1],
+                "con limites en el manifiesto el helper recorta",
+                helper.clamp_value("font_size", 9999) == 96,
                 str(helper.clamp_value("font_size", 9999)),
             )
         finally:
-            helper.tomllib = original_tomllib
-            helper._MANIFEST_LIMITS = None
-    else:
-        check("el helper tiene fallback para leer el manifiesto", False)
+            helper._MANIFEST_LIMITS = original
+    finally:
+        os.unlink(manifiesto_simple)
 
-    clave = "font_size"
-    if clave not in limites:
-        clave = sorted(limites)[0]
-    bajo, alto = limites[clave]
-
-    def guardar(valor: str) -> object:
-        with tempfile.TemporaryDirectory() as temporal:
-            env = entorno_de_prueba(temporal)
-            subprocess.run(
-                [sys.executable, HELPER, "override", clave, valor, "int"],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                env=env,
-            )
-            ruta = os.path.join(
-                temporal,
-                ".local/state/noctalia/plugins/data/faminec/lyrics-carousel",
-                "overrides.json",
-            )
-            try:
-                with open(ruta, encoding="utf-8") as handle:
-                    return json.load(handle).get(clave)
-            except (OSError, ValueError):
-                return None
-
-    if alto is not None:
-        check("el helper recorta por arriba", guardar(str(alto + 1000)) == alto, str(alto))
-    if bajo is not None:
-        check("el helper recorta por abajo", guardar(str(bajo - 1000)) == bajo, str(bajo))
-
-    # El script tambien recorta, y con los mismos limites: si el script
-    # aceptara mas que el manifiesto, la pagina de ajustes y la ventana no
-    # contarian la misma historia.
+    # Lo que de verdad protege al usuario: un valor fuera de rango que
+    # llegue al settings.toml (un IPC, el fichero editado a mano) se recorta
+    # al leerlo.
     def cargar(valores: dict) -> dict:
         with tempfile.TemporaryDirectory(prefix="lyrics-carousel-limites-") as temporal:
             with env_temporal(
@@ -2175,22 +2844,25 @@ def check_limites_desde_el_manifiesto():
                     "XDG_CACHE_HOME": os.path.join(temporal, "cache"),
                 }
             ), estado_temporal(temporal) as destino:
-                with open(os.path.join(destino, "settings.toml"), "w", encoding="utf-8") as handle:
+                with open(
+                    os.path.join(destino, "settings.toml"), "w", encoding="utf-8"
+                ) as handle:
                     handle.write('[plugin_settings."faminec/lyrics-carousel"]\n')
                     for clave, valor in valores.items():
                         handle.write(f"{clave} = {valor}\n")
                 mod = script_module()
                 return mod.load_settings()
 
-    for etiqueta, elegir in (("arriba", lambda bajo, alto: alto), ("abajo", lambda bajo, alto: bajo)):
+    for etiqueta, elegir in (
+        ("arriba", lambda bajo, alto: alto),
+        ("abajo", lambda bajo, alto: bajo),
+    ):
         valores = {}
-        for clave, (bajo, alto) in limites.items():
+        for clave, (bajo, alto) in copia.items():
             valores[clave] = elegir(bajo, alto) + (1000 if etiqueta == "arriba" else -1000)
         cfg = cargar(valores)
-        for clave, (bajo, alto) in limites.items():
+        for clave, (bajo, alto) in copia.items():
             esperado = alto if etiqueta == "arriba" else bajo
-            if esperado is None:
-                continue
             obtenido = cfg.get(clave)
             check(
                 f"el script recorta {clave} por {etiqueta}",
@@ -2389,11 +3061,20 @@ def main(argv):
     check_reintento_letra()
     check_ecualizador_fila()
     check_escala_linea_activa()
+    check_layout_imagen()
+    check_karaoke_imagen_pixel_a_pixel()
+    check_karaoke_imagen_sigue_los_tiempos()
+    check_transicion_real()
+    check_bloques_alineados()
+    check_karaoke_por_palabras()
+    check_limites_por_direccion()
+    check_visualizador()
+    check_recarga_por_senal()
     check_tamano_terminal_real()
     check_rutas_estado()
     check_idioma_ventana()
     check_limites_ajustes()
-    check_limites_desde_el_manifiesto()
+    check_limites_del_panel_y_el_script()
     check_formatos_del_helper()
     check_titulo_vacio_no_rebusca()
     check_timeout_adaptador()
@@ -2415,6 +3096,8 @@ def main(argv):
     check_espacio_no_rompe()
     check_atajo_no_se_pierde()
     check_panel_cubre_manifiesto()
+    check_barra_de_tiempo_centrada()
+    check_reparto_de_ajustes()
     check_panel_attached()
 
     # 4e) el README documenta lo que el manifiesto declara: si el manifiesto

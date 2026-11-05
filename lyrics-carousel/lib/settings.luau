@@ -58,10 +58,11 @@ M.DEFAULTS = DEFAULTS
 
 --- Rangos (min, max) de los ajustes numericos.
 ---
---- Son los mismos que declara el manifiesto (plugin.toml): el manifiesto es
---- la fuente de verdad y el helper que escribe los overrides los lee de
---- ahi. Esta copia la usa la interfaz para dibujar los deslizadores y para
---- recortar los valores que ya estan guardados fuera de rango.
+--- El manifiesto solo declara el icono de la barra, asi que estos rangos ya
+--- no estan en dos sitios: los aplica el panel antes de escribir y el script
+--- al leerlos. Las dos copias tienen que coincidir (lo comprueba el
+--- autotest): si el panel dejara pasar un valor que el script descarta, el
+--- usuario veria un numero que no se aplica.
 local LIMITS = {
   font_size = { 6, 96 },
   spacing = { 1, 6 },
@@ -207,17 +208,53 @@ function M.refresh()
   cached = {}
 end
 
---- Valor efectivo de un ajuste: overrides > configuracion > defecto.
+--- Valor efectivo de un ajuste: overrides > configuracion > guardado > defecto.
 function M.value(key)
   local override = M.overrides()[key]
   if override ~= nil then
     return override
   end
   local value = noctalia.getConfig(key)
-  if value == nil then
-    return DEFAULTS[key]
+  if value ~= nil then
+    return value
   end
-  return value
+  -- El manifiesto solo declara el icono de la barra: el resto de ajustes los
+  -- gestiona el panel. `noctalia.getConfig` unicamente devuelve las claves
+  -- que conoce, asi que para las demas se usa lo que hay guardado en el
+  -- settings.toml (lo lee el panel con M.useSaved). Es la misma fuente que
+  -- lee el script: sin esta lectura el panel ensenaria los valores por
+  -- defecto en lugar de los del usuario.
+  local guardado = M.saved()[key]
+  if guardado ~= nil then
+    return guardado
+  end
+  return DEFAULTS[key]
+end
+
+--- Valores guardados en el settings.toml.
+---
+--- El panel los trae con el helper (`set-setting.py read`) y los deja aqui
+--- con M.useSaved. No caducan: un valor solo cambia cuando el usuario lo
+--- cambia, y cada via de cambio (el panel, la pagina de ajustes, el IPC del
+--- widget) vuelve a pedirlos. Devolver el ultimo conocido es mejor que
+--- ensenar los valores por defecto.
+local saved = nil
+
+--- Carga los valores leidos del settings.toml (JSON del helper).
+function M.useSaved(raw)
+  if type(raw) ~= "string" or raw == "" then
+    return false
+  end
+  local ok, data = pcall(noctalia.json.decode, raw)
+  if not ok or type(data) ~= "table" then
+    return false
+  end
+  saved = data
+  return true
+end
+
+function M.saved()
+  return saved or {}
 end
 
 function M.kindOf(key)

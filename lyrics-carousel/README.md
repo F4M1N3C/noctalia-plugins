@@ -91,7 +91,7 @@ it belongs to the bar widget, not to the lyrics window.
 | `render_mode` | `select` | `image` | `image` (Pillow) or `text` (terminal). |
 | `direction` | `select` | `down` | `down`: the lyrics come in from the top. `up`: from the bottom. |
 | `marker` | `bool` | `false` | Shows a `>` next to the active line. |
-| `karaoke` | `bool` | `true` | Lights the active line character by character. |
+| `karaoke` | `bool` | `true` | Lights the active line as it is sung, with a glow around it. |
 | `equalizer` | `bool` | `false` | Animated bars. |
 | `footer` | `bool` | `false` | Elapsed time and a progress bar. |
 | `hints` | `bool` | `false` | Keyboard hints at the bottom. |
@@ -127,13 +127,17 @@ the window has to be opened again for them to change.
   longer to light up, and within the character in progress the fill advances
   continuously instead of jumping from word to word. In image mode it no longer
   spreads the whole line duration across the characters, so the line keeps the
-  rhythm of the song. The sung part keeps the halo that surrounds it, which is what
-  makes it glow as in the earlier versions.
-- The active line in text mode is split into blocks that match the exact period of
-  the scale (`s × n/d`): with 1.2 the blocks are 10 characters, which occupy whole
-  cells, so the visible gaps every few characters are gone. The fill also advances
-  word by word, so the colour change falls on a space and no gap opens inside a
-  word.
+  rhythm of the song.
+- The sung part really glows: the lit text is blurred into a halo that reaches
+  several pixels beyond the letters (it used to be a one-pixel outline, which
+  looked like glue), and the halo fades out at the edge of the fill instead of
+  ending in a straight wall of light. The boundary between the lit and the unlit
+  text is a gradient, so the light seems to travel along the line.
+- The active line in text mode is split into blocks whose length is a multiple of
+  the exact period of the scale (`s × n/d`): with 1.2 the blocks are 5 characters,
+  which occupy whole cells, so the visible gaps every few characters are gone.
+  The fill advances on those block boundaries, so no piece of text is ever split
+  and no gap opens inside a word.
 - The scroll uses `animation_ms` as its real duration (it was half of it), never
   invades the following line (it fits in 80% of the gap), and both modes now ease
   with the same curve: the block dims while it moves and the movement feels the

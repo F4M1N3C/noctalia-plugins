@@ -604,9 +604,11 @@ def check_escala_linea_activa():
 
             # Con escala 2 la linea activa ocupa dos filas: la de abajo
             # tiene que quedar libre porque kitty borra el glifo grande si
-            # se escribe encima.
+            # se escribe encima. La linea se busca por su texto visible:
+            # el contenido va partido en bloques de kitty.
             fila_activa = next(
-                (i for i, row in enumerate(rows) if "hola mundo" in row), -1
+                (i for i, row in enumerate(rows) if "hola mundo" in texto_visible(row)),
+                -1,
             )
             check(
                 "la fila de debajo de la línea activa queda libre",
@@ -998,8 +1000,300 @@ def check_bloques_alineados():
             )
 
 
-def check_karaoke_por_palabras():
-    """En texto el karaoke avanza por palabras y corta en un espacio."""
+def check_karaoke_sin_huecos():
+    """Con el karaoke encendido la línea activa tampoco deja huecos.
+
+    El bloque escalado de kitty mide `s*w` celdas y el texto a escala
+    `s*n/d` mide `k*s*n/d`. Las dos cosas solo coinciden (y el bloque queda
+    pegado, sin relleno sobrante) cuando la longitud `k` es múltiplo de
+    `d/gcd(n,d)`: 5 caracteres con la escala 1.2.
+
+    Antes, el corte del karaoke partía un bloque de 10 en dos trozos y cada
+    trozo redondeaba su ancho a celdas enteras: sobraba hasta 1,6 celdas y
+    se veían huecos ("t hat", "lo ok", "nev er"). Ahora ninguna pieza se
+    parte, así que el relleno puede ir por cualquier sitio sin abrir huecos.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.theme = mod.Theme()
+            app.cfg = dict(mod.DEFAULTS)
+            app.cfg.update(
+                {
+                    "ghost": False,
+                    "marker": False,
+                    "karaoke": True,
+                    "active_scale": 1.2,
+                    "visible_above": 6,
+                    "visible_below": 6,
+                    "spacing": 1,
+                }
+            )
+            app.width = 200
+            app.height = 21
+            app.spacing = 1
+            textos = [
+                "Ready for that long look that never ends",
+                "Hello beautiful world tonight now",
+            ]
+            app.lines = [
+                mod.LyricLine(0.0, 4.0, "linea anterior"),
+                mod.LyricLine(4.0, 4.0, textos[0]),
+                mod.LyricLine(8.0, 4.0, "linea posterior"),
+            ]
+            app.active_index = 1
+            app.direction = -1
+            app.scroll = 1.0
+            app.moving = False
+            app.karaoke = True
+            app.next_timed_start = lambda index: None
+
+            # Se barre la linea entera: el hueco aparece en un momento
+            # concreto, asi que basta con mirar uno para no verlo.
+            for texto in textos:
+                app.lines[1] = mod.LyricLine(4.0, 4.0, texto)
+                for paso in range(0, 40):
+                    position = 4.0 + paso * 0.1
+                    rows = [""] * app.height
+                    app._render_lyrics(rows, 0.0, position, 0, app.height - 1)
+                    linea = next(
+                        (row for row in rows if texto[:5] in texto_visible(row)), ""
+                    )
+                    bloques = [bloque for bloque in bloques_osc66(linea) if bloque[1]]
+                    if not bloques:
+                        check(
+                            "con karaoke la línea activa se dibuja (t=%.1f)" % position,
+                            False,
+                            "posicion=%s" % (position,),
+                        )
+                        continue
+                    union = "".join(payload for _, payload in bloques)
+                    check(
+                        "con karaoke el texto sigue entero (t=%.1f)" % position,
+                        union == texto,
+                        "unido=%r" % (union,),
+                    )
+                    malos = []
+                    for indice, (metadatos, payload) in enumerate(bloques):
+                        datos = metadatos_osc66(metadatos)
+                        escala = int(datos.get("s", 1))
+                        ancho = int(datos.get("w", 0))
+                        factor = factor_osc66(datos)
+                        real = ancho * escala
+                        ideal = len(payload) * factor
+                        if abs(real - ideal) <= 0.01:
+                            continue
+                        # Solo el ultimo bloque puede quedar corto: es el
+                        # final de la linea, donde el relleno que sobra
+                        # (el bloque mide celdas enteras) no se ve. Los
+                        # demas tienen que quedar exactos, que es lo que
+                        # cierra los huecos entre palabras.
+                        if indice != len(bloques) - 1 or real - ideal > 2.01:
+                            malos.append(
+                                "%r: %s celdas, ideal %.1f"
+                                % (payload, real, ideal)
+                            )
+                    check(
+                        "con karaoke cada bloque queda pegado (t=%.1f)" % position,
+                        not malos,
+                        "; ".join(malos),
+                    )
+
+
+def check_corte_alineado():
+    """El corte del karaoke cae en un límite de bloque.
+
+    El relleno avanza a saltos de `q` caracteres (5 con la escala 1.2, 3 con
+    la 1.35). Es lo que permite que el bloque quede pegado: si el corte
+    cayera en mitad de un bloque, sobraría relleno y se abriría un hueco.
+
+    El salto ocurre cuando se canta ese bloque de verdad, así que el
+    relleno sigue el compás de la letra.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.cfg = dict(mod.DEFAULTS)
+            app.cfg["karaoke"] = True
+            texto = "hola mundo entero y feliz"
+            line = mod.LyricLine(0.0, 5.0, texto)
+            line.chars = [index * 0.1 for index in range(len(texto))]
+            end = 5.0
+
+            partes_12 = mod.kitty_scale_parts(1.2)
+            partes_135 = mod.kitty_scale_parts(1.35)
+            check(
+                "la escala 1.2 usa un cuanto de 5 caracteres",
+                mod.scale_quantum(partes_12) == 5,
+                "cuanto=%s partes=%s"
+                % (mod.scale_quantum(partes_12), partes_12),
+            )
+            check(
+                "la escala 1.35 usa un cuanto de 3 caracteres",
+                mod.scale_quantum(partes_135) == 3,
+                "cuanto=%s partes=%s"
+                % (mod.scale_quantum(partes_135), partes_135),
+            )
+
+            anterior = -1
+            for position in (0.0, 0.25, 0.55, 0.95, 1.45, 2.05, 3.0, 4.5):
+                cut = app.karaoke_cut(line, texto, position, end, partes_12)
+                check(
+                    "el corte cae en un límite de bloque (t=%.2f)" % position,
+                    cut % mod.scale_quantum(partes_12) == 0
+                    or cut == len(texto),
+                    "corte=%s" % (cut,),
+                )
+                check(
+                    "el corte no sale de la línea (t=%.2f)" % position,
+                    0 <= cut <= len(texto),
+                    "corte=%s" % (cut,),
+                )
+                check(
+                    "el corte avanza con el tiempo (t=%.2f)" % position,
+                    cut >= anterior,
+                    "corte=%s anterior=%s" % (cut, anterior),
+                )
+                anterior = cut
+
+            # Con una escala sin fracción el cuanto es 1: el relleno puede
+            # ir carácter a carácter.
+            partes_entera = mod.kitty_scale_parts(2.0)
+            check(
+                "una escala entera no limita el corte",
+                mod.scale_quantum(partes_entera) == 1,
+                "cuanto=%s" % (mod.scale_quantum(partes_entera),),
+            )
+            # Con tiempos por carácter, en t=1.05 el avance real es de 10.5
+            # caracteres: el relleno llega hasta el que se está cantando.
+            cut = app.karaoke_cut(line, texto, 1.05, end, partes_entera)
+            check(
+                "con escala entera el corte va carácter a carácter",
+                cut == 11,
+                "corte=%s" % (cut,),
+            )
+
+
+def check_glow_real():
+    """El resplandor de la imagen es de verdad un resplandor.
+
+    Antes era un halo de un píxel (la misma frase pegada ocho veces alrededor):
+    se veía un contorno, no un brillo. Ahora la capa cantada se difumina, así
+    que el halo llega varios píxeles más allá de la letra, y el borde del
+    relleno se desvanece en vez de cortar en seco.
+    """
+    mod = image_module()
+    if mod.Image is None:
+        check("el resplandor se puede medir (Pillow)", False, "sin Pillow")
+        return
+
+    texto = "cantando"
+    cantado = (0, 200, 0)
+    pendiente = (0, 90, 0)
+    imagen = mod.Image.new("RGBA", (400, 80), (0, 0, 0, 0))
+    pincel = mod.ImageDraw.Draw(imagen)
+    renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
+    renderer.fonts = {}
+    renderer.font_files = {"prueba": mod.FALLBACK_FONT}
+    renderer._draw_karaoke(pincel, texto, 40, 20, cantado, pendiente, 4.0, "prueba")
+
+    glifo = mod.Image.new("L", imagen.size, 0)
+    brillo = mod.Image.new("L", imagen.size, 0)
+    for indice, px in enumerate(pixeles(imagen)):
+        x = indice % imagen.size[0]
+        y = indice // imagen.size[0]
+        if px[3] == 0:
+            continue
+        if px[:3] == cantado or px[:3] == pendiente:
+            glifo.putpixel((x, y), 255)
+        else:
+            brillo.putpixel((x, y), 255)
+
+    # Lo que queda del resplandor lejos de la letra. Con el halo de un
+    # pixel de antes el resplandor no llegaba mas de dos pixeles (el
+    # pixel del halo y el borde difuminado): aqui se mide a tres.
+    try:
+        from PIL import ImageChops, ImageFilter
+
+        dilatado = glifo.filter(ImageFilter.MaxFilter(7))
+        lejos = ImageChops.subtract(brillo, dilatado)
+        pixeles_lejos = sum(lejos.histogram()[1:])
+    except ImportError:  # pragma: no cover
+        pixeles_lejos = 0
+    check(
+        "el resplandor llega varios pixeles mas alla de la letra",
+        pixeles_lejos > 200,
+        "pixeles=%s" % (pixeles_lejos,),
+    )
+
+    # El resplandor no se corta en seco en el borde de lo cantado: llega
+    # un poco mas alla y se apaga. Si se recortase justo en el borde,
+    # el halo terminaba en una pared vertical de luz al lado de la letra
+    # que faltaba.
+    ultimo = 0
+    for indice, px in enumerate(pixeles(imagen)):
+        if px[3] > 0 and px[:3] == cantado:
+            ultimo = max(ultimo, indice % imagen.size[0])
+    mas_alla = 0
+    for indice, px in enumerate(pixeles(imagen)):
+        x = indice % imagen.size[0]
+        if x <= ultimo or px[3] == 0:
+            continue
+        if px[:3] != cantado and px[:3] != pendiente:
+            mas_alla += 1
+    check(
+        "el resplandor se apaga en vez de cortarse en el borde",
+        mas_alla > 100,
+        "pixeles=%s" % (mas_alla,),
+    )
+
+    # El borde del relleno se desvanece: hay varios tonos intermedios entre
+    # lo cantado y lo que falta, no un salto de un color a otro.
+    intermedios = set()
+    for px in pixeles(imagen):
+        if px[3] == 0:
+            continue
+        rojo, verde, azul = px[:3]
+        if rojo == cantado[0] and verde == cantado[1] and azul == cantado[2]:
+            continue
+        if rojo == pendiente[0] and verde == pendiente[1] and azul == pendiente[2]:
+            continue
+        intermedios.add((rojo, verde, azul))
+    check(
+        "el borde del relleno se suaviza",
+        len(intermedios) >= 3,
+        "tonos=%s" % (len(intermedios),),
+    )
+
+    # Los tonos intermedios son mezclas de lo cantado y lo que falta: si
+    # alguno se sale de ese rango, el resplandor esta sucio (el negro
+    # transparente de fuera se cuela en el color al difuminarlo).
+    fuera = [
+        color
+        for color in intermedios
+        if not (
+            pendiente[0] <= color[0] <= cantado[0]
+            and pendiente[1] <= color[1] <= cantado[1]
+            and pendiente[2] <= color[2] <= cantado[2]
+        )
+    ]
+    check(
+        "el resplandor no ensucia los colores de la letra",
+        not fuera,
+        "colores=%s" % (sorted(fuera)[:5],),
+    )
+
+
+def check_karaoke_por_caracteres():
+    """En texto el karaoke avanza carácter a carácter.
+
+    Sin escala (o con una escala entera) el bloque es de un carácter, así
+    que el relleno va letra a letra: es lo que hace que parezca que
+    reconoce la velocidad de la letra cantada. Mandan los tiempos por
+    carácter, así que el relleno se queda dentro del carácter en curso.
+    """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
         with env_temporal({"XDG_CACHE_HOME": cache}):
             mod = script_module()
@@ -1013,37 +1307,44 @@ def check_karaoke_por_palabras():
 
             casos = [
                 (0.0, 0),
-                (0.05, 5),
+                (0.05, 1),
+                (0.15, 2),
                 (0.45, 5),
-                (0.55, 11),
+                (0.55, 6),
+                (1.05, 11),
                 (1.5, len(texto)),
             ]
             for position, esperado in casos:
-                obtenido = app.karaoke_word_cut(line, texto, position, end)
+                obtenido = app.karaoke_cut(line, texto, position, end)
                 check(
-                    "el karaoke por palabras corta en %d (t=%.2f)" % (esperado, position),
+                    "el karaoke avanza letra a letra en %d (t=%.2f)"
+                    % (esperado, position),
                     obtenido == esperado,
                     "obtenido=%s" % (obtenido,),
                 )
-                if 0 < obtenido < len(texto):
-                    check(
-                        "el corte del karaoke cae en un espacio (t=%.2f)" % position,
-                        texto[obtenido - 1] == " ",
-                        "corte=%r" % (texto[max(0, obtenido - 2) : obtenido + 1],),
-                    )
 
-            # Sin tiempos por carácter se usa la fracción temporal, pero el
-            # corte sigue cayendo en el final de la palabra en curso.
+            # El relleno nunca retrocede ni se pasa del final de la línea.
+            anterior = 0
+            for position in (0.0, 0.2, 0.4, 0.6, 1.0, 1.4, 2.0, 3.0, 5.0):
+                obtenido = app.karaoke_cut(line, texto, position, end)
+                check(
+                    "el relleno no retrocede (t=%.2f)" % position,
+                    obtenido >= anterior,
+                    "obtenido=%s anterior=%s" % (obtenido, anterior),
+                )
+                check(
+                    "el relleno no se pasa de la línea (t=%.2f)" % position,
+                    0 <= obtenido <= len(texto),
+                    "obtenido=%s" % (obtenido,),
+                )
+                anterior = obtenido
+
+            # Sin tiempos por carácter se usa la fracción temporal.
             line.chars = []
             check(
-                "sin tiempos por carácter el corte también cae en el espacio",
-                app.karaoke_word_cut(line, texto, 2.5, 10.0) == 5,
-                repr(app.karaoke_word_cut(line, texto, 2.5, 10.0)),
-            )
-            check(
-                "la segunda palabra se canta entera al empezar",
-                app.karaoke_word_cut(line, texto, 3.5, 10.0) == 11,
-                repr(app.karaoke_word_cut(line, texto, 3.5, 10.0)),
+                "sin tiempos por carácter el relleno sigue la línea",
+                app.karaoke_cut(line, texto, 2.5, 10.0) == 4,
+                repr(app.karaoke_cut(line, texto, 2.5, 10.0)),
             )
 
 
@@ -3089,7 +3390,10 @@ def main(argv):
     check_karaoke_imagen_sigue_los_tiempos()
     check_transicion_real()
     check_bloques_alineados()
-    check_karaoke_por_palabras()
+    check_karaoke_sin_huecos()
+    check_corte_alineado()
+    check_glow_real()
+    check_karaoke_por_caracteres()
     check_limites_por_direccion()
     check_visualizador()
     check_recarga_por_senal()

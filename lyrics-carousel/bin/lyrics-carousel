@@ -243,6 +243,15 @@ def kitty_scale_parts(factor: float):
     Devuelve (s, n, d) o None si el factor no necesita escala. La
     fracción n/d es la que más se acerca al factor con d <= 15, que es lo
     que admite kitty, y siempre con n < d.
+
+    Entre las fracciones que se parecen al factor se prefiere la que deja
+    un bloque *pegado* (sin relleno sobrante): el ancho del bloque es
+    `s*w` celdas y el texto mide `k*s*n/d`, y ambas cosas solo coinciden
+    cuando la longitud es múltiplo de `d/gcd(n,d)`. Ese bloque ocupa
+    `n/gcd(n,d)` celdas escaladas, así que si no cabe en el máximo de
+    kitty no hay forma de que quede pegado. Solo se acepta ese cambio si
+    el tamaño se mantiene dentro del 5%: la escala que pidió el usuario
+    manda.
     """
     valor = float(factor)
     if valor <= 1.0 + 1e-9:
@@ -253,12 +262,42 @@ def kitty_scale_parts(factor: float):
         # Factor entero: el glifo llena su bloque y no deja huecos.
         return (escala, 0, 0)
     mejor = None
+    pegado = None
     for denominador in range(2, KITTY_MAX_FRACTION + 1):
         for numerador in range(1, denominador):
             error = abs(numerador / denominador - objetivo)
+            candidato = (error, numerador, denominador)
             if mejor is None or error < mejor[0]:
-                mejor = (error, numerador, denominador)
-    return (escala, mejor[1], mejor[2])
+                mejor = candidato
+            if numerador // math.gcd(numerador, denominador) <= KITTY_MAX_BLOCK:
+                if pegado is None or error < pegado[0]:
+                    pegado = candidato
+    elegido = mejor
+    if pegado is not None:
+        error_factor = abs(escala * pegado[1] / pegado[2] - valor)
+        if error_factor <= valor * 0.05:
+            elegido = pegado
+    return (escala, elegido[1], elegido[2])
+
+
+def scale_quantum(partes):
+    """Caracteres que tiene que tener un bloque para quedar pegado.
+
+    El bloque de kitty mide `s*w` celdas y el texto a escala `s*n/d` mide
+    `k*s*n/d` celdas. Para que el texto llene el bloque sin que sobre
+    nada (y no se vea un hueco entre bloques) las dos medidas tienen que
+    coincidir, y eso pasa cuando `k` es múltiplo de `d/gcd(n,d)`.
+
+    Con la escala 1.2 (s=2, n=3, d=5) son 5 caracteres; con la 1.35
+    (s=2, n=2, d=3) son 3. Sin fracción (escala entera) es 1: el relleno
+    puede ir carácter a carácter.
+    """
+    if not partes:
+        return 1
+    _escala, numerador, denominador = partes
+    if not numerador or not denominador:
+        return 1
+    return max(1, denominador // math.gcd(numerador, denominador))
 
 
 def kitty_scale_factor(partes) -> float:
@@ -2266,12 +2305,22 @@ class LyricsCarousel:
         fraction = clamp((position - start) / max(0.35, end - start), 0.0, 1.0)
         return fraction * length
 
-    def karaoke_word_cut(self, line, text, position, end) -> int:
-        """Corte del karaoke en modo texto, siempre al final de una palabra.
+    def karaoke_cut(self, line, text, position, end, partes=None) -> int:
+        """Corte del karaoke en modo texto, en una frontera de bloque.
 
-        El relleno avanza cuando empieza la palabra y se queda quieto hasta
-        la siguiente; así los cortes caen en un espacio y no queda un hueco
-        visible dentro de una palabra.
+        El relleno avanza a saltos de un bloque (5 caracteres con la escala
+        1.2, 3 con la 1.35) porque el corte tiene que caer en una frontera
+        de bloque: si cayera en mitad, el bloque partido redondearia su
+        ancho a celdas enteras y se vería un hueco en mitad de la palabra
+        (era lo que pasaba con "t hat" o "nev er").
+
+        Sin escala, o con una escala entera, el bloque es de un carácter y
+        el relleno avanza letra a letra, pegado al compás real.
+
+        El corte sale de los tiempos por carácter y cae en la frontera de
+        bloque más cercana al avance real, así que el relleno va lo más
+        pegado posible a la voz (el error es de medio bloque, no de un
+        bloque entero).
         """
         length = len(text)
         if length <= 0:
@@ -2280,14 +2329,15 @@ class LyricsCarousel:
         if amount <= 0.0:
             return 0
         if amount >= length:
+            # La linea entera cantada: el corte cae al final del texto, que
+            # es el final del ultimo bloque, asi que no se parte ninguno.
             return length
-        index = min(length - 1, int(math.floor(amount)))
-        if text[index] == " ":
-            return index + 1
-        space = text.find(" ", index)
-        if space < 0:
-            return length
-        return space + 1
+        cuanto = scale_quantum(partes)
+        # El corte cae en la frontera de bloque mas cercana al avance real:
+        # asi el relleno va lo mas pegado posible a la voz (el error es de
+        # medio bloque, no de un bloque entero) y nunca abre un hueco.
+        corte = int(math.floor(amount / cuanto + 0.5)) * cuanto
+        return max(0, min(corte, length))
 
     def equalizer_text(self):
         return self._equalizer(time.monotonic(), self.track.playing or self.demo)
@@ -2466,34 +2516,38 @@ class LyricsCarousel:
         """Cuerpo de la linea con el tamaño de texto de kitty.
 
         Los segmentos son trozos de texto con su color, en orden. El texto
-        se trocea en bloques de 7 celdas escaladas como mucho, que es el
-        maximo que admite kitty; si un corte de color cae dentro de un
-        bloque, el bloque se parte en dos. El texto se recorta hasta que
-        los bloques caben en el ancho disponible: kitty no dibuja un
-        bloque mas ancho que la terminal y lo pasa a la linea de abajo,
-        lo que rompe el dibujo. Devuelve el cuerpo y el ancho que ocupa
+        se trocea en bloques cuya longitud es multiplo del cuanto de la
+        escala (5 caracteres con la escala 1.2, 3 con la 1.35): el bloque
+        de kitty mide `s*w` celdas y los glifos a escala `s*n/d` miden
+        `k*s*n/d`, y las dos medidas solo coinciden cuando la longitud es
+        multiplo del cuanto. Asi el bloque queda pegado y no se ve ningun
+        hueco entre bloques.
+
+        Kitty centra el texto dentro del bloque, asi que el bloque se
+        alinea a la izquierda: el relleno sobrante del ultimo bloque (que
+        puede no ser multiplo del cuanto) queda al final de la linea,
+        donde no se ve, y no en mitad.
+
+        El texto se recorta hasta que los bloques caben en el ancho
+        disponible: kitty no dibuja un bloque mas ancho que la terminal y
+        lo pasa a la linea de abajo, lo que rompe el dibujo. Se quitan
+        bloques enteros, nunca trozos, para que los que quedan sigan
+        cuadrados con la escala. Devuelve el cuerpo y el ancho que ocupa
         en celdas.
         """
         escala, numerador, denominador = partes
-        if numerador:
-            maximo = max(1, KITTY_MAX_BLOCK * denominador // numerador)
-            # Kitty centra el texto dentro de cada bloque. Si el bloque no
-            # es un múltiplo exacto del periodo de la escala, el redondeo
-            # deja relleno a los lados y la línea activa aparece cortada
-            # cada pocos caracteres. Con 1.2 (n=3:d=5) el periodo son 5
-            # caracteres: bloques de 10 ocupan 12 celdas exactas.
-            periodo = denominador // math.gcd(numerador, denominador)
-            if periodo <= maximo:
-                maximo = max(periodo, (maximo // periodo) * periodo)
-        else:
-            maximo = KITTY_MAX_BLOCK
+        cuanto = scale_quantum(partes)
+        factor = kitty_scale_factor(partes)
 
-        def celdas_de(largo):
+        def celdas_escaladas(largo):
+            """Celdas escaladas que ocupa un trozo de `largo` caracteres."""
+            if largo <= 0:
+                return 0
             if numerador:
-                valor = int(math.ceil(largo * numerador / denominador))
-            else:
-                valor = largo
-            return max(1, min(KITTY_MAX_BLOCK, valor))
+                return max(
+                    1, int(math.ceil(largo * numerador / denominador - 1e-9))
+                )
+            return largo
 
         texto = "".join(trozo for trozo, _ in segmentos)
         limites = []
@@ -2502,52 +2556,84 @@ class LyricsCarousel:
             limites.append((cursor, cursor + len(trozo), color))
             cursor += len(trozo)
 
-        piezas = []
-        for inicio in range(0, len(texto), maximo):
-            fin = min(len(texto), inicio + maximo)
+        # Los bloques no se parten: sus extremos son multiplos del cuanto,
+        # asi que el corte del karaoke (que tambien lo es) cae justo en
+        # una frontera y no abre ningun hueco.
+        bloques = []
+        inicio = 0
+        while inicio < len(texto):
+            fin = min(len(texto), inicio + cuanto)
+            pedazos = []
             for desde, hasta, color in limites:
                 a = max(inicio, desde)
                 b = min(fin, hasta)
-                if a >= b:
-                    continue
-                piezas.append([a, b, color, celdas_de(b - a)])
+                if a < b:
+                    pedazos.append((a, b, color))
+            if pedazos:
+                celdas = sum(celdas_escaladas(b - a) for a, b, _ in pedazos)
+                bloques.append([pedazos, celdas])
+            inicio = fin
 
+        # Recorte: se quitan bloques enteros y se deja un puntito al final.
+        presupuesto = max(1, int(disponible // escala))
         recortado = False
-        while piezas and sum(pieza[3] for pieza in piezas) * escala > disponible:
-            ultima = piezas[-1]
-            if ultima[1] - ultima[0] <= 1:
-                piezas.pop()
-            else:
-                ultima[1] -= 1
-                ultima[3] = celdas_de(ultima[1] - ultima[0])
+        color_final = None
+        while bloques and sum(b[1] for b in bloques) > presupuesto:
+            ultimos = bloques.pop()[0]
+            color_final = ultimos[-1][2]
             recortado = True
+        if recortado and bloques:
+            total = sum(b[1] for b in bloques)
+            while bloques and total + celdas_escaladas(1) > presupuesto:
+                ultimos = bloques.pop()[0]
+                color_final = ultimos[-1][2]
+            if color_final is None:
+                color_final = bloques[-1][0][-1][2]
 
         cuerpo = ""
-        ancho = 0
-        for inicio, fin, color, celdas in piezas:
-            trozo = texto[inicio:fin]
-            if recortado and (inicio, fin) == (piezas[-1][0], piezas[-1][1]):
-                trozo = trozo[:-1] + "…"
-            cuerpo += color + self._osc66(partes, celdas) + trozo + "\x07" + OSC_RESET
-            ancho += celdas * escala
-        return cuerpo + RESET, ancho
+        ancho = 0.0
+        for pedazos, _ in bloques:
+            for a, b, color in pedazos:
+                trozo = texto[a:b]
+                cuerpo += (
+                    color
+                    + self._osc66(partes, celdas_escaladas(b - a))
+                    + trozo
+                    + "\x07"
+                    + OSC_RESET
+                )
+                ancho += (b - a) * factor
+        if recortado:
+            if color_final is None:
+                color_final = segmentos[-1][1]
+            cuerpo += (
+                color_final
+                + self._osc66(partes, celdas_escaladas(1))
+                + "…"
+                + "\x07"
+                + OSC_RESET
+            )
+            ancho += factor
+        return cuerpo + RESET, int(round(ancho))
 
     @staticmethod
     def _osc66(partes, celdas):
         """Inicio de la secuencia OSC 66 con el tamaño y el ancho del bloque.
 
-        v=0 alinea el glifo arriba del bloque y h=2 lo centra en el ancho,
-        que es lo que hace que la linea quede centrada y no con huecos.
+        v=0 alinea el glifo arriba del bloque y h=0 lo deja a la izquierda:
+        el texto ocupa el bloque entero, y el relleno que sobra (el del
+        ultimo bloque, que puede no ser multiplo del cuanto) se queda al
+        final de la linea en vez de abrir un hueco en mitad.
         """
         escala, numerador, denominador = partes
         if numerador:
-            return "\x1b]66;s=%d:n=%d:d=%d:w=%d:v=0:h=2;" % (
+            return "\x1b]66;s=%d:n=%d:d=%d:w=%d:v=0:h=0;" % (
                 escala,
                 numerador,
                 denominador,
                 celdas,
             )
-        return "\x1b]66;s=%d:w=%d:v=0:h=2;" % (escala, celdas)
+        return "\x1b]66;s=%d:w=%d:v=0:h=0;" % (escala, celdas)
 
     def _render_lyrics(self, rows, t, position, top, bottom):
         theme = self.theme
@@ -2626,10 +2712,11 @@ class LyricsCarousel:
                 siguiente = self.next_timed_start(index)
                 if siguiente is not None and siguiente > line.start:
                     end = min(end, siguiente) if line.duration else siguiente
-                # Palabra a palabra: el corte cae siempre en un espacio,
-                # así el redondeo de los bloques OSC 66 no abre un hueco
-                # dentro de una palabra.
-                cut = self.karaoke_word_cut(line, text, position, end)
+                # El corte cae en una frontera de bloque: el relleno
+                # avanza a saltos de bloque (o letra a letra si la linea
+                # no va escalada) y nunca abre un hueco en mitad de una
+                # palabra.
+                cut = self.karaoke_cut(line, text, position, end, partes)
                 sung = blend(theme.background, theme.accent, 1.0)
                 unsung = blend(theme.background, theme.accent, 0.42)
                 segmentos = [

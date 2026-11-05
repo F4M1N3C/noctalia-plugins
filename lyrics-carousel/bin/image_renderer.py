@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from graphics import GraphicsRenderer, load_font, terminal_cells, text_width  # noqa: E402
 
 try:
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageChops, ImageDraw, ImageFilter
 except ImportError:  # pragma: no cover
     Image = None
 
@@ -147,9 +147,15 @@ class ImageRenderer:
         sílaba larga tarda más en llenarse, que es lo que hacía parecer
         que reconocía la velocidad de la canción.
 
-        El resplandor se hace con la misma frase repetida un píxel
-        alrededor en un tono apagado: es un halo barato (sin desenfoque)
-        que da el brillo de las primeras versiones.
+        El resplandor es de verdad un resplandor: la capa cantada se
+        difumina y se compone debajo del texto nítido, así que el brillo
+        sale varios píxeles hacia fuera. Antes era un halo de un píxel (la
+        misma frase pegada ocho veces alrededor), que solo pintaba un
+        contorno y se veía como un pegamento.
+
+        El borde del relleno se desvanece con una rampa de alfa: la letra
+        cantada se funde con la que falta en vez de cortar en seco, y el
+        ojo sigue la luz que avanza.
         """
         font = self.font(family, size)
         if font is None:
@@ -178,10 +184,13 @@ class ImageRenderer:
         if sung_px <= 0.0:
             return
 
+        # El resplandor se difumina: el radio sale del tamaño de la letra
+        # y el margen deja sitio para que el halo quepa entero.
+        radio = max(2.0, size * 0.22)
         left, top, right, bottom = draw.textbbox(
             (x, center_y), text, font=font, anchor="lm"
         )
-        pad = max(2, int(size * 0.5))
+        pad = max(4, int(size * 0.8) + int(radio * 2))
         box = (
             max(0, int(left) - pad),
             max(0, int(top) - pad),
@@ -194,7 +203,7 @@ class ImageRenderer:
             return
 
         # Borde cantado, en píxeles dentro de la caja de la línea.
-        limit = max(1, int(math.ceil(sung_px + x - box[0])))
+        limit = max(1, min(width, int(math.ceil(sung_px + x - box[0]))))
 
         def capa(color):
             """La frase entera sobre una capa recortada a la línea."""
@@ -208,37 +217,87 @@ class ImageRenderer:
             )
             return layer
 
-        glow = self._mix(sung, unsung, 0.35)
         # El trozo cantado se recorta con crop (un píxel más no cambia nada):
         # así el borde del relleno cae dentro del glifo en curso y el avance
         # es continuo en vez de saltar de palabra en palabra.
-        corte = (0, 0, max(1, min(width, limit)), height)
-        halo = capa(glow).crop(corte)
-        claro = capa(sung).crop(corte)
+        corte = (0, 0, limit, height)
+        completa = capa(sung)
+        nitido = completa.crop(corte)
 
-        def fundir(zona, capa_recortada):
-            """Compone una capa ya recortada sobre el trozo de imagen."""
-            zona.alpha_composite(capa_recortada, (0, 0))
-            return zona
+        # El resplandor, en dos radios: el ancho da el halo suave y el
+        # corto el brillo pegado a la letra. Se difumina la mascara de
+        # la letra y se pinta del color del resplandor: si se difumina la
+        # capa entera, el negro transparente de fuera se cuela en el
+        # color y el halo sale sucio.
+        forma = completa.getchannel("A")
 
-        ancho_imagen, alto_imagen = base.size
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                if dx == 0 and dy == 0:
-                    continue
-                origen = (box[0] + dx, box[1] + dy)
-                if (
-                    origen[0] < 0
-                    or origen[1] < 0
-                    or origen[0] + width > ancho_imagen
-                    or origen[1] + height > alto_imagen
-                ):
-                    continue
-                base.paste(
-                    fundir(base.crop((origen[0], origen[1], origen[0] + width, origen[1] + height)), halo),
-                    origen,
-                )
-        base.paste(fundir(base.crop(box), claro), box)
+        # El resplandor no se corta en el borde de lo cantado: llega un
+        # poco mas alla y se apaga alli. Si se recortase en seco, el halo
+        # acababa en una pared vertical de luz al lado de la letra que
+        # falta, que se veía como un tajo.
+        rampa = max(2, int(size * 0.5))
+        mascara = Image.new("L", (width, height), 0)
+        if limit > 0:
+            ImageDraw.Draw(mascara).rectangle(
+                [0, 0, limit - 1, height - 1], fill=255
+            )
+        if rampa > 0:
+            caida = Image.new("L", (rampa, 1))
+            caida.putdata(
+                [
+                    int(255 * (1.0 - (indice + 1) / float(rampa)))
+                    for indice in range(rampa)
+                ]
+            )
+            caida = caida.resize((rampa, height), Image.Resampling.NEAREST)
+            mascara.paste(caida, (limit, 0))
+
+        def difusa(color, sigma):
+            """La forma de la letra difuminada, del color pedido.
+
+            La mascara se difumina a cuarta parte y se amplia: el halo es
+            una luz suave, asi que no se nota, y el modo imagen va a 20
+            cuadros por segundo y no puede gastar la mitad del tiempo en
+            difuminar.
+            """
+            pequena = forma.resize(
+                (max(1, width // 4), max(1, height // 4)),
+                Image.Resampling.BILINEAR,
+            ).filter(ImageFilter.GaussianBlur(max(0.5, sigma / 4.0)))
+            alfa = ImageChops.multiply(
+                pequena.resize((width, height), Image.Resampling.BILINEAR),
+                mascara,
+            )
+            halo = Image.new(
+                "RGBA", (width, height), (color[0], color[1], color[2], 0)
+            )
+            halo.putalpha(alfa)
+            return halo
+
+        resplandor = difusa(self._mix(sung, unsung, 0.45), radio)
+        nucleo = difusa(sung, radio / 2.0)
+
+        # El borde del relleno se suaviza: una rampa de alfa en las últimas
+        # columnas funde la letra cantada con la que todavía no se ha
+        # cantado, en vez de cortar el color en seco.
+        if rampa < limit:
+            suave = Image.new("L", (limit, height), 255)
+            valores = [
+                int(255 * (indice + 1) / float(rampa)) for indice in range(rampa)
+            ]
+            columna = Image.new("L", (rampa, 1))
+            columna.putdata(valores)
+            columna = columna.resize((rampa, height), Image.Resampling.NEAREST)
+            suave.paste(columna, (limit - rampa, 0))
+            nitido.putalpha(ImageChops.multiply(nitido.getchannel("A"), suave))
+
+        # El orden importa: el halo va debajo, el texto nítido encima. Los
+        # dos halos se funden en una sola capa para no componer dos veces
+        # sobre la imagen entera.
+        base.alpha_composite(
+            Image.alpha_composite(resplandor, nucleo), (box[0], box[1])
+        )
+        base.alpha_composite(nitido, (box[0], box[1]))
 
     def _draw_left(self, draw, text, x, y, size, color, family, anchor="lm"):
         font = self.font(family, size)

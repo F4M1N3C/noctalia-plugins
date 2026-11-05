@@ -285,10 +285,6 @@ local function stepperValue(buttonKey)
   return nil
 end
 
-local function firstSelect()
-  return collect(tree, "select")[1]
-end
-
 -- Busca un fragmento en cualquier argumento de los procesos lanzados.
 local function comandoContiene(fragmento)
   for _, argv in ipairs(commands) do
@@ -338,29 +334,84 @@ for _, name in ipairs(TOGGLES) do
   end
 end
 
--- 2. El desplegable de posicion usa indices de base 0 ------------------------
+-- 1b. El visualizador no se ofrece si la cabecera ya lo dibuja -------------
+--
+-- Con `header` activado, la cabecera pinta el ecualizador en su fila: el
+-- interruptor no cambiaria nada y solo confundiria. Al apagar la cabecera
+-- vuelve a aparecer con el valor que tuviera.
 
-local select = firstSelect()
-check(select ~= nil, "el panel tiene un desplegable de posicion")
-if select ~= nil then
-  eq(#select.props.options, 10, "el desplegable tiene las 10 posiciones")
-  -- El valor por defecto es "center", la quinta opcion (indice 4).
-  eq(select.props.selectedIndex, 4, "el desplegable marca la posicion actual")
+config.header = false
+overrides.header = nil
+onConfigChanged()
+check(toggleFor("equalizer") ~= nil, "sin cabecera se puede activar el visualizador")
 
-  select.props.onChange("0")
-  eq(overrides.anchor, "top-left", "elegir la primera opcion guarda top-left")
-  eq(firstSelect().props.selectedIndex, 0, "el desplegable marca la primera opcion")
+findByKey("toggle", "toggle-header").props.onChange("true")
+check(toggleFor("equalizer") == nil, "con cabecera no se ofrece el visualizador")
+eq(overrides.header, true, "la cabecera se guarda al activarla")
 
-  select.props.onChange("9")
-  eq(overrides.anchor, "custom", "elegir la ultima opcion guarda custom")
+findByKey("toggle", "toggle-header").props.onChange("false")
+check(toggleFor("equalizer") ~= nil, "al apagar la cabecera vuelve el visualizador")
+config.header = false
+overrides.header = nil
+onConfigChanged()
+
+-- 2. Las 9 posiciones son botones en una rejilla 3x3 ------------------------
+
+local ANCHOR_GRID = {
+  "top-left", "top-center", "top-right",
+  "left-center", "center", "right-center",
+  "bottom-left", "bottom-center", "bottom-right",
+}
+
+local function anchorButton(name)
+  return findByKey("button", "anchor-" .. name)
 end
+
+local anchorButtons = 0
+for _, name in ipairs(ANCHOR_GRID) do
+  local button = anchorButton(name)
+  check(button ~= nil, "el panel tiene el boton de posicion " .. name)
+  if button ~= nil then
+    anchorButtons = anchorButtons + 1
+  end
+end
+eq(anchorButtons, 9, "el panel tiene los 9 botones de posicion")
+check(
+  findByKey("select", "anchor-select") == nil,
+  "la posicion ya no se elige con un desplegable"
+)
+
+-- Cada fila de la rejilla tiene tres botones: si una fila tuviera cuatro,
+-- la rejilla dejaria de representar la pantalla.
+for _, row in ipairs(collect(tree, "row")) do
+  local enFila = 0
+  for _, child in ipairs(row.children or {}) do
+    local key = child.props and child.props.key
+    if child.kind == "button" and key and key:match("^anchor%-") and key ~= "anchor-custom" then
+      enFila = enFila + 1
+    end
+  end
+  if enFila > 0 then
+    eq(enFila, 3, "cada fila de posiciones tiene tres botones")
+  end
+end
+
+eq(anchorButton("center").props.variant, "secondary", "el boton de centro marca la posicion actual")
+anchorButton("top-left").props.onClick()
+eq(overrides.anchor, "top-left", "pulsar top-left guarda esa posicion")
+eq(anchorButton("top-left").props.variant, "secondary", "top-left queda marcado")
+eq(anchorButton("center").props.variant, "ghost", "centro deja de estar marcado")
+
+check(findByKey("button", "anchor-custom") ~= nil, "el panel tiene la posicion personalizada")
+findByKey("button", "anchor-custom").props.onClick()
+eq(overrides.anchor, "custom", "el boton personalizado guarda custom")
 
 -- 3. Un valor escrito a mano se normaliza -----------------------------------
 
 config.anchor = "centro"
 overrides.anchor = nil
 onConfigChanged()
-eq(firstSelect().props.selectedIndex, 4, "un ancla en Castellano se marca como center")
+eq(anchorButton("center").props.variant, "secondary", "un ancla en Castellano se marca como center")
 config.anchor = "center"
 onConfigChanged()
 
@@ -588,8 +639,17 @@ end
 check(sliderFor("spacing") ~= nil, "el panel tiene el control de spacing")
 check(sliderFor("animation_ms") ~= nil, "el panel tiene el control de animation_ms")
 check(sliderFor("offset_ms") ~= nil, "el panel tiene el control de offset_ms")
-check(findByKey("input", "custom_color") ~= nil, "el panel tiene el campo del color")
 check(findByKey("input", "glyph") ~= nil, "el panel tiene el campo del glifo")
+
+-- El color personalizado solo tiene sentido con el acento "custom": si se
+-- ofrece siempre, el usuario escribe un hex que el script ignora.
+config.accent = "primary"
+overrides.accent = nil
+onConfigChanged()
+check(
+  findByKey("input", "custom_color") == nil,
+  "con un acento de la paleta no se pide color personalizado"
+)
 
 if sliderFor("spacing") ~= nil then
   sliderFor("spacing").props.onChange("4")
@@ -623,15 +683,30 @@ overrides.font_size = nil
 settingsModule.refresh()
 onConfigChanged()
 
-local colorInput = findByKey("input", "custom_color")
-if colorInput ~= nil then
-  colorInput.props.onChange("#12ab34")
-  eq(overrides.custom_color, "#12ab34", "un hex valido se guarda")
-  colorInput.props.onChange("rojo")
-  eq(overrides.custom_color, "#12ab34", "un color invalido no se guarda")
-  colorInput.props.onChange("#12AB3")
-  eq(overrides.custom_color, "#12ab34", "un hex corto no se guarda")
+local accentCustom = findByKey("button", "accent-custom")
+check(accentCustom ~= nil, "el panel tiene el acento personalizado")
+if accentCustom ~= nil then
+  accentCustom.props.onClick()
+  eq(overrides.accent, "custom", "elegir el acento personalizado lo guarda")
+  local colorInput = findByKey("input", "custom_color")
+  check(colorInput ~= nil, "con el acento personalizado aparece el campo del color")
+  if colorInput ~= nil then
+    colorInput.props.onChange("#12ab34")
+    eq(overrides.custom_color, "#12ab34", "un hex valido se guarda")
+    colorInput.props.onChange("rojo")
+    eq(overrides.custom_color, "#12ab34", "un color invalido no se guarda")
+    colorInput.props.onChange("#12AB3")
+    eq(overrides.custom_color, "#12ab34", "un hex corto no se guarda")
+  end
+  findByKey("button", "accent-primary").props.onClick()
+  check(
+    findByKey("input", "custom_color") == nil,
+    "al volver a un acento de la paleta se oculta el color personalizado"
+  )
 end
+config.accent = "primary"
+overrides.accent = nil
+onConfigChanged()
 
 local glyphInput = findByKey("input", "glyph")
 if glyphInput ~= nil then
@@ -818,32 +893,101 @@ eq(glyphUsado, "volume", "el widget usa el glifo de los overrides")
 -- marca como texto sin traducir. El mock de tr devuelve la clave, asi que
 -- se comprueba que el placeholder es una clave y no un literal.
 
+-- El panel se cerró en el apartado 21: sin abrirlo otra vez, los cambios
+-- no redibujan y las comprobaciones mirarían un árbol viejo.
+onOpen()
 local glyphInput = findByKey("input", "glyph")
 if glyphInput ~= nil then
   eq(glyphInput.props.placeholder, "glyph_placeholder", "el placeholder del glifo pasa por la traduccion")
 end
 
+config.accent = "custom"
+overrides.accent = nil
+onConfigChanged()
 local colorInput = findByKey("input", "custom_color")
+check(colorInput ~= nil, "con acento personalizado esta el campo del color")
 if colorInput ~= nil then
   eq(colorInput.props.placeholder, "color_placeholder", "el placeholder del color pasa por la traduccion")
 end
+config.accent = "primary"
+overrides.accent = nil
+onConfigChanged()
 
--- 24. La fuente se puede escribir ------------------------------------------
+-- 24. La fuente es un unico selector con opcion de escribirla --------------
 --
--- El manifiesto declara la fuente como texto libre: los chips son solo
--- atajos y, sin un campo, no se podria elegir una fuente que no este en
--- la lista.
+-- Antes habia dos listas de chips y un campo siempre visible: el usuario
+-- no sabia cual mandaba. Ahora hay un desplegable con todas las fuentes y
+-- una opcion "Otra" que revela el campo de texto.
 
-local familyInput = findByKey("input", "font_family")
-check(familyInput ~= nil, "font_family se puede escribir")
-if familyInput ~= nil then
-  familyInput.props.onChange("Iosevka")
-  eq(overrides.font_family, "Iosevka", "el campo de font_family guarda la familia escrita")
-  familyInput.props.onChange("")
-  eq(overrides.font_family, "Iosevka", "el campo de font_family no guarda una familia vacia")
-  familyInput.props.onChange("Iosevka\nMono")
-  eq(overrides.font_family, "Iosevka", "el campo de font_family no guarda una familia con saltos de linea")
+config.font_family = "Departure Mono"
+overrides.font_family = nil
+settingsModule.refresh()
+onConfigChanged()
+local fontSelect = findByKey("select", "font-select")
+check(fontSelect ~= nil, "el panel tiene un unico selector de fuente")
+check(
+  findByKey("input", "font_family") == nil,
+  "con una fuente de la lista no se muestra el campo de texto"
+)
+if fontSelect ~= nil then
+  local opciones = fontSelect.props.options
+  check(#opciones >= 8, "el selector incluye las fuentes disponibles")
+  eq(fontSelect.props.selectedIndex, 0, "el selector marca la fuente actual")
+
+  local imageIndex = nil
+  for i, label in ipairs(opciones) do
+    if label:find("Ndot 55", 1, true) then
+      imageIndex = i - 1
+    end
+  end
+  check(imageIndex ~= nil, "el selector incluye las fuentes de modo imagen")
+  if imageIndex ~= nil then
+    fontSelect.props.onChange(tostring(imageIndex))
+    eq(overrides.font_family, "Ndot 55", "elegir una fuente de la lista la guarda")
+    check(
+      findByKey("input", "font_family") == nil,
+      "elegir una fuente de la lista oculta el campo de texto"
+    )
+  end
+
+  fontSelect = findByKey("select", "font-select")
+  fontSelect.props.onChange(tostring(#opciones - 1))
+  local familyInput = findByKey("input", "font_family")
+  check(familyInput ~= nil, "elegir Otra fuente muestra el campo de texto")
+  if familyInput ~= nil then
+    familyInput.props.onChange("Iosevka")
+    eq(overrides.font_family, "Iosevka", "el campo de font_family guarda la familia escrita")
+    familyInput.props.onChange("")
+    eq(overrides.font_family, "Iosevka", "el campo de font_family no guarda una familia vacia")
+    familyInput.props.onChange("Iosevka\nMono")
+    eq(overrides.font_family, "Iosevka", "el campo de font_family no guarda saltos de linea")
+  end
+
+  fontSelect = findByKey("select", "font-select")
+  if fontSelect ~= nil then
+    fontSelect.props.onChange("0")
+    eq(overrides.font_family, "Departure Mono", "volver a una fuente de la lista la guarda")
+    check(
+      findByKey("input", "font_family") == nil,
+      "volver a una fuente de la lista oculta el campo de texto"
+    )
+  end
 end
+
+-- Una fuente que no esta en la lista (escrita en el settings.toml) tiene
+-- que poder editarse sin tener que elegir "Otra" a mano.
+config.font_family = "Iosevka"
+overrides.font_family = nil
+settingsModule.refresh()
+onConfigChanged()
+check(
+  findByKey("input", "font_family") ~= nil,
+  "una fuente de fuera de la lista abre el campo de texto"
+)
+config.font_family = "Departure Mono"
+overrides.font_family = nil
+settingsModule.refresh()
+onConfigChanged()
 
 -- 25. El panel ofrece los rangos del manifiesto -----------------------------
 --
@@ -892,13 +1036,13 @@ end
 
 -- Con la posicion personalizada se ven tambien los campos X e Y. El panel
 -- se abre otra vez porque en el apartado 21 se cerro (y un panel cerrado
--- no vuelve a dibujar). La posicion se cambia por su desplegable (la via
--- real del usuario) para que la tabla interna del panel quede coherente.
+-- no vuelve a dibujar). La posicion se cambia por su boton (la via real
+-- del usuario) para que la tabla interna del panel quede coherente.
 onOpen()
-local anchorSelect = findByKey("select", "anchor-select")
-check(anchorSelect ~= nil, "el panel tiene el desplegable de posicion")
-if anchorSelect ~= nil then
-  anchorSelect.props.onChange("9")
+local anchorCustom = findByKey("button", "anchor-custom")
+check(anchorCustom ~= nil, "el panel tiene el boton de posicion personalizada")
+if anchorCustom ~= nil then
+  anchorCustom.props.onClick()
 end
 eq(overrides.anchor, "custom", "la posicion personalizada queda elegida")
 settingsModule.refresh()

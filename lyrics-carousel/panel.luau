@@ -65,6 +65,9 @@ local trackTitle = ""
 local trackArtist = ""
 local launching = false
 local lastError = ""
+-- El selector de fuente muestra la lista hasta que el usuario elige
+-- "Otra". Es estado de la interfaz, no un ajuste: no se escribe nada.
+local fontCustom = nil
 -- Un callback asincrono (playerctl, el helper) puede llegar despues de
 -- cerrar el panel. Sin esta bandera, el callback redibuja un arbol muerto.
 local panelClosed = false
@@ -503,65 +506,84 @@ local function chipRow(items)
   return ui.row({ gap = 6 }, chips)
 end
 
-local function fontChips()
-  local current = tostring(valueOf("font_family"))
-  local rows = {}
-  local row = {}
-  local index = 0
+-- Todas las fuentes que ofrece el panel, en el orden en que se muestran.
+-- Las de `IMAGE_ONLY_FONTS` se marcan en la lista: en modo texto kitty
+-- solo puede usar monoespaciadas.
+local function fontNames()
+  local names = {}
   for _, name in ipairs(FONT_CHOICES) do
-    index = index + 1
-    table.insert(row, ui.button({
-      key = "font-" .. name,
-      text = name,
-      variant = name == current and "secondary" or "ghost",
-      fontSize = 11,
-      onClick = function()
-        setSetting("font_family", name)
-      end,
-    }))
-    if index % 3 == 0 then
-      table.insert(rows, ui.row({ gap = 6 }, row))
-      row = {}
-    end
+    table.insert(names, name)
   end
-  if #row > 0 then
-    table.insert(rows, ui.row({ gap = 6 }, row))
+  for _, name in ipairs(IMAGE_ONLY_FONTS) do
+    table.insert(names, name)
   end
-  return ui.column({ gap = 6 }, rows)
+  return names
 end
 
-local function imageOnlyFonts()
-  local current = tostring(valueOf("font_family"))
-  local rows = {}
-  local row = {}
-  local index = 0
-  for _, name in ipairs(IMAGE_ONLY_FONTS) do
-    index = index + 1
-    table.insert(row, ui.button({
-      key = "font-img-" .. name,
-      text = name,
-      variant = name == current and "secondary" or "ghost",
-      fontSize = 11,
-      onClick = function()
-        setSetting("font_family", name)
-      end,
-    }))
-    if index % 2 == 0 then
-      table.insert(rows, ui.row({ gap = 6 }, row))
-      row = {}
+local function fontListed(name)
+  for _, candidate in ipairs(fontNames()) do
+    if candidate == name then
+      return true
     end
   end
-  if #row > 0 then
-    table.insert(rows, ui.row({ gap = 6 }, row))
+  return false
+end
+
+local function fontIndex(name)
+  for index, candidate in ipairs(fontNames()) do
+    if candidate == name then
+      return index - 1
+    end
   end
-  return ui.column({ gap = 6 }, rows)
+  return nil
+end
+
+-- Un solo selector de fuente: la lista de disponibles y una ultima opcion
+-- para escribir una que no este. Antes habia dos listas de chips y un campo
+-- siempre visible, y no se sabia cual de los tres mandaba.
+local function fontSelector()
+  local names = fontNames()
+  local current = tostring(valueOf("font_family"))
+  local custom = fontCustom == true or not fontListed(current)
+  local options = {}
+  for index, name in ipairs(names) do
+    if index > #FONT_CHOICES then
+      -- El nombre real se guarda sin el sufijo; el sufijo solo avisa de
+      -- que esa fuente no vale en modo texto.
+      options[index] = name .. " · " .. tr("image_only")
+    else
+      options[index] = name
+    end
+  end
+  table.insert(options, tr("font_custom"))
+  local selected = #names
+  if not custom then
+    selected = fontIndex(current) or 0
+  end
+  return ui.select({
+    key = "font-select",
+    options = options,
+    selectedIndex = selected,
+    controlSize = "sm",
+    onChange = function(value)
+      local index = tonumber(value) or 0
+      if index >= #names then
+        fontCustom = true
+        render()
+        return
+      end
+      fontCustom = false
+      setSetting("font_family", names[index + 1])
+    end,
+  })
 end
 
 local function accentChips()
   local current = tostring(valueOf("accent"))
-  local items = {}
-  for _, name in ipairs(ACCENT_CHOICES) do
-    table.insert(items, {
+  local rows = {}
+  local row = {}
+  for index, name in ipairs(ACCENT_CHOICES) do
+    table.insert(row, {
       key = "accent-" .. name,
       text = tr(ACCENT_KEYS[name]),
       selected = name == current,
@@ -569,10 +591,17 @@ local function accentChips()
         setSetting("accent", name)
       end,
     })
+    -- Cuatro por fila: con los ocho en una sola fila los nombres se
+    -- apretaban y el ultimo quedaba fuera del panel.
+    if index % 4 == 0 then
+      table.insert(rows, chipRow(row))
+      row = {}
+    end
   end
-  return ui.column({ gap = 4 }, {
-    chipRow(items),
-  })
+  if #row > 0 then
+    table.insert(rows, chipRow(row))
+  end
+  return ui.column({ gap = 4 }, rows)
 end
 
 -- Vacía la caché de letras (el script la guarda en ~/.cache/lyrics-carousel).
@@ -592,11 +621,12 @@ local function clearLyricsCache()
   end)
 end
 
-local ANCHOR_CHOICES = {
-  "top-left", "top-center", "top-right",
-  "left-center", "center", "right-center",
-  "bottom-left", "bottom-center", "bottom-right",
-  "custom",
+-- La rejilla representa la pantalla: tres filas de tres botones, en el
+-- mismo orden en que el usuario ve las posiciones.
+local ANCHOR_GRID = {
+  { "top-left", "top-center", "top-right" },
+  { "left-center", "center", "right-center" },
+  { "bottom-left", "bottom-center", "bottom-right" },
 }
 
 local ANCHOR_KEYS = {
@@ -612,33 +642,38 @@ local ANCHOR_KEYS = {
   custom = "anchor_custom",
 }
 
--- El desplegable de posicion. Noctalia indexa desde 0: el indice que llega en
--- onChange es la posicion dentro de la lista, no un numero de orden.
-local function anchorSelect()
+-- Nueve botones con el nombre de cada posicion dentro. Se pulsan
+-- directamente: no hay que abrir un desplegable para ver donde cae cada
+-- uno. La posicion personalizada es el decimo boton, debajo de la rejilla.
+local function anchorButtons()
   local current = normalizeAnchor(valueOf("anchor"))
-  local options = {}
-  for _, name in ipairs(ANCHOR_CHOICES) do
-    table.insert(options, tr(ANCHOR_KEYS[name]))
-  end
-  local selectedIndex = 0
-  for i, name in ipairs(ANCHOR_CHOICES) do
-    if name == current then
-      selectedIndex = i - 1
-      break
+  local rows = {}
+  for _, names in ipairs(ANCHOR_GRID) do
+    local buttons = {}
+    for _, name in ipairs(names) do
+      table.insert(buttons, ui.button({
+        key = "anchor-" .. name,
+        text = tr(ANCHOR_KEYS[name]),
+        variant = name == current and "secondary" or "ghost",
+        fontSize = 10,
+        flexGrow = 1,
+        onClick = function()
+          setSetting("anchor", name, { geometry = true })
+        end,
+      }))
     end
+    table.insert(rows, ui.row({ gap = 6 }, buttons))
   end
-  return ui.select({
-    key = "anchor-select",
-    options = options,
-    selectedIndex = selectedIndex,
-    controlSize = "sm",
-    onChange = function(value)
-      local name = ANCHOR_CHOICES[(tonumber(value) or 0) + 1]
-      if name ~= nil then
-        setSetting("anchor", name, { geometry = true })
-      end
+  table.insert(rows, ui.button({
+    key = "anchor-custom",
+    text = tr("anchor_custom"),
+    variant = current == "custom" and "secondary" or "ghost",
+    fontSize = 10,
+    onClick = function()
+      setSetting("anchor", "custom", { geometry = true })
     end,
-  })
+  }))
+  return ui.column({ gap = 6, align = "stretch" }, rows)
 end
 
 -- Botones "-" y "+" de un valor numerico.
@@ -749,6 +784,10 @@ render = function()
   local direction = tostring(valueOf("direction"))
   local mode = tostring(valueOf("render_mode"))
   local language = tostring(valueOf("language"))
+  local accent = tostring(valueOf("accent"))
+  local headerOn = boolOf("header")
+  local currentFont = tostring(valueOf("font_family"))
+  local customFont = fontCustom == true or not fontListed(currentFont)
   local subtitle = tr("subtitle")
   if trackTitle ~= "" then
     subtitle = trackTitle
@@ -790,6 +829,8 @@ render = function()
       onClick = launch,
     }),
     ui.separator({ thickness = 1, spacing = 6 }),
+
+    -- Presentación -------------------------------------------------------
     ui.label({ text = tr("section_display"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     ui.row({ align = "center", gap = 10, paddingH = 4, padding = 4 }, {
       ui.glyph({ name = "layout", size = 14, color = "on_surface_variant" }),
@@ -866,14 +907,28 @@ render = function()
         end,
       }),
     }),
-    inputRow("glyph", tr("glyph"), tr("glyph_placeholder")),
-    toggleRow("karaoke", tr("karaoke"), "sun"),
-    toggleRow("marker", tr("marker"), "chevron-right"),
+
+    -- Qué se dibuja dentro de la ventana --------------------------------
     toggleRow("header", tr("header"), "heading"),
+    (function()
+      if headerOn then
+        -- La cabecera ya pinta el ecualizador: el interruptor no haría
+        -- nada, así que se sustituye por una nota que lo explica.
+        return ui.label({
+          text = tr("equalizer_with_header"),
+          fontSize = 10,
+          color = "on_surface_variant",
+        })
+      end
+      return toggleRow("equalizer", tr("equalizer"), "wave-sine")
+    end)(),
+    toggleRow("marker", tr("marker"), "chevron-right"),
+    toggleRow("karaoke", tr("karaoke"), "sun"),
+    toggleRow("ghost", tr("ghost"), "sparkles"),
     toggleRow("footer", tr("footer"), "clock"),
     toggleRow("hints", tr("hints"), "keyboard"),
-    toggleRow("equalizer", tr("equalizer"), "wave-sine"),
-    toggleRow("ghost", tr("ghost"), "sparkles"),
+
+    -- Letra --------------------------------------------------------------
     ui.separator({ thickness = 1, spacing = 6 }),
     ui.label({ text = tr("section_lyrics"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     sliderRow("active_scale", tr("active_scale"), 1.0, 2.5, 0.05, false),
@@ -888,22 +943,47 @@ render = function()
     sliderRow("spacing", tr("spacing"), 1, 6, 1, true),
     sliderRow("animation_ms", tr("animation_ms"), 0, 3000, 50, true),
     sliderRow("offset_ms", tr("offset_ms"), -3000, 3000, 10, true),
+
+    -- Color --------------------------------------------------------------
+    ui.separator({ thickness = 1, spacing = 6 }),
+    ui.label({ text = tr("section_color"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     ui.column({ gap = 4 }, {
       ui.label({ text = tr("accent"), fontSize = 11, color = "on_surface_variant" }),
       accentChips(),
-      inputRow("custom_color", tr("custom_color"), tr("color_placeholder")),
     }),
+    (function()
+      if accent == "custom" then
+        return inputRow("custom_color", tr("custom_color"), tr("color_placeholder"))
+      end
+      return ui.column({})
+    end)(),
+
+    -- Tipografía ---------------------------------------------------------
+    ui.separator({ thickness = 1, spacing = 6 }),
+    ui.label({ text = tr("section_font"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
+    ui.label({ text = tr("font_family"), fontSize = 11, color = "on_surface_variant" }),
+    fontSelector(),
+    ui.label({ text = tr("font_hint"), fontSize = 10, color = "on_surface_variant" }),
+    (function()
+      if customFont then
+        return inputRow("font_family", tr("font_custom_name"), tr("font_placeholder"))
+      end
+      return ui.column({})
+    end)(),
+    sliderRow("font_size", tr("font_size"), 6, 96, 1, true),
+
+    -- Ventana ------------------------------------------------------------
     ui.separator({ thickness = 1, spacing = 6 }),
     ui.label({ text = tr("section_window"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     ui.label({ text = tr("anchor"), fontSize = 11, color = "on_surface_variant" }),
-    anchorSelect(),
+    anchorButtons(),
     (function()
       if normalizeAnchor(valueOf("anchor")) == "custom" then
         local function coordinateInput(key, label)
           return ui.column({ flexGrow = 1, gap = 4 }, {
             ui.label({ text = label, fontSize = 10, color = "on_surface_variant" }),
             ui.input({
-              -- El campo de texto no se controla desde el arbol: necesita una
+              -- El campo de texto no se controla desde el árbol: necesita una
               -- clave estable para que conserve lo que el usuario teclea.
               key = key,
               value = tostring(math.floor(numberOf(key))),
@@ -932,8 +1012,8 @@ render = function()
     ui.row({ gap = 10 }, {
       ui.column({ flexGrow = 1, gap = 4 }, {
         ui.label({ text = tr("width"), fontSize = 11, color = "on_surface_variant" }),
-        -- Los limites son los del manifiesto (plugin.toml): el script
-        -- recorta lo que le llegue, asi que el panel no puede ofrecer mas.
+        -- Los límites son los del manifiesto (plugin.toml): el script
+        -- recorta lo que le llegue, así que el panel no puede ofrecer más.
         sizeStepper("width", 400, 3840, 100),
       }),
       ui.column({ flexGrow = 1, gap = 4 }, {
@@ -941,18 +1021,12 @@ render = function()
         sizeStepper("height", 200, 2160, 50),
       }),
     }),
+
+    -- Barra --------------------------------------------------------------
     ui.separator({ thickness = 1, spacing = 6 }),
-    ui.label({ text = tr("section_font"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
-    fontChips(),
-    -- El manifiesto declara la fuente como texto libre: los chips son solo
-    -- atajos, y sin este campo no se podria elegir una fuente que no este
-    -- en la lista.
-    -- El patron vive en lib/settings.luau (PATTERNS), igual que en el IPC
-    -- del widget: el cuarto argumento antiguo se ignoraba en silencio.
-    inputRow("font_family", tr("font_family"), tr("font_placeholder")),
-    sliderRow("font_size", tr("font_size"), 6, 96, 1, true),
-    ui.label({ text = tr("image_only_fonts"), fontSize = 10, color = "on_surface_variant" }),
-    imageOnlyFonts(),
+    ui.label({ text = tr("section_bar"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
+    inputRow("glyph", tr("glyph"), tr("glyph_placeholder")),
+
     ui.separator({ thickness = 1, spacing = 6 }),
     ui.button({
       key = "clear-cache",
@@ -975,6 +1049,9 @@ end
 
 function onOpen()
   panelClosed = false
+  -- Cada apertura vuelve a deducir si la fuente actual está en la lista:
+  -- así una fuente elegida a mano no deja el campo abierto para siempre.
+  fontCustom = nil
   refreshSettings()
   readTrack()
   render()

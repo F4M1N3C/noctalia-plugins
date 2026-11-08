@@ -377,9 +377,9 @@ class ImageRenderer:
             return True
         self.last_signature = signature
 
-        # Render a 1/3 de resolucion para alcanzar 60fps en kitty:
-        # 1200x820 -> 400x273 = 9x menos datos. Kitty escala con filtro BILINEAR.
-        render_scale = 3
+        # Render a 1/2 de resolucion: 600x410 = 4x menos datos.
+        # Con LANCZOS (mejor que BILINEAR) se ve nitido y a ~25ms/draw.
+        render_scale = 2
         rx = max(1, xpix // render_scale)
         ry = max(1, ypix // render_scale)
 
@@ -426,8 +426,8 @@ class ImageRenderer:
         if cfg["hints"]:
             self._draw_hints(draw, rsize, family)
 
-        # Escalar a resolucion completa para kitty (BILINEAR suave)
-        image = image.resize((xpix, ypix), Image.BILINEAR)
+        # Escalar a resolucion completa para kitty (LANCZOS = mas nitido)
+        image = image.resize((xpix, ypix), Image.LANCZOS)
 
         self.sends += 1
         return self.gfx.present(image, cols, rows)

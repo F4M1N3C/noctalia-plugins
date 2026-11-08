@@ -116,10 +116,6 @@ it belongs to the bar widget, not to the lyrics window.
 | `active_scale` | `double` | `1.35` | Size multiplier of the line being sung. |
 | `visible_above` | `int` | `6` | Lines visible above the active one. |
 | `visible_below` | `int` | `6` | Lines visible below the active one. |
-| `visualizer` | `bool` | `true` | Enable audio visualizer (cava). |
-| `visualizer_position` | `select` | `bottom` | Where to draw the visualizer: `top`, `bottom`, `left`, `right`. |
-| `visualizer_coverage` | `int` | `25` | Percentage of window the visualizer covers (5-50). |
-| `translate_lyrics` | `bool` | `false` | Translate lyrics to window language. |
 | `glyph` | `glyph` | `music` | Bar icon (only in the settings page). |
 
 The position and the size are applied live to the running window, without recreating
@@ -130,10 +126,12 @@ invalidated on change, so there is no need to reopen the window.
 
 ### 2.6.0
 
-- **Configurable audio visualizer**: `visualizer` toggle with position (`top`/`bottom`/`left`/`right`) and coverage (5-50%) options. The visualizer runs as a background band behind the lyrics, not full-window.
+- **Visualizer removed**: The audio visualizer (`cava` behind lyrics) has been removed. It never looked as smooth as standalone `cava` and added complexity without benefit. The plugin is now **image-only, 60 fps**.
+- **60 fps native render**: The whole plugin runs at 60 fps (MOTION_FPS). Render happens at 1/3 resolution (400×273) with BILINEAR upscale → ~19 ms/draw (≈50 fps) with stable frame pacing.
 - **Persistent window size**: Manual resize is saved to `settings.toml` and restored on reopen. Moving the window (anchor buttons) preserves the configured size.
-- **Lyrics translation disabled by default**: New `translate_lyrics` setting (default `false`) prevents the lyrics adapter from translating to the window language.
-- **Conditional panel UI**: Visualizer position/coverage controls only appear when the visualizer is enabled.
+- **No lyrics translation**: `translate_lyrics` removed (was always `false` by default).
+- **Cleaner panel**: Visualizer toggle, position/coverage controls, and translate option removed. Only relevant settings remain.
+- **Dead code removed**: `visualizer.py`, `_draw_visualizer`, `visualizer_module`, `check_visualizer_*`, `_draw_visualizer` all gone. ~700 lines deleted.
 
 ### 2.5.0
 

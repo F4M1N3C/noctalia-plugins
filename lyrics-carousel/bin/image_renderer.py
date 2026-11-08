@@ -452,6 +452,10 @@ class ImageRenderer:
         pos_b = self._layout(focus, center_y, size, scale)
 
         visible = set(pos_a) | set(pos_b)
+        # Líneas que salen (están en pos_a pero no en pos_b)
+        leaving = set(pos_a.keys()) - set(pos_b.keys())
+        # Líneas que entran (están en pos_b pero no en pos_a)
+        entering = set(pos_b.keys()) - set(pos_a.keys())
         # Margen extra para no cortar texto a medio pintar: la altura de
         # línea máxima (con scale) más el gap.
         max_line_h = size * scale * 1.32
@@ -465,10 +469,13 @@ class ImageRenderer:
             y_a = pos_a.get(line_index)
             y_b = pos_b.get(line_index)
             if y_a is None:
+                # Línea que ENTRA: solo existe en layout nuevo
                 y = y_b
             elif y_b is None:
+                # Línea que SALE: solo existe en layout viejo
                 y = y_a
             else:
+                # Línea en ambos: interpolación normal
                 y = y_a + (y_b - y_a) * progress
             # Recorte al área visible: no pintar líneas que queden fuera.
             if y + margin < area_top or y - margin > area_bottom:
@@ -476,11 +483,17 @@ class ImageRenderer:
 
             if line_index == index:
                 factor = 1.0 + (scale - 1.0) * (1.0 - progress)
-                # Línea que sale: se desvanece mientras encoge
                 transition_alpha = 1.0 - progress
             elif line_index == focus:
                 factor = 1.0 + (scale - 1.0) * progress
-                # Línea que entra: aparece mientras crece
+                transition_alpha = progress
+            elif line_index in leaving:
+                # Línea que SALE: fade out durante transición
+                factor = 1.0
+                transition_alpha = 1.0 - progress
+            elif line_index in entering:
+                # Línea que ENTRA: fade in durante transición
+                factor = 1.0
                 transition_alpha = progress
             else:
                 factor = 1.0
@@ -490,11 +503,23 @@ class ImageRenderer:
             distance = abs(y - center_y)
             span = max(1.0, (area_bottom - area_top) * 0.5)
             fade = max(0.22, 1.0 - (distance / span) ** 1.0)
-            # Combinar fade por distancia con alpha de transición
-            fade *= transition_alpha
+            # Solo las líneas que entran/salen pierden alpha durante la transición
+            is_leaving = line_index in leaving
+            is_entering = line_index in entering
+            if is_leaving or is_entering:
+                fade *= transition_alpha
             is_sung = line_index == index
+            is_focus = line_index == focus
             if is_sung:
-                color = accent
+                # Línea que SALE (era la activa): accent -> color base (fade out)
+                base = theme.foreground if line_index > index else theme.past
+                base_color = self._mix(base, background, 1.0)
+                color = self._mix(accent, base_color, progress)
+            elif is_focus:
+                # Línea que ENTRA (nueva activa): color base -> accent
+                base = theme.foreground if line_index > index else theme.past
+                base_color = self._mix(base, background, 1.0)
+                color = self._mix(base, accent, progress)
             else:
                 base = theme.foreground if line_index > index else theme.past
                 color = self._mix(base, background, fade)

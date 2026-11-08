@@ -1042,7 +1042,10 @@ def adapter_request(source: str, track: Track, settings: dict):
         "source": source,
         "track": adapter_track(track),
         "credentials": creds,
-        "options": {"translation_language": settings.get("translation", "zh-Hans")},
+        "options": {
+            "translation_language": settings.get("translation", "zh-Hans"),
+            "translate_lyrics": settings.get("translate_lyrics", False),
+        },
     }
     return request
 
@@ -1664,12 +1667,17 @@ DEFAULTS = {
     "active_scale": 1.35,
     "visible_above": 6,
     "visible_below": 6,
+    "visualizer": True,
+    "visualizer_position": "bottom",
+    "visualizer_coverage": 25,
+    "translate_lyrics": False,
 }
 
-BOOL_KEYS = ("marker", "karaoke", "footer", "hints", "header", "ghost")
+BOOL_KEYS = ("marker", "karaoke", "footer", "hints", "header", "ghost", "visualizer")
 INT_KEYS = (
     "font_size", "spacing", "offset_ms", "width", "height",
     "custom_x", "custom_y", "visible_above", "visible_below",
+    "visualizer_coverage",
 )
 FLOAT_KEYS = ("active_scale",)
 
@@ -1911,9 +1919,15 @@ class LyricsCarousel:
         self._player = PlayerWatcher(args.player) if not self.demo else None
         self.image = None
         self.image_error = ""
-        # El visualizador es siempre el fondo de la ventana: cava real y,
-        # si no está o falla, barras simuladas. Nunca es una opción.
-        self.visualizer = Visualizer(self.log) if Visualizer is not None else None
+        # Visualizador: solo si está activado en la configuración
+        if self.cfg.get("visualizer", True) and Visualizer is not None:
+            self.visualizer = Visualizer(self.log)
+            self.visualizer_position = self.cfg.get("visualizer_position", "bottom")
+            self.visualizer_coverage = self.cfg.get("visualizer_coverage", 25)
+        else:
+            self.visualizer = None
+            self.visualizer_position = "bottom"
+            self.visualizer_coverage = 25
         # Si la terminal se cierra, las escrituras fallan: hay que salir en
         # vez de quedarse dibujando en el vacio.
         self.output_broken = False
@@ -2179,6 +2193,18 @@ class LyricsCarousel:
             # La geometría se aplica a la ventana viva, sin recrearla.
             if apply_geometry(cfg):
                 self.log("geometría aplicada en caliente")
+        # Visualizador: crear/destruir si cambia el estado ON/OFF, actualizar posición/cobertura
+        new_viz = cfg.get("visualizer", True)
+        if new_viz and self.visualizer is None and Visualizer is not None:
+            self.visualizer = Visualizer(self.log)
+            if not self.demo:
+                self.visualizer.start()
+        elif not new_viz and self.visualizer is not None:
+            self.visualizer.stop()
+            self.visualizer = None
+        if self.visualizer is not None:
+            self.visualizer_position = cfg.get("visualizer_position", "bottom")
+            self.visualizer_coverage = cfg.get("visualizer_coverage", 25)
 
     def _poll_data(self):
         # Recarga de ajustes: vale tanto en modo demo como en modo real.

@@ -357,27 +357,29 @@ class ImageRenderer:
     def _draw_visualizer(self, image, xpix, ypix, accent):
         """Barras de cava de fondo, en la zona configurada y detras de la letra.
 
-        Se dibujan primero (la letra va encima) con alfa bajo: el fondo se ve
-        como un ecualizador real sin tapar el texto. La zona y cobertura
-        se configuran en el panel (visualizer_position, visualizer_coverage).
+        Se dibujan primero (la letra va encima). El lienzo es transparente
+        (se ve el fondo de pantalla), asi que las barras se pintan con su
+        propia transparencia: con un alfa muy bajo se perdian contra el
+        fondo y el visualizador no se veia. La zona y la cobertura se
+        configuran en el panel (visualizer_position, visualizer_coverage).
         """
         visualizer = getattr(self.app, "visualizer", None)
         if visualizer is None:
             return
         position = getattr(self.app, "visualizer_position", "bottom")
         coverage = getattr(self.app, "visualizer_coverage", 25) / 100.0
-        
+
         try:
             levels = visualizer.snapshot(simulate=bool(getattr(self.app, "demo", False)))
         except Exception:  # noqa: BLE001 - el fondo nunca tumba el cuadro
             return
         if not levels:
             return
-        
+
         count = len(levels)
         color = self._mix(accent, self.app.theme.background, 0.55)
         paint = ImageDraw.Draw(image)
-        
+
         if position in ("top", "bottom"):
             # Banda horizontal
             band_h = max(2, int(ypix * coverage))
@@ -390,9 +392,11 @@ class ImageRenderer:
             width = max(1, int(slot - gap))
             for index, level in enumerate(levels):
                 level = max(0.0, min(1.0, float(level)))
-                h = max(1.0, band_h * level)
+                # La altura sigue al nivel pero nunca es invisible: con un
+                # nivel bajo la barra se queda en un pixel.
+                h = max(3.0, band_h * (level ** 0.8))
                 x0 = index * slot + gap / 2.0
-                alpha = int(34 + 58 * level)
+                alpha = int(90 + 100 * level)
                 if position == "bottom":
                     paint.rectangle(
                         [x0, ypix - h, x0 + width, ypix],
@@ -402,7 +406,7 @@ class ImageRenderer:
                     if h > 4.0:
                         paint.rectangle(
                             [x0, ypix - h, x0 + width, ypix - h + 2],
-                            fill=color + (min(170, alpha + 55),),
+                            fill=color + (min(235, alpha + 80),),
                         )
                 else:
                     paint.rectangle(
@@ -413,7 +417,7 @@ class ImageRenderer:
                     if h > 4.0:
                         paint.rectangle(
                             [x0, h - 2, x0 + width, h],
-                            fill=color + (min(170, alpha + 55),),
+                            fill=color + (min(235, alpha + 80),),
                         )
         else:
             # Banda vertical (left/right)
@@ -427,9 +431,9 @@ class ImageRenderer:
             width = max(1, int(slot - gap))
             for index, level in enumerate(levels):
                 level = max(0.0, min(1.0, float(level)))
-                w = max(1.0, band_w * level)
+                w = max(3.0, band_w * (level ** 0.8))
                 y0 = index * slot + gap / 2.0
-                alpha = int(34 + 58 * level)
+                alpha = int(90 + 100 * level)
                 if position == "right":
                     paint.rectangle(
                         [xpix - w, y0, xpix, y0 + width],
@@ -439,7 +443,7 @@ class ImageRenderer:
                     if w > 4.0:
                         paint.rectangle(
                             [xpix - w, y0, xpix - w + 2, y0 + width],
-                            fill=color + (min(170, alpha + 55),),
+                            fill=color + (min(235, alpha + 80),),
                         )
                 else:
                     paint.rectangle(
@@ -450,7 +454,7 @@ class ImageRenderer:
                     if w > 4.0:
                         paint.rectangle(
                             [w - 2, y0, w, y0 + width],
-                            fill=color + (min(170, alpha + 55),),
+                            fill=color + (min(235, alpha + 80),),
                         )
 
     # -- render principal -----------------------------------------------

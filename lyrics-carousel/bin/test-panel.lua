@@ -485,6 +485,28 @@ check(findByKey("button", "anchor-custom") ~= nil, "el panel tiene la posicion p
 findByKey("button", "anchor-custom").props.onClick()
 eq(overrides.anchor, "custom", "el boton personalizado guarda custom")
 
+-- 2-bis. El redimensionado se pide sin mantener la proporcion ----------------
+--
+-- Hyprland 0.57 mantiene la proporcion en el dispatcher de resize si no se
+-- dice lo contrario: el cambio de tamano se descarta en silencio y la
+-- ventana se queda con el tamano diminuto que tenia.
+
+commands = {}
+anchorButton("center").props.onClick()
+local resizeExpr = nil
+for _, argv in ipairs(commands) do
+  local last = argv[#argv]
+  if type(last) == "string" and last:find("window%.resize") then
+    resizeExpr = last
+  end
+end
+check(resizeExpr ~= nil, "el panel pide redimensionar la ventana")
+check(
+  resizeExpr ~= nil and resizeExpr:find("keep_aspect_ratio = false") ~= nil,
+  "el redimensionado no mantiene la proporcion",
+  tostring(resizeExpr)
+)
+
 -- 3. Un valor escrito a mano se normaliza -----------------------------------
 
 config.anchor = "centro"

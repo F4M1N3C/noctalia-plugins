@@ -2059,44 +2059,124 @@ def check_estimate_times_dentro_de_la_cancion():
 
 
 def check_geometria_se_recorta_a_la_pantalla():
-    """La ventana nunca puede ser más grande que la pantalla.
+    """La geometría de la ventana la aplica el panel, no el script.
 
-    El panel recorta el ancho y el alto al monitor; el script hacía su
-    propia cuenta y no lo hacía: el mismo ajuste daba geometrías
-    distintas según quién la aplicase, y Hyprland aceptaba una ventana
-    mayor que el monitor.
+    El panel recorta el ancho y el alto al monitor y usa la API de
+    Noctalia (que sí funciona). El script intentaba hacer lo mismo con
+    `hyprctl dispatch` y una cuenta propia: la cuenta usaba el monitor
+    completo (no el area utilizable) y el resize se descartaba en
+    silencio, así que la ventana acababa fuera de la pantalla.
+    """
+    mod = script_module()
+    check(
+        "el script no redimensiona la ventana por su cuenta",
+        not hasattr(mod, "apply_geometry"),
+        "apply_geometry sigue en el script",
+    )
+
+
+def check_tamano_de_la_ventana_por_hyprctl():
+    """El tamaño de la ventana se lee de Hyprland, en píxeles.
+
+    El ajuste width/height es el tamaño de la ventana en píxeles (lo que el
+    panel usa al crearla). La celda del terminal es otra medida: antes el
+    script guardaba las celdas (96x30) y la ventana se creaba de 96x30
+    píxeles, es decir, diminuta.
+    """
+    mod = script_module()
+    original = mod.subprocess.run
+    try:
+        mod.subprocess.run = lambda args, **kwargs: types.SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps([
+                {"class": "otra-ventana", "size": [800, 600]},
+                {"class": "noctalia-lyrics-carousel", "size": [1300, 900]},
+            ]),
+            stderr="",
+        )
+        check(
+            "el tamaño de la ventana se lee de Hyprland",
+            mod.window_size_px() == (1300, 900),
+            str(mod.window_size_px()),
+        )
+        mod.subprocess.run = lambda args, **kwargs: types.SimpleNamespace(
+            returncode=0, stdout="[]", stderr=""
+        )
+        check(
+            "sin ventana del carrusel no hay tamaño",
+            mod.window_size_px() is None,
+            str(mod.window_size_px()),
+        )
+    finally:
+        mod.subprocess.run = original
+
+
+def check_redimensionado_manual_se_guarda():
+    """El tamaño que elige el usuario a mano se guarda en píxeles.
+
+    Redimensionar la ventana con el ratón no pasa por el panel, así que el
+    script lo guarda. Va a la capa de overrides (no al settings.toml):
+    escribir el settings.toml hace que Noctalia recargue la configuración
+    y cierre el panel que estuviera abierto.
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
         with env_temporal({"XDG_CACHE_HOME": cache}):
             mod = script_module()
-            llamadas = []
-            original_monitor = mod.focused_monitor
-            original_run = mod.subprocess.run
-            try:
-                mod.focused_monitor = lambda: {"width": 800, "height": 600}
-                mod.subprocess.run = lambda args, **kwargs: (
-                    llamadas.append(args[-1])
-                    or types.SimpleNamespace(returncode=0, stdout="", stderr="")
+            app = object.__new__(mod.LyricsCarousel)
+            app.demo = False
+            app.args = types.SimpleNamespace(debug=False)
+            app.cfg = dict(mod.DEFAULTS)
+            app._last_size_check = 0.0
+            guardados = []
+            app._save_override = (
+                lambda key, value, kind="string", persist=True: guardados.append(
+                    (key, value, kind, persist)
                 )
-                cfg = dict(mod.DEFAULTS)
-                cfg["width"] = 2000
-                cfg["height"] = 1500
-                cfg["anchor"] = "center"
-                mod.apply_geometry(cfg)
+            )
+            original = mod.window_size_px
+            try:
+                mod.window_size_px = lambda: (1300, 900)
+                app.check_manual_resize()
+                check(
+                    "el ancho redimensionado se guarda",
+                    any(k == "width" and v == 1300 for k, v, _, _ in guardados),
+                    str(guardados),
+                )
+                check(
+                    "el alto redimensionado se guarda",
+                    any(k == "height" and v == 900 for k, v, _, _ in guardados),
+                    str(guardados),
+                )
+                check(
+                    "el tamaño se guarda en la capa de overrides",
+                    bool(guardados) and all(persist is False for _, _, _, persist in guardados),
+                    str(guardados),
+                )
+
+                # El tamaño que ya está en los ajustes no se vuelve a guardar.
+                guardados.clear()
+                app.cfg["width"] = 1300
+                app.cfg["height"] = 900
+                app._last_size_check = 0.0
+                app.check_manual_resize()
+                check(
+                    "un tamaño que ya está guardado no se repite",
+                    not guardados,
+                    str(guardados),
+                )
+
+                # Una ventana diminuta (por ejemplo a medio arrastrar) no vale.
+                guardados.clear()
+                mod.window_size_px = lambda: (55, 15)
+                app._last_size_check = 0.0
+                app.check_manual_resize()
+                check(
+                    "una ventana diminuta no se guarda",
+                    not guardados,
+                    str(guardados),
+                )
             finally:
-                mod.focused_monitor = original_monitor
-                mod.subprocess.run = original_run
-            resize = [c for c in llamadas if "resize" in c]
-            check(
-                "la ventana se recorta al ancho de la pantalla",
-                bool(resize) and "x = 800" in resize[0],
-                str(llamadas),
-            )
-            check(
-                "la ventana se recorta al alto de la pantalla",
-                bool(resize) and "y = 600" in resize[0],
-                str(llamadas),
-            )
+                mod.window_size_px = original
 
 
 def check_lrc_horas():
@@ -3001,6 +3081,51 @@ def check_formatos_del_helper():
                 )
 
 
+def check_helper_acepta_las_claves_nuevas():
+    """El helper conoce todas las claves que el panel y el script usan.
+
+    El helper es otra via de escritura (la del panel y la de los atajos de
+    la ventana). Si le falta una clave en su lista, responde "clave
+    desconocida" y el ajuste se pierde en silencio: el interruptor del
+    visualizador no se guardaba por eso.
+    """
+    casos = (
+        ("visualizer", "false", "bool", False),
+        ("translate_lyrics", "true", "bool", True),
+        ("visualizer_position", "left", "string", "left"),
+        ("visualizer_position", "arriba", "string", None),
+        ("visualizer_coverage", "40", "int", 40),
+    )
+    for clave, valor, tipo, esperado in casos:
+        with tempfile.TemporaryDirectory(prefix="lyrics-carousel-claves-") as temporal:
+            env = entorno_de_prueba(temporal)
+            estado = os.path.join(temporal, ".local", "state", "noctalia")
+            os.makedirs(estado, exist_ok=True)
+            ajustes_path = os.path.join(estado, "settings.toml")
+            with open(ajustes_path, "w", encoding="utf-8") as handle:
+                handle.write("")
+            proceso = subprocess.run(
+                [sys.executable, HELPER, "persist", clave, valor, tipo],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=env,
+            )
+            ajustes = leer_ajustes(ajustes_path)
+            if esperado is None:
+                check(
+                    f"el helper rechaza {clave}={valor!r}",
+                    proceso.returncode != 0 and clave not in ajustes,
+                    f"código={proceso.returncode} ajustes={ajustes.get(clave)!r}",
+                )
+            else:
+                check(
+                    f"el helper guarda {clave}={valor!r}",
+                    proceso.returncode == 0 and ajustes.get(clave) == esperado,
+                    f"código={proceso.returncode} ajustes={ajustes.get(clave)!r}",
+                )
+
+
 def main(argv):
     verbose = "--verbose" in argv
 
@@ -3136,6 +3261,7 @@ def main(argv):
     check_limites_ajustes()
     check_limites_del_panel_y_el_script()
     check_formatos_del_helper()
+    check_helper_acepta_las_claves_nuevas()
     check_titulo_vacio_no_rebusca()
     check_timeout_adaptador()
     check_tiempos_reales_no_se_pisan()
@@ -3155,6 +3281,8 @@ def main(argv):
     check_estimate_times_no_adelanta_las_sin_tiempo()
     check_estimate_times_dentro_de_la_cancion()
     check_geometria_se_recorta_a_la_pantalla()
+    check_tamano_de_la_ventana_por_hyprctl()
+    check_redimensionado_manual_se_guarda()
     check_texto_entre_angulos()
     check_lrc_mejorado_a_caracteres()
     check_lrclib_prefiere_letra_mejorada()

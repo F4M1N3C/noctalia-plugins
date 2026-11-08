@@ -27,7 +27,11 @@ except ImportError:  # pragma: no cover
 
 
 def terminal_cells(fd=None):
-    """(cols, rows, xpix, ypix) del terminal."""
+    """(cols, rows, xpix, ypix) del terminal.
+
+    kitty rellena ws_xpixel/ws_ypixel, asi que el area de dibujo se sabe
+    exacta y la imagen encaja 1:1 en la rejilla de celdas.
+    """
     fd = fd if fd is not None else sys.stdout.fileno()
     try:
         raw = fcntl.ioctl(fd, termios.TIOCGWINSZ, b"\0" * 8)

@@ -369,8 +369,14 @@ applyGeometry = function()
     x, y = anchorPosition(anchor, width, height, screenWidth, screenHeight)
   end
   local window = "class:^noctalia-lyrics-carousel$"
+  -- keep_aspect_ratio = false es imprescindible: sin esa flag el
+  -- despachador de Hyprland 0.57 mantiene la proporcion y descarta el
+  -- cambio de tamano (la ventana se queda con el tamano que ya tenia).
   local resize = string.format(
-    'hl.dsp.window.resize({ x = %d, y = %d, window = "%s" })', width, height, window
+    'hl.dsp.window.resize({ x = %d, y = %d, window = "%s", keep_aspect_ratio = false })',
+    width,
+    height,
+    window
   )
   local move = string.format(
     'hl.dsp.window.move({ x = %d, y = %d, window = "%s" })', x, y, window
@@ -416,6 +422,10 @@ launch = function()
   if pluginDir ~= nil and pluginDir ~= "" then
     script = "python3 " .. pluginDir .. "/bin/lyrics-carousel"
   end
+  -- La ventana se crea con el tamaño en pixeles que mandan las reglas de
+  -- exec_cmd; dentro de kitty el script lee el tamaño real del terminal
+  -- (kitty lo publica en TIOCGWINSZ), asi que no hace falta pasar nada por
+  -- variables de entorno.
   local command = string.format(
     "kitty -o confirm_os_window_close=0 -o font_family=%s -o font_size=%d --class noctalia-lyrics-carousel --title lyrics -e sh -lc %s",
     shellQuote(family),

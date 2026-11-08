@@ -1752,6 +1752,8 @@ def load_settings() -> dict:
     cfg["visualizer_coverage"] = max(5, min(50, cfg["visualizer_coverage"]))
     if cfg["direction"] not in ("down", "up"):
         cfg["direction"] = "down"
+    if cfg.get("visualizer_position") not in ("top", "bottom", "left", "right"):
+        cfg["visualizer_position"] = DEFAULTS["visualizer_position"]
     if cfg["accent"] not in ACCENT_NAMES:
         cfg["accent"] = DEFAULTS["accent"]
     cfg["font_family"] = str(cfg["font_family"] or DEFAULTS["font_family"])
@@ -1784,90 +1786,36 @@ def normalize_anchor(value) -> str:
     return ANCHOR_ALIASES.get(key, "center")
 
 
-def focused_monitor():
+def window_size_px():
+    """Tamaño en píxeles de la ventana del carrusel, según Hyprland.
+
+    El ajuste width/height es el tamaño de la ventana en píxeles (lo que el
+    panel usa al crearla), no el número de celdas ni el área de dibujo de
+    kitty. Preguntarlo a Hyprland evita mezclar las tres medidas: antes el
+    script guardaba las celdas del terminal y la ventana salía diminuta.
+    """
     try:
         result = subprocess.run(
-            ["hyprctl", "monitors", "-j"], capture_output=True, text=True, timeout=3
+            ["hyprctl", "clients", "-j"], capture_output=True, text=True, timeout=3
         )
-        monitors = json.loads(result.stdout or "[]")
+        clients = json.loads(result.stdout or "[]")
     except Exception:  # noqa: BLE001
         return None
-    if not isinstance(monitors, list) or not monitors:
+    if not isinstance(clients, list):
         return None
-    for monitor in monitors:
-        if isinstance(monitor, dict) and monitor.get("focused"):
-            return monitor
-    first = monitors[0]
-    return first if isinstance(first, dict) else None
-
-
-def apply_geometry(cfg):
-    """Mueve y redimensiona la ventana en caliente (sin recrearla)."""
-    monitor = focused_monitor()
-    if monitor is None:
-        return False
-    try:
-        screen_w = int(monitor.get("width") or 0)
-        screen_h = int(monitor.get("height") or 0)
-    except (TypeError, ValueError):
-        return False
-    if screen_w <= 0 or screen_h <= 0:
-        return False
-    # La ventana nunca puede ser mayor que el monitor (igual que el
-    # panel): si no, Hyprland acepta una ventana de 3840x2160 en una
-    # pantalla de 1920x1080 y la posición calculada sale negativa.
-    try:
-        width = int(cfg.get("width", DEFAULTS.get("width", 1200)))
-    except (TypeError, ValueError):
-        width = int(DEFAULTS.get("width", 1200))
-    try:
-        height = int(cfg.get("height", DEFAULTS.get("height", 820)))
-    except (TypeError, ValueError):
-        height = int(DEFAULTS.get("height", 820))
-    width = max(1, min(width, screen_w))
-    height = max(1, min(height, screen_h))
-    anchor = normalize_anchor(cfg.get("anchor", "center"))
-    margin = 16
-    if anchor == "custom":
-        try:
-            x = int(cfg.get("custom_x", 100))
-        except (TypeError, ValueError):
-            x = 100
-        try:
-            y = int(cfg.get("custom_y", 100))
-        except (TypeError, ValueError):
-            y = 100
-    else:
-        if anchor in ("top-left", "left-center", "bottom-left"):
-            x = margin
-        elif anchor in ("top-right", "right-center", "bottom-right"):
-            x = screen_w - width - margin
-        else:
-            x = (screen_w - width) // 2
-        if anchor in ("top-left", "top-center", "top-right"):
-            y = margin
-        elif anchor in ("bottom-left", "bottom-center", "bottom-right"):
-            y = screen_h - height - margin
-        else:
-            y = (screen_h - height) // 2
-    window = "class:^noctalia-lyrics-carousel$"
-    expressions = (
-        f"hl.dsp.window.resize({{ x = {width}, y = {height}, window = \"{window}\" }})",
-        f"hl.dsp.window.move({{ x = {x}, y = {y}, window = \"{window}\" }})",
-    )
-    ok = False
-    for expression in expressions:
-        try:
-            result = subprocess.run(
-                ["hyprctl", "dispatch", expression],
-                capture_output=True,
-                text=True,
-                timeout=3,
-            )
-            ok = ok or result.returncode == 0
-        except Exception:  # noqa: BLE001
+    for client in clients:
+        if not isinstance(client, dict):
             continue
-    return ok
+        if client.get("class") != "noctalia-lyrics-carousel":
+            continue
+        size = client.get("size") or []
+        if len(size) < 2:
+            return None
+        try:
+            return int(size[0]), int(size[1])
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 class LyricsCarousel:
@@ -1910,6 +1858,9 @@ class LyricsCarousel:
         self.last_draw = 0.0
         self.last_reload = 0.0
         self.last_fetch = 0.0
+        # Última comprobación del tamaño de la ventana (redimensionado manual).
+        self._last_size_check = 0.0
+        self._last_viz_log = 0.0
         self.status_message = ""
         self.dirty = True
         self.stop_requested = False
@@ -1929,8 +1880,6 @@ class LyricsCarousel:
             self.visualizer = None
             self.visualizer_position = "bottom"
             self.visualizer_coverage = 25
-        # Timestamp del último cambio de geometría programático (applyGeometry)
-        self._last_geometry_change = 0.0
         # Si la terminal se cierra, las escrituras fallan: hay que salir en
         # vez de quedarse dibujando en el vacio.
         self.output_broken = False
@@ -2003,14 +1952,37 @@ class LyricsCarousel:
         width = size.columns if size.columns > 0 else 96
         height = size.lines if size.lines > 0 else 30
         if width != self.width or height != self.height:
-            # Si el cambio NO es programático (applyGeometry escribe overrides
-            # y luego hace dispatch; el script ve el override ~0.5s antes).
-            if time.monotonic() - getattr(self, "_last_geometry_change", 0) > 0.5:
-                self._save_override("width", width, "int")
-                self._save_override("height", height, "int")
             self.width = width
             self.height = height
             self.dirty = True
+
+    def check_manual_resize(self):
+        """Guarda el tamaño si el usuario ha redimensionado la ventana a mano.
+
+        Los ajustes width/height están en píxeles de la ventana, no en celdas
+        del terminal: redimensionar con el ratón no pasa por el panel, así que
+        el script lo guarda en la capa de overrides (que no vigila Noctalia:
+        escribir el settings.toml cerraría el panel que estuviera abierto).
+        """
+        if self.demo:
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_last_size_check", 0.0) < 2.0:
+            return
+        self._last_size_check = now
+        size = window_size_px()
+        if size is None:
+            return
+        width, height = size
+        # Solo se guarda lo que el panel y el script aceptan: una ventana
+        # diminuta (por ejemplo a medio arrastrar) no vale.
+        if not (400 <= width <= 3840 and 200 <= height <= 2160):
+            return
+        if width == self.cfg.get("width") and height == self.cfg.get("height"):
+            return
+        self.log(f"tamaño manual: {width}x{height}")
+        self._save_override("width", width, "int", persist=False)
+        self._save_override("height", height, "int", persist=False)
 
     # ---- datos --------------------------------------------------------
 
@@ -2193,15 +2165,9 @@ class LyricsCarousel:
         self.spacing = int(cfg["spacing"])
         self.dirty = True
         self.log("ajustes: " + json.dumps(cfg, ensure_ascii=False))
-        if (
-            previous.get("width") != cfg["width"]
-            or previous.get("height") != cfg["height"]
-            or previous.get("anchor") != cfg["anchor"]
-        ):
-            # La geometría se aplica a la ventana viva, sin recrearla.
-            self._last_geometry_change = time.monotonic()
-            if apply_geometry(cfg):
-                self.log("geometría aplicada en caliente")
+        # La geometría de la ventana la aplica el panel (es quien tiene la
+        # API de Noctalia): aquí no se toca, solo se vigila el tamaño por si
+        # el usuario redimensiona la ventana a mano.
         # Visualizador: crear/destruir si cambia el estado ON/OFF, actualizar posición/cobertura
         new_viz = cfg.get("visualizer", True)
         if new_viz and self.visualizer is None and Visualizer is not None:
@@ -2455,7 +2421,7 @@ class LyricsCarousel:
 
     # ---- teclado ------------------------------------------------------
 
-    def _save_override(self, key, value, kind="string"):
+    def _save_override(self, key, value, kind="string", persist=True):
         """Guarda un ajuste y lo deja escrito en el settings.toml.
 
         La capa de overrides es temporal: el panel la vuelca al cerrarse.
@@ -2464,7 +2430,9 @@ class LyricsCarousel:
         perderia al reiniciar la sesion.
 
         Ojo: escribir el settings.toml hace que Noctalia recargue la
-        configuracion (y cierre el panel que estuviera abierto).
+        configuracion (y cierre el panel que estuviera abierto). Por eso el
+        redimensionado manual usa persist=False: se queda solo en la capa
+        de overrides, que el panel vuelca al cerrarse.
         """
         # realpath: el script suele lanzarse por el enlace simbolico de
         # ~/.local/bin, y el helper vive en bin/.
@@ -2486,7 +2454,7 @@ class LyricsCarousel:
                 [
                     "python3",
                     helper,
-                    "persist",
+                    "persist" if persist else "override",
                     key,
                     str(value),
                     kind,
@@ -2568,16 +2536,33 @@ class LyricsCarousel:
         visualizer = getattr(self, "visualizer", None)
         if visualizer is not None and not self.demo:
             visualizer.start()
+            self.warn(
+                "visualizador: cava %s"
+                % ("arrancado" if visualizer.start() else "no arrancó")
+            )
         try:
             while not self.stop_requested:
                 self.update_size()
                 self._poll_data()
+                self.check_manual_resize()
                 self._consume_reload()
                 # Con el desfase: si el scroll usara la posicion cruda, la
                 # linea resaltada (que si usa el desfase) no seria la que
                 # esta en el centro.
                 position = self.position()
                 self._update_scroll(position)
+                if visualizer is not None and time.monotonic() - self._last_viz_log > 30.0:
+                    self._last_viz_log = time.monotonic()
+                    bars = visualizer.snapshot()
+                    self.warn(
+                        "visualizador: %d barras, medio %.3f, max %.3f, pos %s"
+                        % (
+                            len(bars),
+                            sum(bars) / max(1, len(bars)),
+                            max(bars) if bars else 0.0,
+                            getattr(self, "visualizer_position", "?"),
+                        )
+                    )
                 self.draw(force=self.dirty)
                 self.dirty = False
                 if self.args.once or self.output_broken:

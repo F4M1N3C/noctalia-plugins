@@ -149,12 +149,15 @@ def esperar_ajuste(ruta: str, clave: str, valor, segundos: float = 10.0) -> bool
     return False
 
 
-EQ_CHARS = "▁▂▃▄▅▆▇█"
-
-
-def filas_ecualizador(rows) -> list:
-    """Filas que dibujan el ecualizador (los bloques de la barra)."""
-    return [i for i, row in enumerate(rows) if any(ch in row for ch in EQ_CHARS)]
+def visualizer_module():
+    """Carga bin/visualizer.py (cava y barras de reserva)."""
+    loader = importlib.machinery.SourceFileLoader(
+        "lyrics_visualizer_mod", os.path.join(HERE, "visualizer.py")
+    )
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
 
 
 def run_script(path: str, cwd: str = "/"):
@@ -447,47 +450,6 @@ def check_reintento_letra():
             )
 
 
-def check_ecualizador_fila():
-    """El ecualizador ocupa su propia fila: la letra no la pisa."""
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
-            mod = script_module()
-            app = object.__new__(mod.LyricsCarousel)
-            app.cfg = dict(mod.DEFAULTS)
-            app.language = "en"
-            app.texts = mod.TEXTS["en"]
-            app.cfg["header"] = False
-            app.width = 80
-            app.height = 20
-            app.theme = mod.Theme()
-            app.track = mod.Track()
-            app.demo = False
-            app.lines = []
-            app.source = ""
-            app.synced = False
-            app.state = "idle"
-            app.active_index = 0
-            app.last_active = -1
-            app.moving = False
-            app.scroll = 0.0
-            app.status_message = ""
-
-            app.cfg["equalizer"] = False
-            sin_ecualizador = filas_ecualizador(app.build_frame())
-            app.cfg["equalizer"] = True
-            con_ecualizador = filas_ecualizador(app.build_frame())
-            ok = (
-                len(sin_ecualizador) == 1
-                and len(con_ecualizador) == 2
-                and con_ecualizador[1] == sin_ecualizador[0] + 1
-            )
-            check(
-                "el ecualizador reserva su fila",
-                ok,
-                "sin=%s con=%s" % (sin_ecualizador, con_ecualizador),
-            )
-
-
 def bloques_osc66(linea):
     """Extrae los bloques OSC 66 de una fila: (metadatos, texto)."""
     patron = re.compile("\x1b\\]66;([^;]*);([^\x07]*)\x07")
@@ -526,109 +488,6 @@ def factor_osc66(datos):
     if numerador and denominador:
         return escala * numerador / denominador
     return float(escala)
-
-
-def check_escala_linea_activa():
-    """La línea activa se dibuja al tamaño pedido con el protocolo de kitty.
-
-    Kitty separa los metadatos con ':' y el texto empieza tras el ultimo
-    ';'. Ademas calcula el tamaño real como s * (n/d): un factor de 1.2
-    necesita s=2 con n/d=6/10, porque con s=1 el maximo es 1.
-    """
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
-            mod = script_module()
-            app = object.__new__(mod.LyricsCarousel)
-            app.theme = mod.Theme()
-            app.cfg = dict(mod.DEFAULTS)
-            app.cfg.update(
-                {
-                    "ghost": False,
-                    "marker": False,
-                    "active_scale": 1.2,
-                    "visible_above": 6,
-                    "visible_below": 6,
-                }
-            )
-            app.width = 80
-            app.height = 21
-            app.lines = [
-                mod.LyricLine(0.0, 4.0, "linea anterior"),
-                mod.LyricLine(4.0, 4.0, "hola mundo"),
-                mod.LyricLine(8.0, 4.0, "linea posterior"),
-            ]
-            app.active_index = 1
-            app.spacing = 1
-            app.direction = 1
-            app.scroll = 1.0
-            app.moving = False
-            app.karaoke = False
-            app.next_timed_start = lambda index: None
-            rows = [""] * app.height
-            app._render_lyrics(rows, 0.0, 5.0, 0, app.height - 1)
-            linea = next((row for row in rows if "hola mundo" in texto_visible(row)), "")
-            bloques = bloques_osc66(linea)
-            check(
-                "la línea activa usa el protocolo de tamaño de kitty",
-                bool(bloques),
-                repr(linea[-120:]),
-            )
-            factor = 0.0
-            if bloques:
-                factor = factor_osc66(metadatos_osc66(bloques[0][0]))
-                check(
-                    "el tamaño dibujado es el pedido",
-                    abs(factor - 1.2) < 0.05,
-                    "factor=%s metadatos=%s" % (factor, bloques[0][0]),
-                )
-            check(
-                "la secuencia no deja n/d como texto visible",
-                "n=2;d=10" not in linea and ";n=" not in linea,
-                repr(linea[-120:]),
-            )
-
-            # Con w=0 kitty coloca un caracter por bloque de s x s celdas y
-            # el texto queda disperso con huecos. Con w explicito los
-            # caracteres se pegan y la linea ocupa lo que pide el factor.
-            avance = 0
-            for metadatos, texto in bloques:
-                datos = metadatos_osc66(metadatos)
-                escala = int(datos.get("s", 1))
-                ancho = int(datos.get("w", 0))
-                avance += (ancho or len(texto)) * escala
-            check(
-                "el texto escalado ocupa lo que pide el factor",
-                avance <= int(len("hola mundo") * factor) + 2,
-                "avance=%s factor=%s bloques=%s" % (avance, factor, bloques),
-            )
-
-            # Con escala 2 la linea activa ocupa dos filas: la de abajo
-            # tiene que quedar libre porque kitty borra el glifo grande si
-            # se escribe encima. La linea se busca por su texto visible:
-            # el contenido va partido en bloques de kitty.
-            fila_activa = next(
-                (i for i, row in enumerate(rows) if "hola mundo" in texto_visible(row)),
-                -1,
-            )
-            check(
-                "la fila de debajo de la línea activa queda libre",
-                fila_activa >= 0 and rows[fila_activa + 1] == "",
-                "fila=%s siguientes=%r" % (fila_activa, rows[fila_activa + 1 : fila_activa + 3]),
-            )
-
-            # La escala entera no lleva fraccion: solo s=, sin n/d.
-            app.cfg["active_scale"] = 2.0
-            rows = [""] * app.height
-            app._render_lyrics(rows, 0.0, 5.0, 0, app.height - 1)
-            linea = next((row for row in rows if "hola mundo" in texto_visible(row)), "")
-            bloques = bloques_osc66(linea)
-            check(
-                "la escala entera no manda una fraccion vacia",
-                bool(bloques)
-                and "n=" not in bloques[0][0]
-                and factor_osc66(metadatos_osc66(bloques[0][0])) == 2.0,
-                repr(linea[-120:]),
-            )
 
 
 def image_module():
@@ -819,7 +678,6 @@ def check_karaoke_imagen_sigue_los_tiempos():
                 "spacing": 3,
                 "visible_above": 2,
                 "visible_below": 2,
-                "animation_ms": 0,
             }
             app.state = "lyrics"
             app.lines = [line]
@@ -869,24 +727,28 @@ def check_karaoke_imagen_sigue_los_tiempos():
 
 
 def check_transicion_real():
-    """animation_ms es la duración real y la curva entra y sale suave."""
+    """ghost activa la transición suave; apagado, el cambio es instantáneo.
+
+    Con `ghost` la duración es fija (~0.9 s) y se recorta al 80 % del hueco
+    hasta la línea siguiente. Sin `ghost` no hay animación: el carrusel
+    salta de una línea a la siguiente en el instante en que empieza.
+    """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
         with env_temporal({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             app = object.__new__(mod.LyricsCarousel)
             app.cfg = dict(mod.DEFAULTS)
-            app.cfg["animation_ms"] = 900
+            app.cfg["ghost"] = True
             app.lines = [
                 mod.LyricLine(0.0, 0.0, "uno"),
                 mod.LyricLine(4.0, 0.0, "dos"),
                 mod.LyricLine(8.0, 0.0, "tres"),
             ]
 
-            # La transición empieza 900 ms antes, no 450: la mitad del
-            # valor configurado hacía que el ajuste mintiera.
+            # Empieza 0.9 s antes: a mitad de la transición, progreso 0.5.
             index, focus, progress = app.scroll_state(3.55)
             check(
-                "la transición dura lo configurado",
+                "la transición suave dura lo previsto",
                 index == 0 and focus == 1 and abs(progress - 0.5) < 1e-6,
                 "index=%s focus=%s progress=%.4f" % (index, focus, progress),
             )
@@ -901,278 +763,36 @@ def check_transicion_real():
                 "progress=%.4f" % app.scroll_state(3.95)[2],
             )
 
-            # No se puede invadir la línea siguiente: con 3 s de animación
-            # y solo 1 s de hueco, la ventana se queda en el 80 % del hueco.
-            app.cfg["animation_ms"] = 3000
+            # Si la siguiente línea llega antes de 0.9 s, la transición se
+            # recorta al 80 % del hueco para no solaparse con la siguiente.
             app.lines = [
                 mod.LyricLine(0.0, 0.0, "uno"),
-                mod.LyricLine(1.0, 0.0, "dos"),
+                mod.LyricLine(0.5, 0.0, "dos"),
             ]
-            progress = app.scroll_state(0.6)[2]
+            index, focus, progress = app.scroll_state(0.2)
             check(
-                "la transición no se come la línea siguiente",
-                0.0 < progress < 1.0,
-                "progress=%.4f" % progress,
+                "la transición se recorta si la letra va rápida",
+                focus == 1 and 0.0 < progress < 0.20,
+                "focus=%s progress=%.4f" % (focus, progress),
             )
 
-            app.cfg["animation_ms"] = 0
-            index, focus, progress = app.scroll_state(0.9)
+            # Sin transición suave no hay progreso: el cambio es seco.
+            app.lines = [
+                mod.LyricLine(0.0, 0.0, "uno"),
+                mod.LyricLine(4.0, 0.0, "dos"),
+                mod.LyricLine(8.0, 0.0, "tres"),
+            ]
+            app.cfg["ghost"] = False
+            index, focus, progress = app.scroll_state(3.55)
             check(
-                "con 0 ms el cambio es instantáneo",
+                "sin ghost el cambio es instantáneo",
                 index == 0 and focus == 0 and progress == 0.0,
-                "index=%s focus=%s progress=%s" % (index, focus, progress),
-            )
-
-
-def check_bloques_alineados():
-    """Los bloques de la línea activa no dejan huecos.
-
-    Cada bloque OSC 66 ocupa celdas enteras y kitty centra el texto dentro.
-    Si el bloque no coincide con un múltiplo exacto del periodo de la
-    escala, el redondeo deja relleno a los lados: con 1.2, bloques de 11
-    caracteres ocupan 14 celdas cuando deberían ocupar 13.2. La línea
-    "Ready for that long look that never ends" parte justo en tres
-    puntos visibles.
-    """
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
-            mod = script_module()
-            app = object.__new__(mod.LyricsCarousel)
-            app.theme = mod.Theme()
-            app.cfg = dict(mod.DEFAULTS)
-            app.cfg.update(
-                {
-                    "ghost": False,
-                    "marker": False,
-                    "karaoke": False,
-                    "active_scale": 1.2,
-                    "visible_above": 6,
-                    "visible_below": 6,
-                    "spacing": 1,
-                }
-            )
-            app.width = 200
-            app.height = 21
-            app.spacing = 1
-            texto = "Ready for that long look that never ends"
-            app.lines = [
-                mod.LyricLine(0.0, 4.0, "linea anterior"),
-                mod.LyricLine(4.0, 4.0, texto),
-                mod.LyricLine(8.0, 4.0, "linea posterior"),
-            ]
-            app.active_index = 1
-            app.direction = -1
-            app.scroll = 1.0
-            app.moving = False
-            app.karaoke = False
-            app.next_timed_start = lambda index: None
-            rows = [""] * app.height
-            app._render_lyrics(rows, 0.0, 5.0, 0, app.height - 1)
-            linea = next((row for row in rows if "Ready" in texto_visible(row)), "")
-            bloques = bloques_osc66(linea)
-            check(
-                "la línea activa se parte en bloques",
-                len(bloques) >= 4,
-                "bloques=%s" % (bloques,),
-            )
-            union = "".join(payload for _, payload in bloques)
-            check(
-                "los bloques conservan el texto entero",
-                union == texto,
-                "unido=%r" % (union,),
-            )
-            malos = []
-            for metadatos, payload in bloques:
-                datos = metadatos_osc66(metadatos)
-                escala = int(datos.get("s", 1))
-                ancho = int(datos.get("w", 0))
-                factor = factor_osc66(datos)
-                real = ancho * escala
-                ideal = len(payload) * factor
-                if abs(real - ideal) > 0.5:
-                    malos.append(
-                        "%r: %s celdas, ideal %.1f" % (payload, real, ideal)
-                    )
-            check(
-                "cada bloque ocupa exactamente su parte",
-                not malos,
-                "; ".join(malos),
-            )
-
-
-def check_karaoke_sin_huecos():
-    """Con el karaoke encendido la línea activa tampoco deja huecos.
-
-    El bloque escalado de kitty mide `s*w` celdas y el texto a escala
-    `s*n/d` mide `k*s*n/d`. Las dos cosas solo coinciden (y el bloque queda
-    pegado, sin relleno sobrante) cuando la longitud `k` es múltiplo de
-    `d/gcd(n,d)`: 5 caracteres con la escala 1.2.
-
-    Antes, el corte del karaoke partía un bloque de 10 en dos trozos y cada
-    trozo redondeaba su ancho a celdas enteras: sobraba hasta 1,6 celdas y
-    se veían huecos ("t hat", "lo ok", "nev er"). Ahora ninguna pieza se
-    parte, así que el relleno puede ir por cualquier sitio sin abrir huecos.
-    """
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
-            mod = script_module()
-            app = object.__new__(mod.LyricsCarousel)
-            app.theme = mod.Theme()
-            app.cfg = dict(mod.DEFAULTS)
-            app.cfg.update(
-                {
-                    "ghost": False,
-                    "marker": False,
-                    "karaoke": True,
-                    "active_scale": 1.2,
-                    "visible_above": 6,
-                    "visible_below": 6,
-                    "spacing": 1,
-                }
-            )
-            app.width = 200
-            app.height = 21
-            app.spacing = 1
-            textos = [
-                "Ready for that long look that never ends",
-                "Hello beautiful world tonight now",
-            ]
-            app.lines = [
-                mod.LyricLine(0.0, 4.0, "linea anterior"),
-                mod.LyricLine(4.0, 4.0, textos[0]),
-                mod.LyricLine(8.0, 4.0, "linea posterior"),
-            ]
-            app.active_index = 1
-            app.direction = -1
-            app.scroll = 1.0
-            app.moving = False
-            app.karaoke = True
-            app.next_timed_start = lambda index: None
-
-            # Se barre la linea entera: el hueco aparece en un momento
-            # concreto, asi que basta con mirar uno para no verlo.
-            for texto in textos:
-                app.lines[1] = mod.LyricLine(4.0, 4.0, texto)
-                for paso in range(0, 40):
-                    position = 4.0 + paso * 0.1
-                    rows = [""] * app.height
-                    app._render_lyrics(rows, 0.0, position, 0, app.height - 1)
-                    linea = next(
-                        (row for row in rows if texto[:5] in texto_visible(row)), ""
-                    )
-                    bloques = [bloque for bloque in bloques_osc66(linea) if bloque[1]]
-                    if not bloques:
-                        check(
-                            "con karaoke la línea activa se dibuja (t=%.1f)" % position,
-                            False,
-                            "posicion=%s" % (position,),
-                        )
-                        continue
-                    union = "".join(payload for _, payload in bloques)
-                    check(
-                        "con karaoke el texto sigue entero (t=%.1f)" % position,
-                        union == texto,
-                        "unido=%r" % (union,),
-                    )
-                    malos = []
-                    for indice, (metadatos, payload) in enumerate(bloques):
-                        datos = metadatos_osc66(metadatos)
-                        escala = int(datos.get("s", 1))
-                        ancho = int(datos.get("w", 0))
-                        factor = factor_osc66(datos)
-                        real = ancho * escala
-                        ideal = len(payload) * factor
-                        if abs(real - ideal) <= 0.01:
-                            continue
-                        # Solo el ultimo bloque puede quedar corto: es el
-                        # final de la linea, donde el relleno que sobra
-                        # (el bloque mide celdas enteras) no se ve. Los
-                        # demas tienen que quedar exactos, que es lo que
-                        # cierra los huecos entre palabras.
-                        if indice != len(bloques) - 1 or real - ideal > 2.01:
-                            malos.append(
-                                "%r: %s celdas, ideal %.1f"
-                                % (payload, real, ideal)
-                            )
-                    check(
-                        "con karaoke cada bloque queda pegado (t=%.1f)" % position,
-                        not malos,
-                        "; ".join(malos),
-                    )
-
-
-def check_corte_alineado():
-    """El corte del karaoke cae en un límite de bloque.
-
-    El relleno avanza a saltos de `q` caracteres (5 con la escala 1.2, 3 con
-    la 1.35). Es lo que permite que el bloque quede pegado: si el corte
-    cayera en mitad de un bloque, sobraría relleno y se abriría un hueco.
-
-    El salto ocurre cuando se canta ese bloque de verdad, así que el
-    relleno sigue el compás de la letra.
-    """
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
-            mod = script_module()
-            app = object.__new__(mod.LyricsCarousel)
-            app.cfg = dict(mod.DEFAULTS)
-            app.cfg["karaoke"] = True
-            texto = "hola mundo entero y feliz"
-            line = mod.LyricLine(0.0, 5.0, texto)
-            line.chars = [index * 0.1 for index in range(len(texto))]
-            end = 5.0
-
-            partes_12 = mod.kitty_scale_parts(1.2)
-            partes_135 = mod.kitty_scale_parts(1.35)
-            check(
-                "la escala 1.2 usa un cuanto de 5 caracteres",
-                mod.scale_quantum(partes_12) == 5,
-                "cuanto=%s partes=%s"
-                % (mod.scale_quantum(partes_12), partes_12),
+                "index=%s focus=%s progress=%.4f" % (index, focus, progress),
             )
             check(
-                "la escala 1.35 usa un cuanto de 3 caracteres",
-                mod.scale_quantum(partes_135) == 3,
-                "cuanto=%s partes=%s"
-                % (mod.scale_quantum(partes_135), partes_135),
-            )
-
-            anterior = -1
-            for position in (0.0, 0.25, 0.55, 0.95, 1.45, 2.05, 3.0, 4.5):
-                cut = app.karaoke_cut(line, texto, position, end, partes_12)
-                check(
-                    "el corte cae en un límite de bloque (t=%.2f)" % position,
-                    cut % mod.scale_quantum(partes_12) == 0
-                    or cut == len(texto),
-                    "corte=%s" % (cut,),
-                )
-                check(
-                    "el corte no sale de la línea (t=%.2f)" % position,
-                    0 <= cut <= len(texto),
-                    "corte=%s" % (cut,),
-                )
-                check(
-                    "el corte avanza con el tiempo (t=%.2f)" % position,
-                    cut >= anterior,
-                    "corte=%s anterior=%s" % (cut, anterior),
-                )
-                anterior = cut
-
-            # Con una escala sin fracción el cuanto es 1: el relleno puede
-            # ir carácter a carácter.
-            partes_entera = mod.kitty_scale_parts(2.0)
-            check(
-                "una escala entera no limita el corte",
-                mod.scale_quantum(partes_entera) == 1,
-                "cuanto=%s" % (mod.scale_quantum(partes_entera),),
-            )
-            # Con tiempos por carácter, en t=1.05 el avance real es de 10.5
-            # caracteres: el relleno llega hasta el que se está cantando.
-            cut = app.karaoke_cut(line, texto, 1.05, end, partes_entera)
-            check(
-                "con escala entera el corte va carácter a carácter",
-                cut == 11,
-                "corte=%s" % (cut,),
+                "sin ghost la línea cambia justo en su tiempo",
+                app.scroll_state(4.0)[0] == 1,
+                "index=%s" % (app.scroll_state(4.0)[0],),
             )
 
 
@@ -1286,175 +906,58 @@ def check_glow_real():
     )
 
 
-def check_karaoke_por_caracteres():
-    """En texto el karaoke avanza carácter a carácter.
-
-    Sin escala (o con una escala entera) el bloque es de un carácter, así
-    que el relleno va letra a letra: es lo que hace que parezca que
-    reconoce la velocidad de la letra cantada. Mandan los tiempos por
-    carácter, así que el relleno se queda dentro del carácter en curso.
-    """
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
-            mod = script_module()
-            app = object.__new__(mod.LyricsCarousel)
-            app.cfg = dict(mod.DEFAULTS)
-            app.cfg["karaoke"] = True
-            texto = "hola mundo feliz"
-            line = mod.LyricLine(0.0, 5.0, texto)
-            line.chars = [index * 0.1 for index in range(len(texto))]
-            end = 5.0
-
-            casos = [
-                (0.0, 0),
-                (0.05, 1),
-                (0.15, 2),
-                (0.45, 5),
-                (0.55, 6),
-                (1.05, 11),
-                (1.5, len(texto)),
-            ]
-            for position, esperado in casos:
-                obtenido = app.karaoke_cut(line, texto, position, end)
-                check(
-                    "el karaoke avanza letra a letra en %d (t=%.2f)"
-                    % (esperado, position),
-                    obtenido == esperado,
-                    "obtenido=%s" % (obtenido,),
-                )
-
-            # El relleno nunca retrocede ni se pasa del final de la línea.
-            anterior = 0
-            for position in (0.0, 0.2, 0.4, 0.6, 1.0, 1.4, 2.0, 3.0, 5.0):
-                obtenido = app.karaoke_cut(line, texto, position, end)
-                check(
-                    "el relleno no retrocede (t=%.2f)" % position,
-                    obtenido >= anterior,
-                    "obtenido=%s anterior=%s" % (obtenido, anterior),
-                )
-                check(
-                    "el relleno no se pasa de la línea (t=%.2f)" % position,
-                    0 <= obtenido <= len(texto),
-                    "obtenido=%s" % (obtenido,),
-                )
-                anterior = obtenido
-
-            # Sin tiempos por carácter se usa la fracción temporal.
-            line.chars = []
-            check(
-                "sin tiempos por carácter el relleno sigue la línea",
-                app.karaoke_cut(line, texto, 2.5, 10.0) == 4,
-                repr(app.karaoke_cut(line, texto, 2.5, 10.0)),
-            )
-
-
-def check_limites_por_direccion():
-    """visible_above/below cuentan líneas de la pantalla, no del tiempo."""
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
-            mod = script_module()
-
-            def filas_visibles(direction, above, below):
-                app = object.__new__(mod.LyricsCarousel)
-                app.theme = mod.Theme()
-                app.cfg = dict(mod.DEFAULTS)
-                app.cfg.update(
-                    {
-                        "ghost": False,
-                        "marker": False,
-                        "karaoke": False,
-                        "active_scale": 1.0,
-                        "visible_above": above,
-                        "visible_below": below,
-                        "spacing": 1,
-                    }
-                )
-                app.width = 80
-                app.height = 25
-                app.lines = [
-                    mod.LyricLine(index, 1.0, "linea %d" % index)
-                    for index in range(8)
-                ]
-                app.active_index = 3
-                app.spacing = app.cfg["spacing"]
-                app.direction = 1 if direction == "down" else -1
-                app.scroll = 3.0
-                app.moving = False
-                app.karaoke = False
-                app.next_timed_start = lambda index: None
-                rows = [""] * app.height
-                app._render_lyrics(rows, 0.0, 5.0, 0, app.height - 1)
-                salida = {}
-                for row, value in enumerate(rows):
-                    for index in range(8):
-                        if "linea %d" % index in texto_visible(value):
-                            salida[index] = row
-                return salida
-
-            # down: el futuro está arriba y el pasado abajo.
-            down = filas_visibles("down", 1, 0)
-            check(
-                "en down solo se ve la línea futura de arriba",
-                set(down) == {3, 4} and down[4] < down[3],
-                repr(down),
-            )
-            down = filas_visibles("down", 0, 1)
-            check(
-                "en down la línea pasada queda abajo",
-                set(down) == {2, 3} and down[2] > down[3],
-                repr(down),
-            )
-            # up: el pasado está arriba y el futuro abajo.
-            up = filas_visibles("up", 1, 0)
-            check(
-                "en up la línea pasada queda arriba",
-                set(up) == {2, 3} and up[2] < up[3],
-                repr(up),
-            )
-            up = filas_visibles("up", 0, 1)
-            check(
-                "en up la línea futura queda abajo",
-                set(up) == {3, 4} and up[4] > up[3],
-                repr(up),
-            )
-
-
 def check_visualizador():
-    """El visualizador tiene siete barras, envolvente central y pausa quieta."""
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
-            mod = script_module()
-            app = object.__new__(mod.LyricsCarousel)
-            app.cfg = dict(mod.DEFAULTS)
-            app.track = mod.Track()
-            app.demo = False
-            pausa = app._equalizer(0.0, False)
-            check(
-                "el visualizador tiene siete barras",
-                len(pausa) == 7,
-                repr(pausa),
-            )
-            check(
-                "en pausa el visualizador es simétrico",
-                pausa == pausa[::-1],
-                repr(pausa),
-            )
-            check(
-                "en pausa el centro es la barra más alta",
-                bool(pausa) and pausa[3] == max(pausa),
-                repr(pausa),
-            )
-            activo = app._equalizer(0.0, True)
-            check(
-                "al sonar las barras cambian",
-                len(activo) == 7 and activo != pausa,
-                repr(activo),
-            )
-            check(
-                "las barras usan los caracteres del ecualizador",
-                all(char in EQ_CHARS for char in activo),
-                repr(activo),
-            )
+    """El visualizador lee cava y, si no está, dibuja barras de reserva."""
+    vis = visualizer_module()
+
+    # Una línea de cava: 64 valores separados por `;`, con salto final.
+    frame = ";".join(["0", "50", "100"] + ["25"] * (vis.BARS - 3)) + ";"
+    levels = vis.parse_frame(frame)
+    check(
+        "la salida de cava se convierte en 64 niveles",
+        levels is not None and len(levels) == vis.BARS,
+        "levels=%s" % (None if levels is None else len(levels),),
+    )
+    if levels is not None:
+        check(
+            "los niveles se normalizan entre 0 y 1",
+            levels[0] == 0.0 and abs(levels[1] - 0.5) < 1e-9
+            and levels[2] == 1.0 and abs(levels[3] - 0.25) < 1e-9,
+            repr(levels[:4]),
+        )
+
+    check(
+        "una línea a medias no pinta barras rotas",
+        vis.parse_frame("0;50;100;") is None,
+        "se esperaba None",
+    )
+    check(
+        "un valor no numérico descarta el cuadro",
+        vis.parse_frame(";".join(["x"] * vis.BARS) + ";") is None,
+        "se esperaba None",
+    )
+
+    # Barras de reserva: llenan el ancho, se mueven y no se salen de rango.
+    first = vis.simulated_levels(32, now=1.0)
+    second = vis.simulated_levels(32, now=2.0)
+    check("las barras simuladas son 32", len(first) == 32, len(first))
+    check(
+        "las barras simuladas quedan entre 0 y 1",
+        all(0.0 <= level <= 1.0 for level in first),
+        "min=%s max=%s" % (min(first), max(first)),
+    )
+    check("las barras simuladas se mueven", first != second, "no cambian")
+
+    # En modo demo nunca se lanza cava: snapshot usa la simulación.
+    visualizer = vis.Visualizer(log=lambda message: None)
+    visualizer.demo = True
+    demo = visualizer.snapshot()
+    check("el modo demo usa barras simuladas", len(demo) == vis.BARS, len(demo))
+    check(
+        "la huella del fondo cambia con las barras",
+        len(visualizer.signature()) == vis.BARS,
+        len(visualizer.signature()),
+    )
 
 
 def check_recarga_por_senal():
@@ -1526,8 +1029,6 @@ def check_tamano_terminal_real():
             app = object.__new__(mod.LyricsCarousel)
             app.width = 0
             app.height = 0
-            app.prev_rows = []
-            app.need_clear = False
             app.dirty = False
             original = mod.shutil.get_terminal_size
             mod.shutil.get_terminal_size = lambda fallback=None: os.terminal_size(
@@ -1591,110 +1092,35 @@ def check_rutas_estado():
                 os.environ.update(anterior)
 
 
-def check_idioma_ventana():
-    """La ventana habla el idioma del ajuste y del --lang.
+def check_sin_modo_texto():
+    """La configuracion y el codigo ya no tienen modo texto.
 
-    El ajuste `language` es el que usa el panel y la pagina de ajustes; si
-    solo se probara --lang, un fallo al leer settings.toml pasaria
-    desapercibido. Tambien se comprueba el estado: en español "synced" sin
-    traducir hacia que cambiar de idioma no se notara en la ventana.
+    Dejar claves muertas en DEFAULTS hace que el panel o un IPC puedan
+    escribir valores que la ventana ignora: si el modo texto volviera a
+    colarse, el usuario veria controles que no hacen nada.
     """
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-idioma-") as temporal:
-        estado = os.path.join(temporal, ".local", "state", "noctalia")
-        os.makedirs(estado, exist_ok=True)
-        ajustes = os.path.join(estado, "settings.toml")
-        overrides = os.path.join(
-            estado,
-            "plugins",
-            "data",
-            "faminec",
-            "lyrics-carousel",
-            "overrides.json",
-        )
-        os.makedirs(os.path.dirname(overrides), exist_ok=True)
-        entorno = entorno_de_prueba(temporal)
-
-        def ejecutar(argumentos):
-            try:
-                return subprocess.run(
-                    [sys.executable, SCRIPT, "--demo", "--once", "--render-mode", "text"]
-                    + argumentos,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    env=entorno,
-                    cwd="/",
-                )
-            except (OSError, subprocess.SubprocessError) as error:
-                check("la ventana arranca para probar el idioma", False, repr(error)[:120])
-                return None
-
-        for lang, aviso, estado_texto in (
-            ("en", "[q] quit", "[synced]"),
-            ("es", "[q] salir", "[sincronizada]"),
-        ):
-            with open(ajustes, "w", encoding="utf-8") as handle:
-                handle.write(
-                    '[plugin_settings."faminec/lyrics-carousel"]\n'
-                    "hints = true\n"
-                    'render_mode = "text"\n'
-                    "header = true\n"
-                    'language = "%s"\n' % lang
-                )
-            if os.path.exists(overrides):
-                os.remove(overrides)
-            proceso = ejecutar([])
-            if proceso is not None:
-                salida = proceso.stdout
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            for key in ("render_mode", "equalizer", "animation_ms", "language"):
                 check(
-                    "el ajuste language pone los textos en %s" % lang,
-                    aviso in salida,
-                    "salida=%s" % salida[-160:].replace("\n", " "),
+                    "el script no tiene el ajuste %s" % key,
+                    key not in mod.DEFAULTS,
+                    repr(sorted(mod.DEFAULTS)),
                 )
+            for name in (
+                "equalizer_text", "_equalizer", "_equalizer_only", "_header",
+                "_footer", "_hints", "_idle_block", "_line_color",
+            ):
                 check(
-                    "el estado de la ventana esta traducido en %s" % lang,
-                    estado_texto in salida,
-                    "salida=%s" % salida[-160:].replace("\n", " "),
+                    "el script no conserva %s" % name,
+                    not hasattr(mod.LyricsCarousel, name),
+                    name,
                 )
-
-        # La capa de overrides es la que escribe el panel: tiene que mandar
-        # sobre el settings.toml aunque este diga otro idioma.
-        with open(ajustes, "w", encoding="utf-8") as handle:
-            handle.write(
-                '[plugin_settings."faminec/lyrics-carousel"]\n'
-                "hints = true\n"
-                'render_mode = "text"\n'
-                "header = true\n"
-                'language = "en"\n'
-            )
-        with open(overrides, "w", encoding="utf-8") as handle:
-            json.dump({"language": "es"}, handle)
-        proceso = ejecutar([])
-        if proceso is not None:
             check(
-                "los overrides del panel mandan sobre el idioma guardado",
-                "[q] salir" in proceso.stdout and "[sincronizada]" in proceso.stdout,
-                "salida=%s" % proceso.stdout[-160:].replace("\n", " "),
-            )
-
-        # --lang sigue mandando sobre el ajuste (es el atajo de linea de
-        # ordenes), incluso con los overrides en otro idioma.
-        with open(ajustes, "w", encoding="utf-8") as handle:
-            handle.write(
-                '[plugin_settings."faminec/lyrics-carousel"]\n'
-                "hints = true\n"
-                'render_mode = "text"\n'
-                "header = true\n"
-                'language = "es"\n'
-            )
-        if os.path.exists(overrides):
-            os.remove(overrides)
-        proceso = ejecutar(["--lang", "en"])
-        if proceso is not None:
-            check(
-                "--lang manda sobre el ajuste de idioma",
-                "[q] quit" in proceso.stdout,
-                "salida=%s" % proceso.stdout[-160:].replace("\n", " "),
+                "no quedan helpers de ancho de terminal",
+                not hasattr(mod, "cell_width") and not hasattr(mod, "truncate"),
+                "cell_width/truncate",
             )
 
 
@@ -1925,175 +1351,12 @@ def check_lineas_ordenadas():
             )
 
 
-def check_modo_imagen_no_se_rearma():
-    """Un modo imagen desactivado por fallos no se reactiva solo.
-
-    Cuando el modo imagen falla varias veces, el script lo desactiva y
-    escribe "text" en los ajustes. La recarga siguiente trae "text", asi
-    que el modo imagen no se rearma solo (si se rearmara, el fallo se
-    repetiria en bucle). Solo se rearma cuando el usuario lo pide otra
-    vez: entonces el valor efectivo pasa de "text" a "image".
-
-    La prueba monta la secuencia real: tres fallos de draw_image (que
-    antes dejaban self.cfg["render_mode"]="text" en memoria) y una
-    recarga que todavia trae "image" porque el helper no ha escrito.
-    """
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
-            mod = script_module()
-
-            def app_nuevo(render_mode: str, font_size: int) -> object:
-                app = object.__new__(mod.LyricsCarousel)
-                app.args = types.SimpleNamespace(
-                    direction=None,
-                    no_karaoke=False,
-                    render_mode=None,
-                    active_scale=None,
-                    accent=None,
-                    lang=None,
-                    force=False,
-                )
-                app.cfg = dict(mod.DEFAULTS)
-                app.cfg["render_mode"] = render_mode
-                app.cfg["font_size"] = font_size
-                app.image_disabled = True
-                app.image_failures = 3
-                app.image = None
-                app.log = lambda message: None
-                app._set_language = lambda value: None
-                app.texts = {}
-                app.status_message = ""
-                app.dirty = False
-                app.need_clear = False
-                app.pending_overrides = {}
-                return app
-
-            original = mod.load_settings
-            original_graphics = sys.modules.get("graphics")
-            try:
-                # 0) Secuencia real de fallos: tres renders que revientan
-                #    desactivan el modo imagen y dejan "text" guardado.
-                guardados = []
-
-                class RenderizadorQueFalla:
-                    gfx = types.SimpleNamespace(supported=True)
-
-                    def render(self):
-                        raise RuntimeError("fallo simulado")
-
-                app = app_nuevo("image", 22)
-                app.image_disabled = False
-                app.image_failures = 0
-                app.image = RenderizadorQueFalla()
-                app.last_mode = "image"
-                app._save_override = (
-                    lambda key, value, kind="string": guardados.append(
-                        (key, value, kind)
-                    )
-                )
-                app._draw_text_frame = lambda force=False: None
-                for _ in range(3):
-                    app.draw_image()
-                check(
-                    "tres fallos desactivan el modo imagen",
-                    app.image_disabled is True and app.image_failures >= 3,
-                    "image_disabled=%s fallos=%s"
-                    % (app.image_disabled, app.image_failures),
-                )
-                check(
-                    "el script deja el modo texto guardado tras los fallos",
-                    guardados == [("render_mode", "text", "string")],
-                    str(guardados),
-                )
-                check(
-                    "draw_image no cambia la configuracion en memoria",
-                    app.cfg.get("render_mode") == "image",
-                    "render_mode=%s" % app.cfg.get("render_mode"),
-                )
-
-                # use_image no es tautologico: hay un renderizador que si
-                # soporta imagenes y terminal_cells devuelve tamaño. Aun
-                # asi no se usa porque el modo esta desactivado.
-                falso = types.ModuleType("graphics")
-                falso.terminal_cells = lambda: (80, 24, 1920, 1080)
-                sys.modules["graphics"] = falso
-                check(
-                    "un modo imagen desactivado no se usa aunque el renderizador sirva",
-                    app.use_image() is False,
-                    "render_mode=%s" % app.cfg.get("render_mode"),
-                )
-                app.image_disabled = False
-                check(
-                    "control: sin el fallo el renderizador se usaria",
-                    app.use_image() is True,
-                    "render_mode=%s" % app.cfg.get("render_mode"),
-                )
-                app.image_disabled = True
-
-                # La recarga trae "image" (el helper aun no ha escrito
-                # "text"): no puede rearmar el modo que acaba de fallar.
-                mod.load_settings = lambda: {
-                    **mod.DEFAULTS,
-                    "render_mode": "image",
-                    "font_size": 30,
-                }
-                app._reload_config()
-                check(
-                    "un cambio que no es el modo no rearma el modo imagen",
-                    app.image_disabled is True and app.image_failures >= 3,
-                    "image_disabled=%s fallos=%s"
-                    % (app.image_disabled, app.image_failures),
-                )
-
-                # 2) El usuario pide el modo imagen otra vez (el valor
-                #    efectivo pasa de "text" a "image"): se rearma.
-                app = app_nuevo("text", 22)
-                mod.load_settings = lambda: {
-                    **mod.DEFAULTS,
-                    "render_mode": "image",
-                    "font_size": 30,
-                }
-                app._reload_config()
-                check(
-                    "el usuario puede volver a pedir el modo imagen",
-                    app.image_disabled is False
-                    and app.cfg.get("render_mode") == "image",
-                    "image_disabled=%s render_mode=%s"
-                    % (app.image_disabled, app.cfg.get("render_mode")),
-                )
-
-                # 3) El usuario pide el modo texto: el fallo anterior se
-                #    limpia, asi que pedir imagen despues vuelve a
-                #    funcionar aunque el valor efectivo no cambie.
-                app = app_nuevo("image", 22)
-                mod.load_settings = lambda: {
-                    **mod.DEFAULTS,
-                    "render_mode": "text",
-                    "font_size": 30,
-                }
-                app._reload_config()
-                check(
-                    "pedir el modo texto limpia el fallo anterior",
-                    app.image_disabled is False
-                    and app.image_failures == 0,
-                    "image_disabled=%s image_failures=%s"
-                    % (app.image_disabled, app.image_failures),
-                )
-            finally:
-                mod.load_settings = original
-                if original_graphics is None:
-                    sys.modules.pop("graphics", None)
-                else:
-                    sys.modules["graphics"] = original_graphics
-
-
 def _app_de_config(mod):
     """Instancia minima para probar _reload_config sin abrir la ventana."""
     app = object.__new__(mod.LyricsCarousel)
     app.args = types.SimpleNamespace(
         direction=None,
         no_karaoke=False,
-        render_mode=None,
         active_scale=None,
         accent=None,
         lang=None,
@@ -2108,7 +1371,6 @@ def _app_de_config(mod):
     app.image_failures = 0
     app.status_message = ""
     app.dirty = False
-    app.need_clear = False
     app.pending_overrides = {}
     app.log = lambda message: None
     app.tr = lambda key, args=None: key
@@ -2154,24 +1416,391 @@ def check_cache_una_sola_vez():
             )
 
 
-def check_aviso_se_limpia():
-    """El aviso de modo imagen desactivado se borra al volver a texto."""
+def check_tiempos_por_palabra():
+    """Una letra solo cuenta como karaoke real si trae tiempos por carácter.
+
+    Los proveedores de nivel de línea (LRCLIB casi siempre) dan un tiempo
+    por línea: el karaoke reparte la duración a partes iguales y no sigue
+    la voz. Los de nivel de palabra traen un tiempo por carácter, que es
+    lo que hace que el relleno parezca reconocer la canción.
+    """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
         with env_temporal({"XDG_CACHE_HOME": cache}):
             mod = script_module()
-            app = _app_de_config(mod)
-            app.cfg["render_mode"] = "image"
-            app.status_message = "image_disabled"
-            original = mod.load_settings
-            mod.load_settings = lambda: {**mod.DEFAULTS, "render_mode": "text"}
-            try:
-                app._reload_config()
-            finally:
-                mod.load_settings = original
+            con_tiempos = mod.LyricLine(0.0, 2.0, "hola")
+            con_tiempos.chars = [0.0, 0.1, 0.2, 0.3]
+            sin_tiempos = mod.LyricLine(2.0, 2.0, "mundo")
+            otra = mod.LyricLine(4.0, 2.0, "otra")
             check(
-                "el aviso de modo imagen se limpia al pasar a texto",
-                app.status_message == "",
-                repr(app.status_message),
+                "la mitad de las líneas con tiempos ya cuenta como palabra",
+                mod.lines_have_chars([con_tiempos, sin_tiempos]),
+                "no se detectaron los tiempos",
+            )
+            check(
+                "una sola línea con tiempos entre varias no basta",
+                not mod.lines_have_chars([con_tiempos, sin_tiempos, otra]),
+                "se coló una letra de nivel de línea",
+            )
+            check(
+                "una letra vacía no tiene tiempos por palabra",
+                not mod.lines_have_chars([]),
+                "una lista vacía no puede contar",
+            )
+
+
+def check_fetch_prefiere_palabra():
+    """La primera letra se publica; la de palabra la mejora y va a la caché.
+
+    LRCLIB suele responder antes, pero con tiempos por línea. NetEase
+    puede traer tiempos por palabra. Quedarse con el primero dejaba la
+    caché sin `chars` para siempre y el karaoke repartía la línea a
+    partes iguales.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            mod.load_lyrics_settings = lambda: {
+                "sources": ["lrclib", "netease"],
+                "credentials": {},
+                "translation": "zh-Hans",
+            }
+            mod.load_cache = lambda track: None
+            mod.missing_recent = lambda track: False
+            mod.SEARCH_TIMEOUT = 5.0
+            mod.WORD_GRACE = 1.5
+            guardados = []
+            mod.save_cache = lambda *args: guardados.append(args)
+
+            def linea(texto, con_chars=False):
+                line = mod.LyricLine(1.0, 2.0, texto)
+                if con_chars:
+                    line.chars = [1.0 + index * 0.1 for index in range(len(texto))]
+                return line
+
+            def lrclib(track, log):
+                return [linea("letra por linea")], None
+
+            def adaptador(source, track, settings, log):
+                time.sleep(0.35)
+                return [linea("letra por palabra", True)], None
+
+            mod.fetch_lrclib = lrclib
+            mod.run_adapter = adaptador
+            actualizaciones = []
+            lines, source, synced = mod.fetch_lyrics(
+                mod.Track("cancion", "artista", duration=100.0),
+                True,
+                lambda message: None,
+                on_update=lambda *args: actualizaciones.append(args),
+            )
+            check(
+                "el resultado final trae tiempos por palabra",
+                mod.lines_have_chars(lines),
+                "source=%s" % (source,),
+            )
+            check(
+                "gana el proveedor con tiempos por palabra",
+                source == "netease",
+                "source=%s" % (source,),
+            )
+            check(
+                "la primera letra se publica sin esperar",
+                bool(actualizaciones) and actualizaciones[0][1] == "lrclib",
+                str([item[1] for item in actualizaciones]),
+            )
+            check(
+                "la mejora se publica cuando llega",
+                len(actualizaciones) >= 2
+                and mod.lines_have_chars(actualizaciones[-1][0]),
+                str([item[1] for item in actualizaciones]),
+            )
+            check(
+                "la caché se queda con la versión por palabra",
+                bool(guardados) and mod.lines_have_chars(guardados[-1][1]),
+                "escrituras=%d" % len(guardados),
+            )
+
+
+def check_fetch_palabra_no_espera():
+    """Si la primera letra ya trae tiempos por palabra, no se espera a nadie."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            mod.load_lyrics_settings = lambda: {
+                "sources": ["lrclib", "netease"],
+                "credentials": {},
+                "translation": "zh-Hans",
+            }
+            mod.load_cache = lambda track: None
+            mod.missing_recent = lambda track: False
+            mod.SEARCH_TIMEOUT = 3.0
+            mod.WORD_GRACE = 3.0
+            mod.save_cache = lambda *args: None
+
+            texto = "letra por palabra"
+            line = mod.LyricLine(1.0, 2.0, texto)
+            line.chars = [1.0 + index * 0.1 for index in range(len(texto))]
+
+            def lrclib(track, log):
+                return [mod.LyricLine(1.0, 2.0, texto, line.chars)], None
+
+            def adaptador(source, track, settings, log):
+                time.sleep(2.0)
+                return [mod.LyricLine(5.0, 2.0, "tarde")], None
+
+            mod.fetch_lrclib = lrclib
+            mod.run_adapter = adaptador
+            inicio = time.monotonic()
+            lines, source, synced = mod.fetch_lyrics(
+                mod.Track("cancion", "artista", duration=100.0),
+                True,
+                lambda message: None,
+            )
+            transcurrido = time.monotonic() - inicio
+            check(
+                "con tiempos por palabra no se espera al proveedor lento",
+                transcurrido < 1.0,
+                "tardó %.2f s" % transcurrido,
+            )
+            check(
+                "la letra con tiempos por palabra gana",
+                source == "lrclib" and mod.lines_have_chars(lines),
+                "source=%s" % (source,),
+            )
+
+
+def check_mejora_no_pisa_cache():
+    """Una búsqueda de mejora sin tiempos por palabra no reescribe la caché."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            mod.load_lyrics_settings = lambda: {
+                "sources": ["lrclib"],
+                "credentials": {},
+                "translation": "zh-Hans",
+            }
+            mod.load_cache = lambda track: None
+            mod.missing_recent = lambda track: False
+            mod.SEARCH_TIMEOUT = 2.0
+            mod.WORD_GRACE = 0.2
+            mod.save_cache = lambda *args: None
+            mod.fetch_lrclib = lambda track, log: (
+                [mod.LyricLine(1.0, 2.0, "letra por linea")],
+                None,
+            )
+            mod.run_adapter = lambda source, track, settings, log: ([], None)
+            guardados = []
+            mod.save_cache = lambda *args: guardados.append(args)
+            mod.fetch_lyrics(
+                mod.Track("cancion", "artista", duration=100.0),
+                True,
+                lambda message: None,
+                upgrade=True,
+            )
+            check(
+                "una mejora sin tiempos no pisa la caché existente",
+                not guardados,
+                "escrituras=%d" % len(guardados),
+            )
+
+
+def check_cache_se_mejora_sola():
+    """Una caché de nivel de línea se mejora en segundo plano al mostrarse."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            line = mod.LyricLine(1.0, 2.0, "letra por linea")
+            original_cache = mod.load_cache
+            original_recent = getattr(mod, "word_checked_recent", None)
+            mod.load_cache = lambda track: ([line], "lrclib", True)
+            mod.word_checked_recent = lambda track: False
+
+            class FetcherFalso:
+                def __init__(self):
+                    self.arranques = []
+
+                def start(self, track, force=False, upgrade=False):
+                    self.arranques.append((force, upgrade))
+
+                def take(self):
+                    return None
+
+            try:
+                app = _app_de_config(mod)
+                app.track = mod.Track("cancion", "artista", duration=100.0)
+                app.lines = []
+                app.source = ""
+                app.synced = False
+                app.state = "idle"
+                app.dirty = False
+                app.last_fetch = 0.0
+                app.fetcher = FetcherFalso()
+                app.reload_lyrics()
+                check(
+                    "la letra cacheada se muestra al instante",
+                    app.state == "lyrics" and app.lines == [line],
+                    "estado=%s líneas=%d" % (app.state, len(app.lines)),
+                )
+                check(
+                    "la caché de línea se mejora en segundo plano",
+                    app.fetcher.arranques == [(True, True)],
+                    repr(app.fetcher.arranques),
+                )
+
+                # Si ya se comprobó hace poco, no se repite la búsqueda en
+                # cada arranque de la canción.
+                mod.word_checked_recent = lambda track: True
+                app = _app_de_config(mod)
+                app.track = mod.Track("cancion", "artista", duration=100.0)
+                app.lines = []
+                app.source = ""
+                app.synced = False
+                app.state = "idle"
+                app.dirty = False
+                app.last_fetch = 0.0
+                app.fetcher = FetcherFalso()
+                app.reload_lyrics()
+                check(
+                    "una comprobación reciente no repite la búsqueda",
+                    app.fetcher.arranques == [],
+                    repr(app.fetcher.arranques),
+                )
+            finally:
+                mod.load_cache = original_cache
+                if original_recent is None:
+                    del mod.word_checked_recent
+                else:
+                    mod.word_checked_recent = original_recent
+
+
+def check_resultado_no_pisa_letra_igual():
+    """Un resultado de la misma calidad no vuelve a colocar el carrusel."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            original_mark = getattr(mod, "mark_word_checked", None)
+            mod.mark_word_checked = lambda track: None
+            try:
+                app = object.__new__(mod.LyricsCarousel)
+                app.track = mod.Track("cancion", "artista", duration=100.0)
+                actual = mod.LyricLine(1.0, 2.0, "letra por linea")
+                app.lines = [actual]
+                app.source = "lrclib"
+                app.synced = True
+                app.state = "lyrics"
+                app.dirty = False
+                app._snap_scroll = lambda: None
+                aplicar = getattr(app, "_apply_fetched", None)
+                if aplicar is None:
+                    check("aplicar un resultado no pisa la letra actual", False, "falta _apply_fetched")
+                    return
+                otra = mod.LyricLine(1.0, 2.0, "otra letra por linea")
+                check(
+                    "una letra de la misma calidad no se vuelve a aplicar",
+                    aplicar([otra], "netease", True) is False
+                    and app.source == "lrclib"
+                    and app.lines == [actual],
+                    "source=%s" % (app.source,),
+                )
+                palabra = mod.LyricLine(1.0, 2.0, "letra por palabra")
+                palabra.chars = [1.0 + index * 0.1 for index in range(len(palabra.text))]
+                check(
+                    "una letra con tiempos por palabra sí reemplaza",
+                    aplicar([palabra], "netease", True) is True
+                    and app.source == "netease",
+                    "source=%s" % (app.source,),
+                )
+                check(
+                    "una búsqueda vacía no borra la letra actual",
+                    aplicar([], "", False) is False and bool(app.lines),
+                    "líneas=%d" % len(app.lines),
+                )
+            finally:
+                if original_mark is None:
+                    del mod.mark_word_checked
+                else:
+                    mod.mark_word_checked = original_mark
+
+
+def check_lrc_mejorado_a_caracteres():
+    """Un LRC con marcas <mm:ss.xx> se convierte en tiempos por carácter.
+
+    Es el formato que trae la letra sincronizada palabra a palabra en
+    algunos proveedores: sin esto se descartaban las marcas y el karaoke
+    repartía la línea entera a partes iguales.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            lines = mod.parse_lrc(
+                "[00:10.00]<00:10.00>Hola <00:10.50>mundo\n"
+                "[00:12.00]siguiente"
+            )
+            line = lines[0] if lines else None
+            texto = line.text if line else ""
+            chars = line.chars if line else []
+            check(
+                "el LRC mejorado conserva el texto sin las marcas",
+                texto == "Hola mundo",
+                repr(texto),
+            )
+            check(
+                "el LRC mejorado da un tiempo por carácter",
+                len(chars) == len("Hola mundo"),
+                repr(chars),
+            )
+            check(
+                "el primer carácter entra en la marca de la línea",
+                bool(chars) and abs(chars[0] - 10.0) < 0.01,
+                repr(chars[:2]),
+            )
+            check(
+                "la segunda palabra entra en su propia marca",
+                len(chars) > 5 and abs(chars[5] - 10.5) < 0.01,
+                repr(chars[4:7]),
+            )
+            check(
+                "los tiempos por carácter no retroceden",
+                all(
+                    antes <= despues + 1e-6
+                    for antes, despues in zip(chars, chars[1:])
+                ),
+                repr(chars),
+            )
+
+
+def check_lrclib_prefiere_letra_mejorada():
+    """Entre dos candidatos iguales gana el que trae tiempos por palabra."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            original = mod._http_json
+            candidatos = [
+                {
+                    "trackName": "cancion",
+                    "artistName": "artista",
+                    "duration": 100,
+                    "syncedLyrics": "[00:01.00]hola\n[00:05.00]mundo",
+                },
+                {
+                    "trackName": "cancion",
+                    "artistName": "artista",
+                    "duration": 100,
+                    "syncedLyrics": "[00:01.00]<00:01.00>hola <00:01.50>mundo",
+                },
+            ]
+            mod._http_json = lambda *args, **kwargs: candidatos
+            try:
+                lines, error = mod.fetch_lrclib(
+                    mod.Track("cancion", "artista", duration=100.0),
+                    lambda message: None,
+                )
+            finally:
+                mod._http_json = original
+            check(
+                "se prefiere la letra con tiempos por palabra",
+                mod.lines_have_chars(lines),
+                "error=%r" % (error,),
             )
 
 
@@ -2649,48 +2278,45 @@ def check_panel_cubre_manifiesto():
         check(f"el panel expone `{key}`", expuesto, key)
 
 
-def check_barra_de_tiempo_centrada():
-    """La barra de tiempo se centra en la ventana.
+def check_hints_centrados():
+    """La fila de atajos queda centrada en la ventana de imagen.
 
-    La fila entera se centra. Antes empezaba en la columna 2, así que el
-    sobrante se acumulaba a la derecha y la barra se veía desplazada hacia
-    la izquierda aunque el texto de los minutos quedara a la izquierda.
+    Antes empezaba en el margen izquierdo y el sobrante se acumulaba a la
+    derecha: parecía descuadrada. Ahora se dibuja con el mismo centrado que
+    el resto de textos.
     """
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
-            mod = script_module()
-            app = object.__new__(mod.LyricsCarousel)
-            app.theme = mod.Theme()
-            app.cfg = dict(mod.DEFAULTS)
-            app.cfg.update({"footer": True, "spacing": 1, "karaoke": False})
-            app.width = 100
-            app.height = 24
-            app.lines = []
-            app.texts = {"hints": [""]}
-            rows = [""] * app.height
-            app._footer(rows, 95.0, 180.0)
+    mod = image_module()
+    if mod.Image is None:
+        check("los hints se pueden medir (Pillow)", False, "sin Pillow")
+        return
 
-            fila = texto_visible(rows[app.height - 2])
-            check(
-                "la barra de tiempo se dibuja",
-                "01:35" in fila,
-                repr(fila),
-            )
-            # Sin color ni secuencias: el centro visible de la fila tiene
-            # que caer en el centro de la ventana.
-            inicio = len(fila) - len(fila.lstrip(" "))
-            final = inicio + len(fila.strip())
-            centro = (inicio + final) / 2.0
-            check(
-                "la fila de la barra queda centrada",
-                abs(centro - app.width / 2) <= 1.0,
-                "centro=%.1f ventana=%d" % (centro, app.width),
-            )
-            check(
-                "el minuto final se ve a la derecha",
-                "03:00" in fila,
-                repr(fila),
-            )
+    imagen = mod.Image.new("RGBA", (1000, 200), (0, 0, 0, 0))
+    pincel = mod.ImageDraw.Draw(imagen)
+    app = types.SimpleNamespace(
+        texts={"hints": ["pulsa [q] para salir"]},
+        theme=types.SimpleNamespace(
+            background=(10, 10, 10),
+            faint=(120, 120, 120),
+        ),
+        terminal_pixels=lambda: (1000, 200),
+        demo=False,
+    )
+    renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
+    renderer.app = app
+    renderer.fonts = {}
+    renderer.font_files = {"prueba": mod.FALLBACK_FONT}
+    renderer._measure_draw = pincel
+    renderer._draw_hints(pincel, 20.0, "prueba")
+
+    caja = imagen.getbbox()
+    check("los atajos se dibujan", caja is not None, repr(caja))
+    if caja is not None:
+        centro = (caja[0] + caja[2]) / 2.0
+        check(
+            "los atajos quedan centrados",
+            abs(centro - 500.0) <= 2.0,
+            "centro=%.1f bbox=%s" % (centro, caja),
+        )
 
 
 def check_reparto_de_ajustes():
@@ -3383,23 +3009,16 @@ def main(argv):
     check_desfase_scroll()
     check_busqueda_letra()
     check_reintento_letra()
-    check_ecualizador_fila()
-    check_escala_linea_activa()
     check_layout_imagen()
     check_karaoke_imagen_pixel_a_pixel()
     check_karaoke_imagen_sigue_los_tiempos()
     check_transicion_real()
-    check_bloques_alineados()
-    check_karaoke_sin_huecos()
-    check_corte_alineado()
     check_glow_real()
-    check_karaoke_por_caracteres()
-    check_limites_por_direccion()
     check_visualizador()
     check_recarga_por_senal()
     check_tamano_terminal_real()
     check_rutas_estado()
-    check_idioma_ventana()
+    check_sin_modo_texto()
     check_limites_ajustes()
     check_limites_del_panel_y_el_script()
     check_formatos_del_helper()
@@ -3407,9 +3026,13 @@ def main(argv):
     check_timeout_adaptador()
     check_tiempos_reales_no_se_pisan()
     check_lineas_ordenadas()
-    check_modo_imagen_no_se_rearma()
     check_cache_una_sola_vez()
-    check_aviso_se_limpia()
+    check_tiempos_por_palabra()
+    check_fetch_prefiere_palabra()
+    check_fetch_palabra_no_espera()
+    check_mejora_no_pisa_cache()
+    check_cache_se_mejora_sola()
+    check_resultado_no_pisa_letra_igual()
     check_lyrics_settings_state_dir()
     check_lrc_horas()
     check_lrc_minutos()
@@ -3419,11 +3042,13 @@ def main(argv):
     check_estimate_times_dentro_de_la_cancion()
     check_geometria_se_recorta_a_la_pantalla()
     check_texto_entre_angulos()
+    check_lrc_mejorado_a_caracteres()
+    check_lrclib_prefiere_letra_mejorada()
     check_cache_no_objeto()
     check_espacio_no_rompe()
     check_atajo_no_se_pierde()
     check_panel_cubre_manifiesto()
-    check_barra_de_tiempo_centrada()
+    check_hints_centrados()
     check_reparto_de_ajustes()
     check_panel_attached()
 

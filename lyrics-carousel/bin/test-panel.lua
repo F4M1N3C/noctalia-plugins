@@ -38,16 +38,13 @@ end
 local config = {
   font_family = "Departure Mono",
   font_size = 22,
-  render_mode = "text",
   direction = "down",
   marker = false,
   karaoke = true,
-  equalizer = false,
   footer = false,
   hints = false,
   header = false,
   spacing = 2,
-  animation_ms = 650,
   ghost = true,
   offset_ms = 0,
   width = 1200,
@@ -60,7 +57,6 @@ local config = {
   active_scale = 1.35,
   visible_above = 6,
   visible_below = 6,
-  language = "auto",
 }
 
 -- Capa de overrides: lo que el panel ha escrito.
@@ -382,7 +378,6 @@ local TOGGLES = {
   "header",
   "footer",
   "hints",
-  "equalizer",
   "ghost",
 }
 
@@ -400,26 +395,16 @@ for _, name in ipairs(TOGGLES) do
   end
 end
 
--- 1b. El visualizador no se ofrece si la cabecera ya lo dibuja -------------
+-- 1b. El modo texto y el visualizador opcional ya no existen -----------------
 --
--- Con `header` activado, la cabecera pinta el ecualizador en su fila: el
--- interruptor no cambiaria nada y solo confundiria. Al apagar la cabecera
--- vuelve a aparecer con el valor que tuviera.
+-- La ventana es solo imagen y el visualizador es siempre el fondo: estos
+-- controles no deben volver al panel aunque queden claves antiguas en el
+-- settings.toml.
 
-config.header = false
-overrides.header = nil
-onConfigChanged()
-check(toggleFor("equalizer") ~= nil, "sin cabecera se puede activar el visualizador")
-
-findByKey("toggle", "toggle-header").props.onChange("true")
-check(toggleFor("equalizer") == nil, "con cabecera no se ofrece el visualizador")
-eq(overrides.header, true, "la cabecera se guarda al activarla")
-
-findByKey("toggle", "toggle-header").props.onChange("false")
-check(toggleFor("equalizer") ~= nil, "al apagar la cabecera vuelve el visualizador")
-config.header = false
-overrides.header = nil
-onConfigChanged()
+check(findByKey("toggle", "toggle-equalizer") == nil, "no hay interruptor del visualizador")
+check(findByKey("button", "mode-text") == nil, "no hay boton de modo texto")
+check(findByKey("button", "mode-image") == nil, "no hay boton de modo imagen")
+check(findByKey("slider", "animation_ms") == nil, "no hay control de animation_ms")
 
 -- 2. Las 9 posiciones son botones en una rejilla 3x3 ------------------------
 
@@ -597,106 +582,21 @@ settingsModule.value("footer")
 settingsModule.value("width")
 eq(reads, lecturas, "las siguientes lecturas usan la cache")
 
--- 12. El idioma de la ventana se puede cambiar desde el panel ------------------
-
-local langAuto = findByKey("button", "lang-auto")
-local langEn = findByKey("button", "lang-en")
-local langEs = findByKey("button", "lang-es")
-check(
-  langAuto ~= nil and langEn ~= nil and langEs ~= nil,
-  "el panel tiene botones para el idioma de la ventana"
-)
-if langEs ~= nil then
-  langEs.props.onClick()
-  eq(overrides.language, "es", "elegir español guarda el idioma")
-  eq(findByKey("button", "lang-es").props.variant, "secondary", "el idioma elegido queda marcado")
-end
-
--- 13. El boton de vaciar la cache lanza el script con --clear-cache ------------
+-- 12. El idioma y el vaciado de cache ya no estan en el panel -----------------
 --
--- Tras vaciarla, la ventana abierta tiene que enterarse: si no, seguiría
--- mostrando la letra que tenía en memoria y el usuario pensaría que no ha
--- servido de nada. El panel se lo dice con SIGUSR1 y avisa del resultado.
+-- El idioma de la ventana se detecta solo (--lang o el del sistema) y la
+-- cache se refresca con "r" en la ventana: no son ajustes que deban ocupar
+-- sitio en el panel.
 
-local clearCache = findByKey("button", "clear-cache")
-check(clearCache ~= nil, "el panel tiene un boton para vaciar la cache")
-if clearCache ~= nil then
-  -- La ventana abierta deja su PID en el directorio de datos. Se señaliza
-  -- ese PID y no se busca por línea de comandos: SIGUSR1 mata por defecto.
-  local pidLeido = nil
-  noctalia.readFile = function(path)
-    if path:match("window%.pid$") then
-      pidLeido = path
-      return "4242\n"
-    end
-    reads = reads + 1
-    return encodeOverrides()
-  end
-  clearCache.props.onClick()
-  noctalia.readFile = function()
-    reads = reads + 1
-    return encodeOverrides()
-  end
-
-  local lanzado = false
-  local senal = nil
-  for _, argv in ipairs(commands) do
-    if argv[#argv] == "--clear-cache" then
-      lanzado = true
-    end
-    if argv[2] == "-USR1" and argv[3] then
-      senal = argv[3]
-    end
-  end
-  check(lanzado, "el boton lanza el script con --clear-cache")
-  check(senal == "4242", "el vaciado avisa a la ventana abierta por su PID")
-  check(pidLeido ~= nil, "el PID se lee del directorio de datos del plugin")
-
-  local aviso = nil
-  for _, entry in ipairs(notified) do
-    if entry.body == "clear_cache_done" then
-      aviso = entry
-    end
-  end
-  check(aviso ~= nil, "el vaciado avisa de que ha funcionado")
-
-  -- La explicación de cuándo hace falta: vaciar la caché no es algo que el
-  -- usuario deba hacer a diario, y un botón sin contexto parece obligatorio.
-  local pista = nil
-  for _, item in ipairs(collect(tree, "label")) do
-    if item.props and item.props.text == "clear_cache_hint" then
-      pista = item
-    end
-  end
-  check(pista ~= nil, "el panel explica cuando hace falta vaciar la cache")
-
-  -- Sin ventana abierta no hay PID: la caché queda vacía y la próxima ventana
-  -- buscará de cero. No es un error, así que se avisa igualmente.
-  local avisosAntes = #notified
-  local comandosAntes = #commands
-  noctalia.readFile = function(path)
-    if path:match("window%.pid$") then
-      return ""
-    end
-    reads = reads + 1
-    return encodeOverrides()
-  end
-  clearCache.props.onClick()
-  noctalia.readFile = function()
-    reads = reads + 1
-    return encodeOverrides()
-  end
+check(findByKey("button", "lang-auto") == nil, "no hay boton de idioma automatico")
+check(findByKey("button", "lang-en") == nil, "no hay boton de idioma ingles")
+check(findByKey("button", "lang-es") == nil, "no hay boton de idioma espanol")
+check(findByKey("button", "clear-cache") == nil, "no hay boton de vaciar la cache")
+for _, item in ipairs(collect(tree, "label")) do
   check(
-    #notified > avisosAntes,
-    "sin ventana abierta el vaciado tambien avisa"
+    item.props == nil or item.props.text ~= "clear_cache_hint",
+    "no queda la explicacion del vaciado de cache"
   )
-  local senalNueva = false
-  for i = comandosAntes + 1, #commands do
-    if commands[i][2] == "-USR1" then
-      senalNueva = true
-    end
-  end
-  check(not senalNueva, "sin ventana abierta no se señaliza a nadie")
 end
 
 -- 14. Un interruptor lee bien un valor que llega como cadena ---------------------
@@ -775,7 +675,7 @@ local function sliderFor(key)
 end
 
 check(sliderFor("spacing") ~= nil, "el panel tiene el control de spacing")
-check(sliderFor("animation_ms") ~= nil, "el panel tiene el control de animation_ms")
+check(sliderFor("animation_ms") == nil, "el control de animation_ms ya no existe")
 check(sliderFor("offset_ms") ~= nil, "el panel tiene el control de offset_ms")
 -- El icono de la barra no está en el panel: pertenece al widget de la barra
 -- y se cambia en Ajustes → Plugins → Lyrics Carousel. El panel solo ofrece lo
@@ -797,11 +697,6 @@ if sliderFor("spacing") ~= nil then
   eq(overrides.spacing, 4, "el control de spacing guarda un entero")
   sliderFor("spacing").props.onChange("2.9")
   eq(overrides.spacing, 2, "el control de spacing trunca a entero")
-end
-
-if sliderFor("animation_ms") ~= nil then
-  sliderFor("animation_ms").props.onChange("900")
-  eq(overrides.animation_ms, 900, "el control de animacion guarda milisegundos")
 end
 
 if sliderFor("offset_ms") ~= nil then

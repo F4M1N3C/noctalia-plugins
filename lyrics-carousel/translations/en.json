@@ -36,6 +36,14 @@
   "height": "Height",
   "hints": "Keyboard hints",
   "karaoke": "Karaoke glow",
+  "visualizer": "Audio visualizer",
+  "visualizer_position": "Visualizer position",
+  "visualizer_coverage": "Visualizer coverage (%)",
+  "top": "Top",
+  "bottom": "Bottom",
+  "left": "Left",
+  "right": "Right",
+  "translate_lyrics": "Translate lyrics",
   "launch": "Open the carousel",
   "launch_failed": "Could not open the terminal.",
   "marker": "Active line marker",
@@ -141,6 +149,26 @@
     "visible_below": {
       "description": "How many lines are drawn below the active line.",
       "label": "Visible lines below"
+    },
+    "visualizer": {
+      "description": "Show animated audio bars in the window background.",
+      "label": "Audio visualizer"
+    },
+    "visualizer_position": {
+      "description": "Where to draw the visualizer: top, bottom, left, or right.",
+      "label": "Visualizer position",
+      "top": "Top",
+      "bottom": "Bottom",
+      "left": "Left",
+      "right": "Right"
+    },
+    "visualizer_coverage": {
+      "description": "Percentage of the window the visualizer covers (5-50%).",
+      "label": "Visualizer coverage (%)"
+    },
+    "translate_lyrics": {
+      "description": "If enabled, try to translate lyrics to the window language.",
+      "label": "Translate lyrics"
     },
     "width": {
       "description": "Width of the terminal window in pixels.",

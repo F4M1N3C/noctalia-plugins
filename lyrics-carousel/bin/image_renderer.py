@@ -476,21 +476,30 @@ class ImageRenderer:
 
             if line_index == index:
                 factor = 1.0 + (scale - 1.0) * (1.0 - progress)
+                # Línea que sale: se desvanece mientras encoge
+                transition_alpha = 1.0 - progress
             elif line_index == focus:
                 factor = 1.0 + (scale - 1.0) * progress
+                # Línea que entra: aparece mientras crece
+                transition_alpha = progress
             else:
                 factor = 1.0
+                transition_alpha = 1.0
             line_size = size * factor
 
             distance = abs(y - center_y)
             span = max(1.0, (area_bottom - area_top) * 0.5)
             fade = max(0.22, 1.0 - (distance / span) ** 1.0)
+            # Combinar fade por distancia con alpha de transición
+            fade *= transition_alpha
             is_sung = line_index == index
             if is_sung:
                 color = accent
             else:
                 base = theme.foreground if line_index > index else theme.past
                 color = self._mix(base, background, fade)
+            # Aplicar alpha de transición al color (RGBA)
+            color = color + (int(fade * 255),)
 
             text = self.fit_text(
                 line.text, draw.im.size[0] - size * 6, size * factor, family

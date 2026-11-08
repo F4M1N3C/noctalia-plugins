@@ -1749,6 +1749,7 @@ def load_settings() -> dict:
     except (TypeError, ValueError):
         cfg["custom_y"] = 100
     cfg["active_scale"] = max(1.0, min(2.5, cfg["active_scale"]))
+    cfg["visualizer_coverage"] = max(5, min(50, cfg["visualizer_coverage"]))
     if cfg["direction"] not in ("down", "up"):
         cfg["direction"] = "down"
     if cfg["accent"] not in ACCENT_NAMES:

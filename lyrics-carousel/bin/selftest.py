@@ -2319,6 +2319,120 @@ def check_hints_centrados():
         )
 
 
+def check_visualizer_zona():
+    """Visualizador se dibuja solo en la zona configurada."""
+    mod = image_module()
+    if mod.Image is None:
+        check("el visualizador se puede medir (Pillow)", False, "sin Pillow")
+        return
+
+    # Test 1: position="top", coverage=10% -> solo top 10% de la imagen
+    imagen = mod.Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
+    pincel = mod.ImageDraw.Draw(imagen)
+    app = types.SimpleNamespace(
+        visualizer=types.SimpleNamespace(
+            snapshot=lambda simulate=False: [1.0] * 64,
+        ),
+        visualizer_position="top",
+        visualizer_coverage=10,
+        theme=types.SimpleNamespace(background=(10, 10, 10)),
+        demo=False,
+    )
+    renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
+    renderer.app = app
+    renderer._draw_visualizer(imagen, 1000, 1000, (255, 0, 0))
+    
+    # Verificar que la mayoría de píxeles no transparentes están en el top 10% (0-100px)
+    # Permitir algunos píxeles fuera por las "tapas" de las barras (2px)
+    pixels_in_zone = 0
+    pixels_out_zone = 0
+    for y in range(1000):
+        for x in range(1000):
+            if imagen.getpixel((x, y))[3] != 0:
+                if y < 102:  # 100px + 2px de tapa
+                    pixels_in_zone += 1
+                else:
+                    pixels_out_zone += 1
+    check(
+        "visualizer top 10% mayormente en zona",
+        pixels_in_zone > 0 and pixels_out_zone == 0,
+        f"in={pixels_in_zone} out={pixels_out_zone}",
+    )
+
+    # Test 2: position="bottom", coverage=20% -> solo bottom 20%
+    imagen = mod.Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
+    app.visualizer_position = "bottom"
+    app.visualizer_coverage = 20
+    renderer._draw_visualizer(imagen, 1000, 1000, (255, 0, 0))
+    
+    pixels_in_zone = 0
+    pixels_out_zone = 0
+    for y in range(1000):
+        for x in range(1000):
+            if imagen.getpixel((x, y))[3] != 0:
+                if y >= 798:  # 800px - 2px de tapa
+                    pixels_in_zone += 1
+                else:
+                    pixels_out_zone += 1
+    check(
+        "visualizer bottom 20% mayormente en zona",
+        pixels_in_zone > 0 and pixels_out_zone == 0,
+        f"in={pixels_in_zone} out={pixels_out_zone}",
+    )
+
+    # Test 3: position="left", coverage=15% -> solo left 15%
+    imagen = mod.Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
+    app.visualizer_position = "left"
+    app.visualizer_coverage = 15
+    renderer._draw_visualizer(imagen, 1000, 1000, (255, 0, 0))
+    
+    pixels_in_zone = 0
+    pixels_out_zone = 0
+    for x in range(1000):
+        for y in range(1000):
+            if imagen.getpixel((x, y))[3] != 0:
+                if x < 152:  # 150px + 2px de tapa
+                    pixels_in_zone += 1
+                else:
+                    pixels_out_zone += 1
+    check(
+        "visualizer left 15% mayormente en zona",
+        pixels_in_zone > 0 and pixels_out_zone == 0,
+        f"in={pixels_in_zone} out={pixels_out_zone}",
+    )
+
+    # Test 4: position="right", coverage=25% -> solo right 25%
+    imagen = mod.Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
+    app.visualizer_position = "right"
+    app.visualizer_coverage = 25
+    renderer._draw_visualizer(imagen, 1000, 1000, (255, 0, 0))
+    
+    pixels_in_zone = 0
+    pixels_out_zone = 0
+    for x in range(1000):
+        for y in range(1000):
+            if imagen.getpixel((x, y))[3] != 0:
+                if x >= 748:  # 750px - 2px de tapa
+                    pixels_in_zone += 1
+                else:
+                    pixels_out_zone += 1
+    check(
+        "visualizer right 25% mayormente en zona",
+        pixels_in_zone > 0 and pixels_out_zone == 0,
+        f"in={pixels_in_zone} out={pixels_out_zone}",
+    )
+
+
+def check_translate_lyrics_false_default():
+    """translate_lyrics default false."""
+    mod = script_module()
+    check(
+        "translate_lyrics default false",
+        mod.DEFAULTS.get("translate_lyrics") == False,
+        mod.DEFAULTS.get("translate_lyrics"),
+    )
+
+
 def check_reparto_de_ajustes():
     """El manifiesto no duplica lo que ya se cambia en el panel.
 
@@ -3049,6 +3163,8 @@ def main(argv):
     check_atajo_no_se_pierde()
     check_panel_cubre_manifiesto()
     check_hints_centrados()
+    check_visualizer_zona()
+    check_translate_lyrics_false_default()
     check_reparto_de_ajustes()
     check_panel_attached()
 

@@ -379,6 +379,7 @@ local TOGGLES = {
   "footer",
   "hints",
   "ghost",
+  "visualizer",
 }
 
 for _, name in ipairs(TOGGLES) do
@@ -405,6 +406,33 @@ check(findByKey("toggle", "toggle-equalizer") == nil, "no hay interruptor del vi
 check(findByKey("button", "mode-text") == nil, "no hay boton de modo texto")
 check(findByKey("button", "mode-image") == nil, "no hay boton de modo imagen")
 check(findByKey("slider", "animation_ms") == nil, "no hay control de animation_ms")
+
+-- 1c. Visualizador: UI condicional (posición y cobertura) ------------------
+--
+-- El interruptor visualizer controla si se muestra el visualizador.
+-- Cuando está OFF, las opciones de posición y cobertura se ocultan.
+-- Cuando está ON, aparecen los botones de posición y el slider de cobertura.
+
+check(toggleFor("visualizer") ~= nil, "panel tiene interruptor visualizer")
+local vizToggle = toggleFor("visualizer")
+if vizToggle ~= nil then
+  -- Apagar visualizer: position y coverage deben ocultarse
+  vizToggle.props.onChange("false")
+  onConfigChanged()
+  check(findByKey("button", "viz-pos-top") == nil, "position oculto si visualizer off")
+  check(findByKey("button", "viz-pos-bottom") == nil, "position oculto si visualizer off")
+  check(findByKey("button", "viz-pos-left") == nil, "position oculto si visualizer off")
+  check(findByKey("button", "viz-pos-right") == nil, "position oculto si visualizer off")
+  check(findByKey("slider", "visualizer_coverage") == nil, "coverage oculto si visualizer off")
+  -- Encender visualizer: position y coverage deben aparecer
+  vizToggle.props.onChange("true")
+  onConfigChanged()
+  check(findByKey("button", "viz-pos-top") ~= nil, "position visible si visualizer on")
+  check(findByKey("button", "viz-pos-bottom") ~= nil, "position visible si visualizer on")
+  check(findByKey("button", "viz-pos-left") ~= nil, "position visible si visualizer on")
+  check(findByKey("button", "viz-pos-right") ~= nil, "position visible si visualizer on")
+  check(findByKey("slider", "visualizer_coverage") ~= nil, "coverage visible si visualizer on")
+end
 
 -- 2. Las 9 posiciones son botones en una rejilla 3x3 ------------------------
 

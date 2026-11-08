@@ -26,9 +26,6 @@ local FONT_CHOICES = {
   "NType 82 Mono",
   "Lettera Mono LL",
   "IBM Plex Mono",
-}
-
-local IMAGE_ONLY_FONTS = {
   "Nothing Font (5x7)",
   "Ndot 57",
   "Ndot 55",
@@ -525,14 +522,9 @@ local function chipRow(items)
 end
 
 -- Todas las fuentes que ofrece el panel, en el orden en que se muestran.
--- Las de `IMAGE_ONLY_FONTS` se marcan en la lista: en modo texto kitty
--- solo puede usar monoespaciadas.
 local function fontNames()
   local names = {}
   for _, name in ipairs(FONT_CHOICES) do
-    table.insert(names, name)
-  end
-  for _, name in ipairs(IMAGE_ONLY_FONTS) do
     table.insert(names, name)
   end
   return names
@@ -565,13 +557,7 @@ local function fontSelector()
   local custom = fontCustom == true or not fontListed(current)
   local options = {}
   for index, name in ipairs(names) do
-    if index > #FONT_CHOICES then
-      -- El nombre real se guarda sin el sufijo; el sufijo solo avisa de
-      -- que esa fuente no vale en modo texto.
-      options[index] = name .. " · " .. tr("image_only")
-    else
-      options[index] = name
-    end
+    options[index] = name
   end
   table.insert(options, tr("font_custom"))
   local selected = #names
@@ -620,52 +606,6 @@ local function accentChips()
     table.insert(rows, chipRow(row))
   end
   return ui.column({ gap = 4 }, rows)
-end
-
--- Vacía la caché de letras (el script la guarda en ~/.cache/lyrics-carousel).
--- Se lanza el script con --clear-cache: es el que sabe qué son las letras y
--- qué no (el log de diagnóstico se conserva).
---
--- No hace falta en el uso normal: para una canción concreta basta pulsar "r"
--- en la ventana. Sirve para fuentes o credenciales cambiadas, letras
--- incorrectas guardadas o el resultado negativo que dura 24 minutos. Tras
--- vaciarla se avisa a la ventana abierta (SIGUSR1) para que vuelva a buscar.
-local function clearLyricsCache()
-  local dir = noctalia.pluginDir()
-  if dir == nil or dir == "" then
-    reportError(tr("clear_cache_failed"))
-    return
-  end
-  runAsync({ "python3", dir .. "/bin/lyrics-carousel", "--clear-cache" }, function(result)
-    if result == nil or result.exitCode ~= 0 then
-      reportError(tr("clear_cache_failed"))
-      render()
-      return
-    end
-    -- El script ya no guarda nada: la ventana abierta tiene que olvidarse de
-    -- lo que tenía y volver a buscar la canción que suena ahora.
-    --
-    -- Se señaliza el PID que la ventana deja escrito, no se busca el proceso
-    -- por su línea de comandos: SIGUSR1 mata por defecto, así que un
-    -- `pkill -f lyrics-carousel` alcanzaría también a un editor que tenga el
-    -- fichero abierto.
-    local datos = noctalia.pluginDataDir()
-    local pid = ""
-    if datos ~= nil and datos ~= "" then
-      pid = tostring(noctalia.readFile(datos .. "/window.pid") or ""):gsub("%s+", "")
-    end
-    local function avisar()
-      safe("notify", noctalia.notify, tr("title"), tr("clear_cache_done"))
-      render()
-    end
-    if pid:match("^%d+$") then
-      runAsync({ "kill", "-USR1", pid }, avisar)
-      return
-    end
-    -- No hay ventana abierta: la caché queda vacía y la próxima ya buscará
-    -- de cero. No es un error, así que se avisa igualmente.
-    avisar()
-  end)
 end
 
 -- La rejilla representa la pantalla: tres filas de tres botones, en el
@@ -829,10 +769,7 @@ render = function()
     return
   end
   local direction = tostring(valueOf("direction"))
-  local mode = tostring(valueOf("render_mode"))
-  local language = tostring(valueOf("language"))
   local accent = tostring(valueOf("accent"))
-  local headerOn = boolOf("header")
   local currentFont = tostring(valueOf("font_family"))
   local customFont = fontCustom == true or not fontListed(currentFont)
   local subtitle = tr("subtitle")
@@ -880,28 +817,6 @@ render = function()
     -- Presentación -------------------------------------------------------
     ui.label({ text = tr("section_display"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     ui.row({ align = "center", gap = 10, paddingH = 4, padding = 4 }, {
-      ui.glyph({ name = "layout", size = 14, color = "on_surface_variant" }),
-      ui.label({ text = tr("render_mode"), fontSize = 12, color = "on_surface", flexGrow = 1 }),
-      ui.button({
-        key = "mode-text",
-        text = tr("mode_text"),
-        variant = mode == "text" and "secondary" or "ghost",
-        fontSize = 11,
-        onClick = function()
-          setSetting("render_mode", "text")
-        end,
-      }),
-      ui.button({
-        key = "mode-image",
-        text = tr("mode_image"),
-        variant = mode == "image" and "secondary" or "ghost",
-        fontSize = 11,
-        onClick = function()
-          setSetting("render_mode", "image")
-        end,
-      }),
-    }),
-    ui.row({ align = "center", gap = 10, paddingH = 4, padding = 4 }, {
       ui.glyph({ name = "arrows-vertical", size = 14, color = "on_surface_variant" }),
       ui.label({ text = tr("direction"), fontSize = 12, color = "on_surface", flexGrow = 1 }),
       ui.button({
@@ -923,52 +838,8 @@ render = function()
         end,
       }),
     }),
-    ui.row({ align = "center", gap = 10, paddingH = 4, padding = 4 }, {
-      ui.glyph({ name = "language", size = 14, color = "on_surface_variant" }),
-      ui.label({ text = tr("language"), fontSize = 12, color = "on_surface", flexGrow = 1 }),
-      ui.button({
-        key = "lang-auto",
-        text = tr("language_auto"),
-        variant = language == "auto" and "secondary" or "ghost",
-        fontSize = 11,
-        onClick = function()
-          setSetting("language", "auto")
-        end,
-      }),
-      ui.button({
-        key = "lang-en",
-        text = tr("language_en"),
-        variant = language == "en" and "secondary" or "ghost",
-        fontSize = 11,
-        onClick = function()
-          setSetting("language", "en")
-        end,
-      }),
-      ui.button({
-        key = "lang-es",
-        text = tr("language_es"),
-        variant = language == "es" and "secondary" or "ghost",
-        fontSize = 11,
-        onClick = function()
-          setSetting("language", "es")
-        end,
-      }),
-    }),
-
     -- Qué se dibuja dentro de la ventana --------------------------------
     toggleRow("header", tr("header"), "heading"),
-    (function()
-      if headerOn then
-        -- La cabecera ya pinta el ecualizador: el interruptor no haría
-        -- nada, así que se sustituye por una nota que lo explica.
-        return ui.label({
-          text = tr("equalizer_with_header"),
-          fontSize = 10,
-          color = "on_surface_variant",
-        })
-      end
-      return toggleRow("equalizer", tr("equalizer"), "wave-sine")
-    end)(),
     toggleRow("marker", tr("marker"), "chevron-right"),
     toggleRow("karaoke", tr("karaoke"), "sun"),
     toggleRow("ghost", tr("ghost"), "sparkles"),
@@ -988,7 +859,6 @@ render = function()
       }),
     }),
     sliderRow("spacing", tr("spacing"), 1, 6, 1, true),
-    sliderRow("animation_ms", tr("animation_ms"), 0, 3000, 50, true),
     sliderRow("offset_ms", tr("offset_ms"), -3000, 3000, 10, true),
 
     -- Color --------------------------------------------------------------
@@ -1068,19 +938,6 @@ render = function()
         sizeStepper("height", 200, 2160, 50),
       }),
     }),
-
-    -- Caché -----------------------------------------------------------------
-    -- El icono de la barra no está aquí: es de la barra, no de la ventana, y
-    -- se cambia en Ajustes → Plugins → Lyrics Carousel.
-    ui.separator({ thickness = 1, spacing = 6 }),
-    ui.button({
-      key = "clear-cache",
-      text = tr("clear_cache"),
-      variant = "secondary",
-      fontSize = 11,
-      onClick = clearLyricsCache,
-    }),
-    ui.label({ text = tr("clear_cache_hint"), fontSize = 10, color = "on_surface_variant" }),
   }
 
   if lastError ~= "" then

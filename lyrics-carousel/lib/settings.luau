@@ -14,16 +14,13 @@ local PLUGIN_ID = "faminec/lyrics-carousel"
 local DEFAULTS = {
   font_family = "Departure Mono",
   font_size = 22,
-  render_mode = "image",
   direction = "down",
   marker = false,
   karaoke = true,
-  equalizer = false,
   footer = false,
   hints = false,
   header = false,
   spacing = 2,
-  animation_ms = 650,
   ghost = true,
   offset_ms = 0,
   width = 1200,
@@ -36,16 +33,15 @@ local DEFAULTS = {
   active_scale = 1.35,
   visible_above = 6,
   visible_below = 6,
-  language = "auto",
   glyph = "music",
 }
 
 local BOOL_KEYS = {
-  marker = true, karaoke = true, equalizer = true, footer = true,
+  marker = true, karaoke = true, footer = true,
   hints = true, header = true, ghost = true,
 }
 local INT_KEYS = {
-  font_size = true, spacing = true, animation_ms = true, offset_ms = true,
+  font_size = true, spacing = true, offset_ms = true,
   width = true, height = true, visible_above = true, visible_below = true,
   custom_x = true, custom_y = true,
 }
@@ -66,7 +62,6 @@ M.DEFAULTS = DEFAULTS
 local LIMITS = {
   font_size = { 6, 96 },
   spacing = { 1, 6 },
-  animation_ms = { 0, 3000 },
   offset_ms = { -3000, 3000 },
   width = { 400, 3840 },
   height = { 200, 2160 },

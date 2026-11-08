@@ -189,13 +189,17 @@ def clamp(value: float, low: float, high: float) -> float:
 
 
 def ease_in_out(progress: float) -> float:
-    """Curva suave: empieza y termina sin velocidad (smoothstep).
+    """Curva suave: empieza y termina sin velocidad **ni aceleracion**.
 
-    Se usa en el desplazamiento del carrusel: el movimiento acelera y frena,
-    sin el tirón de una interpolación lineal.
+    Es la smootherstep (6t5-15t4+10t3). La anterior (smoothstep) frenaba
+    bien, pero la aceleracion saltaba al arrancar y al frenar, y eso se
+    notaba como un micro-tiron en el carrusel.
+
+    Se usa en el desplazamiento: el movimiento acelera y frena sin que se
+    note el cambio.
     """
     value = clamp(progress, 0.0, 1.0)
-    return value * value * (3.0 - 2.0 * value)
+    return value**3 * (value * (value * 6.0 - 15.0) + 10.0)
 
 
 def resto_para_siguiente_frame(inicio: float, ahora: float, intervalo: float) -> float:

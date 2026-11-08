@@ -1095,6 +1095,46 @@ def check_tamano_fraccionario():
     )
 
 
+def check_curva_suave():
+    """La curva del relevo no tiene acceleration en los extremos.
+
+    Con smoothstep la velocidad llegaba a cero pero la acceleration saltaba
+    al arrancar y al frenar: eso se notaba como un micro-tiron en el
+    carrusel. La smootherstop (6t5-15t4+10t3) deja la acceleration a cero
+    tambien en los extremos.
+    """
+    mod = script_module()
+    curva = mod.ease_in_out
+    h = 1e-3
+
+    def segunda(t):
+        return (curva(t + h) - 2 * curva(t) + curva(t - h)) / (h * h)
+
+    check(
+        "la curva va de 0 a 1",
+        curva(0.0) == 0.0 and curva(1.0) == 1.0,
+        "inicio=%r fin=%r" % (curva(0.0), curva(1.0)),
+    )
+    check(
+        "la curva no tiene aceleracion en los extremos",
+        abs(segunda(0.0)) < 0.05 and abs(segunda(1.0)) < 0.05,
+        "inicio=%.3f fin=%.3f" % (segunda(0.0), segunda(1.0)),
+    )
+    check(
+        "la curva es monotona",
+        all(curva(i / 20.0) <= curva((i + 1) / 20.0) for i in range(20)),
+    )
+    check(
+        "la curva se queda dentro de rango",
+        all(0.0 <= curva(v / 40.0) <= 1.0 for v in range(-10, 51)),
+    )
+    check(
+        "la curva mantiene la mitad en el punto medio",
+        abs(curva(0.5) - 0.5) < 1e-9,
+        "media=%r" % (curva(0.5),),
+    )
+
+
 def check_glow_real():
     """La letra cantada es nitida: brillo de la letra, sin halo difuminado.
 
@@ -3400,6 +3440,7 @@ def main(argv):
     check_transicion_real()
     check_transicion_visual_fluida()
     check_ritmo_de_frames()
+    check_curva_suave()
     check_glow_real()
     check_recarga_por_senal()
     check_tamano_terminal_real()

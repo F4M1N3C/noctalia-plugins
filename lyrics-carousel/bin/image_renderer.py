@@ -377,57 +377,44 @@ class ImageRenderer:
             return True
         self.last_signature = signature
 
-        # Render a 1/2 de resolucion: 600x410 = 4x menos datos.
-        # Con LANCZOS (mejor que BILINEAR) se ve nitido y a ~25ms/draw.
-        render_scale = 2
-        rx = max(1, xpix // render_scale)
-        ry = max(1, ypix // render_scale)
-
-        image = Image.new("RGBA", (rx, ry), (0, 0, 0, 0))
+        # RENDER NATIVO (full resolution): calidad maxima.
+        # Sin visualizer el draw es rapido (~20ms). Sin downscale = nitidez perfecta.
+        image = Image.new("RGBA", (xpix, ypix), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
         self._measure_draw = draw
         background = theme.background
 
-        # Escalamos tamaños para la resolucion de render
-        rs = float(render_scale)
-        rsize = size / rs
-        rscale = scale
-        rposition = position / rs
-        rtop = (size * 1.9) / rs
-        rbottom = ry - (size * 1.9) / rs
-
         # -- cabecera
+        top = size * 1.9
+        bottom = ypix - size * 1.9
         if cfg["header"]:
             title = app.track.title or app.tr("nothing_playing")
             artist = app.track.artist or ""
-            self._draw_left(draw, title, rsize * 1.6, rtop, rsize * 0.95, theme.bright, family)
+            self._draw_left(draw, title, size * 1.6, top, size * 0.95, theme.bright, family)
             if artist:
                 self._draw_left(
-                    draw, "— " + artist, rsize * 1.6, rtop + rsize * 1.2,
-                    rsize * 0.8, theme.faint, family,
+                    draw, "— " + artist, size * 1.6, top + size * 1.2,
+                    size * 0.8, theme.faint, family,
                 )
-            rule_y = rtop + rsize * 2.0
+            rule_y = top + size * 2.0
             ImageDraw.Draw(image).rectangle(
-                [rsize * 1.6, rule_y, rx - rsize * 1.6, rule_y + max(1, rsize * 0.05)],
+                [size * 1.6, rule_y, xpix - size * 1.6, rule_y + max(1, size * 0.05)],
                 fill=self._mix(theme.faint, background, 0.35),
             )
-            rtop = rule_y + rsize * 0.9
+            top = rule_y + size * 0.9
 
         # -- letra
-        rcenter_y = (rtop + rbottom) / 2
+        center_y = (top + bottom) / 2
         if app.state == "lyrics" and app.lines:
-            self._draw_lyrics(draw, rcenter_y, rsize, rscale, family, accent, rposition, rtop, rbottom)
+            self._draw_lyrics(draw, center_y, size, scale, family, accent, position, top, bottom)
         else:
-            self._draw_state(draw, rcenter_y, rsize, family)
+            self._draw_state(draw, center_y, size, family)
 
         # -- pie
         if cfg["footer"]:
-            self._draw_footer(draw, rx, ry, rsize, family, accent, rposition, duration)
+            self._draw_footer(draw, xpix, ypix, size, family, accent, position, duration)
         if cfg["hints"]:
-            self._draw_hints(draw, rsize, family)
-
-        # Escalar a resolucion completa para kitty (LANCZOS = mas nitido)
-        image = image.resize((xpix, ypix), Image.LANCZOS)
+            self._draw_hints(draw, size, family)
 
         self.sends += 1
         return self.gfx.present(image, cols, rows)

@@ -357,11 +357,11 @@ class ImageRenderer:
     def _draw_visualizer(self, image, xpix, ypix, accent):
         """Barras de cava de fondo, en la zona configurada y detras de la letra.
 
-        Se dibujan primero (la letra va encima). El lienzo es transparente
-        (se ve el fondo de pantalla), asi que las barras se pintan con su
-        propia transparencia: con un alfa muy bajo se perdian contra el
-        fondo y el visualizador no se veia. La zona y la cobertura se
-        configuran en el panel (visualizer_position, visualizer_coverage).
+        Se dibujan primero (la letra va encima). Para fluidez tipo cava:
+        el visualizer se renderiza a 1/2 de resolucion y se escala con
+        BILINEAR (suave), reduciendo datos enviados a kitty ~4x.
+        Se recorta a la zona configurada con una mascara para que no se
+        desborde por el escalado bilineal.
         """
         visualizer = getattr(self.app, "visualizer", None)
         if visualizer is None:
@@ -378,34 +378,38 @@ class ImageRenderer:
 
         count = len(levels)
         color = self._mix(accent, self.app.theme.background, 0.55)
-        paint = ImageDraw.Draw(image)
+
+        # Resolucion reducida para el visualizer (1/2 = 2x menos datos en cada eje)
+        scale = 2
+        sx = max(1, xpix // scale)
+        sy = max(1, ypix // scale)
 
         if position in ("top", "bottom"):
-            # Banda horizontal
-            band_h = max(2, int(ypix * coverage))
+            band_h = max(2, int(sy * coverage))
             if position == "bottom":
-                y0 = ypix - band_h
+                y0 = sy - band_h
             else:
                 y0 = 0
-            slot = xpix / float(count)
+            slot = sx / float(count)
             gap = max(1.0, slot * 0.24)
             width = max(1, int(slot - gap))
+
+            # Imagen pequeña solo para la banda del visualizer
+            viz_img = Image.new("RGBA", (sx, sy), (0, 0, 0, 0))
+            paint = ImageDraw.Draw(viz_img)
             for index, level in enumerate(levels):
                 level = max(0.0, min(1.0, float(level)))
-                # La altura sigue al nivel pero nunca es invisible: con un
-                # nivel bajo la barra se queda en un pixel.
-                h = max(3.0, band_h * (level ** 0.8))
+                h = max(2.0, band_h * (level ** 0.8))
                 x0 = index * slot + gap / 2.0
                 alpha = int(90 + 100 * level)
                 if position == "bottom":
                     paint.rectangle(
-                        [x0, ypix - h, x0 + width, ypix],
+                        [x0, sy - h, x0 + width, sy],
                         fill=color + (alpha,),
                     )
-                    # Tapa superior
-                    if h > 4.0:
+                    if h > 3.0:
                         paint.rectangle(
-                            [x0, ypix - h, x0 + width, ypix - h + 2],
+                            [x0, sy - h, x0 + width, sy - h + 2],
                             fill=color + (min(235, alpha + 80),),
                         )
                 else:
@@ -413,36 +417,51 @@ class ImageRenderer:
                         [x0, 0, x0 + width, h],
                         fill=color + (alpha,),
                     )
-                    # Tapa inferior
-                    if h > 4.0:
+                    if h > 3.0:
                         paint.rectangle(
                             [x0, h - 2, x0 + width, h],
                             fill=color + (min(235, alpha + 80),),
                         )
+            # Escalar a resolucion completa con BILINEAR (suave)
+            viz_img = viz_img.resize((xpix, ypix), Image.BILINEAR)
+            # Mascara de zona: recorta el visualizer a su banda
+            mask = Image.new("L", (xpix, ypix), 0)
+            mask_draw = ImageDraw.Draw(mask)
+            band_h_full = int(ypix * coverage)
+            if position == "bottom":
+                mask_draw.rectangle([0, ypix - band_h_full, xpix, ypix], fill=255)
+            else:
+                mask_draw.rectangle([0, 0, xpix, band_h_full], fill=255)
+            # Aplicar mascara: poner alpha=0 fuera de la zona
+            viz_img.putalpha(Image.composite(viz_img.split()[-1], Image.new("L", (xpix, ypix), 0), mask))
+            image.alpha_composite(viz_img)
+
         else:
             # Banda vertical (left/right)
-            band_w = max(2, int(xpix * coverage))
+            band_w = max(2, int(sx * coverage))
             if position == "right":
-                x0 = xpix - band_w
+                x0 = sx - band_w
             else:
                 x0 = 0
-            slot = ypix / float(count)
+            slot = sy / float(count)
             gap = max(1.0, slot * 0.24)
             width = max(1, int(slot - gap))
+
+            viz_img = Image.new("RGBA", (sx, sy), (0, 0, 0, 0))
+            paint = ImageDraw.Draw(viz_img)
             for index, level in enumerate(levels):
                 level = max(0.0, min(1.0, float(level)))
-                w = max(3.0, band_w * (level ** 0.8))
+                w = max(2.0, band_w * (level ** 0.8))
                 y0 = index * slot + gap / 2.0
                 alpha = int(90 + 100 * level)
                 if position == "right":
                     paint.rectangle(
-                        [xpix - w, y0, xpix, y0 + width],
+                        [sx - w, y0, sx, y0 + width],
                         fill=color + (alpha,),
                     )
-                    # Tapa izquierda
-                    if w > 4.0:
+                    if w > 3.0:
                         paint.rectangle(
-                            [xpix - w, y0, xpix - w + 2, y0 + width],
+                            [sx - w, y0, sx - w + 2, y0 + width],
                             fill=color + (min(235, alpha + 80),),
                         )
                 else:
@@ -450,12 +469,21 @@ class ImageRenderer:
                         [0, y0, w, y0 + width],
                         fill=color + (alpha,),
                     )
-                    # Tapa derecha
-                    if w > 4.0:
+                    if w > 3.0:
                         paint.rectangle(
                             [w - 2, y0, w, y0 + width],
                             fill=color + (min(235, alpha + 80),),
                         )
+            viz_img = viz_img.resize((xpix, ypix), Image.BILINEAR)
+            mask = Image.new("L", (xpix, ypix), 0)
+            mask_draw = ImageDraw.Draw(mask)
+            band_w_full = int(xpix * coverage)
+            if position == "right":
+                mask_draw.rectangle([xpix - band_w_full, 0, xpix, ypix], fill=255)
+            else:
+                mask_draw.rectangle([0, 0, band_w_full, ypix], fill=255)
+            viz_img.putalpha(Image.composite(viz_img.split()[-1], Image.new("L", (xpix, ypix), 0), mask))
+            image.alpha_composite(viz_img)
 
     # -- render principal -----------------------------------------------
 
@@ -561,6 +589,11 @@ class ImageRenderer:
         pos_b = self._layout(focus, center_y, size, scale)
 
         visible = set(pos_a) | set(pos_b)
+        # Margen extra para no cortar texto a medio pintar: la altura de
+        # línea máxima (con scale) más el gap.
+        max_line_h = size * scale * 1.32
+        gap = size * 0.30 * max(1, app.cfg["spacing"])
+        margin = max_line_h + gap
         # Escala interpolada: la línea que sale encoge, la que entra crece.
         for line_index in sorted(visible):
             if line_index < 0 or line_index >= len(lines):
@@ -574,6 +607,9 @@ class ImageRenderer:
                 y = y_a
             else:
                 y = y_a + (y_b - y_a) * progress
+            # Recorte al área visible: no pintar líneas que queden fuera.
+            if y + margin < area_top or y - margin > area_bottom:
+                continue
 
             if line_index == index:
                 factor = 1.0 + (scale - 1.0) * (1.0 - progress)

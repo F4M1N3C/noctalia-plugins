@@ -18,7 +18,7 @@ import time
 # Barras que se piden a cava. Con 64 el fondo tiene detalle suficiente en una
 # ventana de 1500 px sin que cada barra quede mas fina que un par de pixeles.
 BARS = 64
-FRAMERATE = 30
+FRAMERATE = 60
 MAX_RANGE = 100
 # Tras un fallo no se reintenta en cada cuadro: cava puede tardar en arrancar
 # y no tiene sentido lanzar un proceso por frame.

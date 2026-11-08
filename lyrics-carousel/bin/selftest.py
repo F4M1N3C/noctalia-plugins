@@ -330,7 +330,7 @@ def check_desfase_scroll():
         with env_temporal({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             app = object.__new__(mod.LyricsCarousel)
-            app.args = types.SimpleNamespace(once=True)
+            app.args = types.SimpleNamespace(once=True, debug=False)
             app.cfg = dict(mod.DEFAULTS)
             app.cfg["offset_ms"] = 500
             app.demo = False

@@ -2409,11 +2409,10 @@ class LyricsCarousel:
 
     def draw(self, force=False):
         now = time.monotonic()
-        # A 60 fps solo mientras el carrusel se mueve (transición suave): en
-        # reposo, con el karaoke y el fondo, 30 fps sobran y la imagen pesa
-        # menos en el canal de kitty.
-        fps = MOTION_FPS if self.moving else IMAGE_FPS
-        interval = 1.0 / fps
+        # Plugin entero a 60 fps (MOTION_FPS): visualizer fluido + scroll suave.
+        # draw_image tarda ~25 ms; el bucle corre a 60 Hz y saltamos frames
+        # solo si draw_image se pasa del intervalo.
+        interval = 1.0 / MOTION_FPS
         if not force and now - self.last_draw < interval:
             return
         self.last_draw = now
@@ -2573,8 +2572,7 @@ class LyricsCarousel:
                     if not self.handle_key(key):
                         self.stop_requested = True
                         break
-                # El bucle late a 60 Hz: draw() decide si toca dibujar a 60
-                # (transición) o a 30 (reposo).
+                # El bucle late a 60 Hz (MOTION_FPS): plugin entero a 60 fps.
                 time.sleep(1.0 / MOTION_FPS)
         finally:
             visualizer = getattr(self, "visualizer", None)

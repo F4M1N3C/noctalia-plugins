@@ -18,6 +18,8 @@ The following executables must be installed and available on `PATH`:
 - `hyprland` — the compositor; the window is opened with the Hyprland 0.57 Lua API.
 - `playerctl` — reads the active MPRIS player.
 - `python3` with `python-pillow` — draws the lyrics in image mode.
+- `cava` — real audio bars behind the lyrics. Optional: without it the window
+  draws smooth simulated bars instead.
 
 The lyrics themselves come from the Noctalia Lyrics plugin's source adapter
 (`lyric_sources.py`), so the same providers and the same configuration are reused:
@@ -35,15 +37,22 @@ The panel can also be opened directly:
 noctalia msg panel-toggle faminec/lyrics-carousel:panel
 ```
 
-### Two rendering modes
+### Image rendering mode
 
-| Mode | What it uses | Advantages | Trade-offs |
-| --- | --- | --- | --- |
-| `image` (default) | Pillow and the kitty graphics protocol | The active line is drawn larger, the scroll is pixel-accurate and any font works | Needs kitty and Pillow; the text cannot be selected |
-| `text` | The terminal itself | Lightweight and crisp, the text is selectable | One font size for the whole window |
+The window is drawn as a transparent PNG the size of the window
+(1200×820 px by default) using Pillow and the kitty graphics protocol,
+so the desktop wallpaper stays visible through it. The active line is drawn
+larger, the scroll is pixel-accurate and any font works. The trade-off
+is that the text cannot be selected.
 
-In image mode the window is drawn as a transparent PNG the size of the window
-(1200×820 px by default), so the desktop wallpaper stays visible through it.
+The text-only mode was removed in 2.4.0: it relied on Kitty's OSC 66 text
+sizing protocol which cannot color individual characters within a scaled
+block, so true per-character karaoke glow was impossible.
+
+Since 2.5.0 the audio visualiser is always the background: `cava` is started
+with its own pipe configuration and its bars are drawn edge to edge behind
+the lyrics, with low opacity so the text stays readable. If `cava` is not
+installed or stops answering, smooth simulated bars take over.
 
 The providers are queried in parallel and the first one to answer wins. The search
 waits up to 15 seconds, so a slow provider is not thrown away; if nobody has answered
@@ -88,17 +97,14 @@ it belongs to the bar widget, not to the lyrics window.
 | --- | --- | --- | --- |
 | `font_family` | `string` | `Departure Mono` | Font used for the lyrics. |
 | `font_size` | `int` | `22` | Size of the lyrics, in pixels. |
-| `render_mode` | `select` | `image` | `image` (Pillow) or `text` (terminal). |
 | `direction` | `select` | `down` | `down`: the lyrics come in from the top. `up`: from the bottom. |
 | `marker` | `bool` | `false` | Shows a `>` next to the active line. |
 | `karaoke` | `bool` | `true` | Lights the active line as it is sung, with a glow around it. |
-| `equalizer` | `bool` | `false` | Animated bars. |
 | `footer` | `bool` | `false` | Elapsed time and a progress bar. |
 | `hints` | `bool` | `false` | Keyboard hints at the bottom. |
 | `header` | `bool` | `false` | Title, artist and status tags. |
 | `spacing` | `int` | `2` | Space between the lines. |
-| `animation_ms` | `int` | `650` | Duration of the scroll between lines. |
-| `ghost` | `bool` | `true` | Dims the block while it moves. |
+| `ghost` | `bool` | `true` | Smooth ~0.9 s slide between lines. Off: the change is instant. |
 | `offset_ms` | `int` | `0` | Offset to fine-tune the synchronisation. |
 | `width` | `int` | `1200` | Window width. |
 | `height` | `int` | `820` | Window height. |
@@ -107,18 +113,68 @@ it belongs to the bar widget, not to the lyrics window.
 | `custom_y` | `int` | `100` | Custom vertical position (only with anchor = custom). |
 | `accent` | `select` | `primary` | Colour of the active line: `primary` (follows the wallpaper), an ANSI colour or `custom`. |
 | `custom_color` | `string` | `#e46767` | Hex colour used when `accent = custom`. |
-| `active_scale` | `double` | `1.35` | Size multiplier of the line being sung (image and text mode). In text mode it is drawn with kitty's text sizing protocol (`OSC 66`), which can only draw a few sizes: the line is drawn at `s × n/d`, the closest one to the factor, and it takes two rows of the grid. |
+| `active_scale` | `double` | `1.35` | Size multiplier of the line being sung. |
 | `visible_above` | `int` | `6` | Lines visible above the active one. |
 | `visible_below` | `int` | `6` | Lines visible below the active one. |
-| `language` | `select` | `auto` | Language of the texts inside the window: `auto` (the system language), `en` or `es`. |
 | `glyph` | `glyph` | `music` | Bar icon (only in the settings page). |
 
 The position and the size are applied live to the running window, without recreating
-it. In image mode the font family and the font size also apply live (the font cache
-is invalidated on change); in text mode kitty fixes both when the window opens, so
-the window has to be opened again for them to change.
+it. The font family and the font size also apply live: the font cache is
+invalidated on change, so there is no need to reopen the window.
 
 ## Changelog
+
+### 2.5.0
+
+- **Image only, for real**: the text rendering mode, the render-mode buttons and
+  every text-mode helper are gone. The panel no longer offers a choice that the
+  window cannot honour.
+- **`cava` behind the lyrics**: the visualiser is no longer an option. `cava` runs
+  with its own configuration and its bars fill the whole window as a background,
+  at 30 fps in the steady state. If it fails, simulated bars keep the window alive.
+- **Soft transition, simplified**: `ghost` now means a fixed ~0.9 s eased slide
+  (60 fps while moving, capped at 80 % of the gap to the next line). With `ghost`
+  off the change is instant. `animation_ms` is gone: `offset_ms` already covers
+  timing corrections and the millisecond slider only made the scroll feel laggy.
+- **Cleaner panel**: window language (automatic again), the cache button and
+  `animation_ms` were removed. Keyboard hints are centred in the window.
+- **Less dead weight**: removed the character equalizer, the text layout helpers
+  and the unused terminal-width utilities.
+
+### 2.4.0
+
+- **Image-only mode**: text rendering mode removed. It relied on Kitty's OSC 66
+  protocol which cannot color individual characters within a scaled block,
+  making true per-character karaoke glow impossible. Image mode now provides
+  the complete experience: pixel-perfect karaoke fill, true Gaussian blur glow,
+  and any font at any scale.
+- **Simpler codebase**: removed all OSC 66/kitty text scaling logic,
+  `karaoke_cut`, `karaoke_amount` (text variant), `build_frame`,
+  `_draw_text_frame`, `use_image`, and fallback logic.
+
+### 2.3.0
+
+- **Karaoke character-by-character fires at exact timestamp again**: the 1.0.0
+  behavior is restored — with `active_scale = 1.0` (or no scale) each character
+  lights up exactly when its timestamp arrives, no interpolation or rounding.
+  With scaling the fill still advances on block boundaries so no gaps open.
+- **Glow in image mode is true blur** (2.3.0): the sung text is blurred into a
+  halo reaching several pixels beyond the letters, fading at the fill edge
+  instead of a hard wall. The boundary between sung and unsung text is a
+  gradient.
+- **Word-level timing preference**: the first lyrics result appears immediately
+  (usually LRCLIB, line-level). If another provider (NetEase, QQ Music) returns
+  per-character timings, it upgrades live and the cache stores the word-level
+  version. LRC enhanced tags `<mm:ss.xx>` are now parsed into per-character
+  times. NetEase duration is omitted from the request to avoid strict filtering.
+- **Background upgrade without disrupting playback**: when a cached line-level
+  lyrics is shown, a background search for word-level timing runs once per
+  song per week (`.noword` marker). The upgrade applies only if it truly
+  improves quality; equal or worse results don't reposition the carousel.
+- **Cache only stores the best quality**: `save_cache` now only writes when
+  the new result has word-level timing or when it's the initial fetch
+  (`upgrade=False`). This prevents a line-level result from overwriting
+  a cached word-level one.
 
 ### 2.2.0
 
@@ -137,7 +193,9 @@ the window has to be opened again for them to change.
   the exact period of the scale (`s × n/d`): with 1.2 the blocks are 5 characters,
   which occupy whole cells, so the visible gaps every few characters are gone.
   The fill advances on those block boundaries, so no piece of text is ever split
-  and no gap opens inside a word.
+  and no gap opens inside a word. When the active line is not scaled
+  (`active_scale = 1.0`) there are no blocks: the fill changes character exactly
+  at its timestamp, as in 1.0.0, so it stays glued to the voice.
 - The scroll uses `animation_ms` as its real duration (it was half of it), never
   invades the following line (it fits in 80% of the gap), and both modes now ease
   with the same curve: the block dims while it moves and the movement feels the
@@ -267,8 +325,8 @@ noctalia msg plugin faminec/lyrics-carousel:widget all refresh
 | `set <key> <value> [type]` | Sets a setting. | Sets a setting. |
 | `refresh` | Re-reads the settings and the track, and redraws the panel. | Redraws the bar icon. |
 
-`toggle` only works with the switches — `marker`, `karaoke`, `equalizer`, `footer`,
-`hints`, `header` and `ghost` — because flipping a number makes no sense.
+`toggle` only works with the switches — `marker`, `karaoke`, `footer`, `hints`,
+`header` and `ghost` — because flipping a number makes no sense.
 
 The value of `set` can also be written as `key=value`. Its type (`bool`, `int`,
 `float` or `string`) is optional: without it, the type is deduced from the setting,
@@ -377,12 +435,12 @@ python3 ~/.local/share/noctalia/plugins/lyrics-carousel/tools/check-verifier.py
   `noctalia-lyrics-carousel`; the script can also be run by hand as `lyrics-carousel`.
 - The panel starts the script by its absolute path (`python3 <plugin>/bin/lyrics-carousel`),
   so it does not depend on the `PATH` nor on the executable bit.
-- Outside kitty (or without Pillow) the script falls back to text mode on its own,
-  and it says so in `~/.cache/lyrics-carousel/debug.log` instead of doing it silently.
+- Outside kitty (or without Pillow) there is no text fallback: the window reports
+  the reason in `~/.cache/lyrics-carousel/debug.log` and exits instead of drawing
+  something the user did not ask for.
 - The accent colour is read from the theme Noctalia generates for kitty, so it follows
   the wallpaper.
-- Kitty only accepts monospaced fonts, so in text mode the usable list is
-  `Departure Mono`, `Press Start 2P`, `Space Mono`, `NType 82 Mono`, `Lettera Mono LL`
-  and `IBM Plex Mono`. Image mode accepts any font.
+- Image mode accepts any installed font: the panel lists a few favourites and
+  also allows typing a font name.
 - The plugin makes network requests to the lyrics providers; nothing else leaves the
   machine.

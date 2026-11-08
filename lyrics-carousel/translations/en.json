@@ -10,7 +10,6 @@
   "accent_yellow": "yellow",
   "active_scale": "Active line size",
   "anchor": "Window position",
-  "animation_ms": "Transition (ms)",
   "anchor_bottom_center": "bot mid",
   "anchor_bottom_left": "bot left",
   "anchor_bottom_right": "bot right",
@@ -24,34 +23,24 @@
   "close": "Close",
   "direction": "Direction",
   "down": "down",
-  "equalizer": "Sound visualiser",
-  "equalizer_with_header": "The header already draws the visualiser.",
   "font_family": "Font",
   "font_custom": "Other font…",
   "font_custom_name": "Font name",
-  "font_hint": "Text mode only accepts monospaced fonts; the rest are for image mode.",
+  "font_hint": "Any installed font works: it is applied on the fly.",
   "font_placeholder": "Departure Mono",
   "font_size": "Size",
   "footer": "Time bar",
-  "ghost": "Soft transitions",
+  "ghost": "Soft transition between lines",
   "glyph": "Bar icon",
   "header": "Header (title / artist)",
   "height": "Height",
   "hints": "Keyboard hints",
-  "image_only": "image only",
   "karaoke": "Karaoke glow",
-  "language": "Window language",
-  "language_auto": "automatic",
-  "language_en": "English",
-  "language_es": "Spanish",
   "launch": "Open the carousel",
   "launch_failed": "Could not open the terminal.",
   "marker": "Active line marker",
-  "mode_image": "image",
   "offset_ms": "Lyrics offset (ms)",
-  "mode_text": "text",
   "open_settings": "Open settings",
-  "render_mode": "Rendering",
   "section_color": "Colour",
   "section_display": "Display",
   "section_font": "Font",
@@ -72,19 +61,12 @@
       "custom": "Custom"
     },
     "active_scale": {
-      "description": "Size multiplier of the line being sung. It works in both modes.",
+      "description": "Size multiplier of the line being sung.",
       "label": "Active line size"
     },
     "anchor": {
       "description": "Where the window opens: center, top-left, bottom-right...",
       "label": "Window position"
-    },
-    "language": {
-      "description": "Language of the texts inside the window. Automatic follows the system language.",
-      "label": "Window language",
-      "auto": "Automatic",
-      "en": "English",
-      "es": "Spanish"
     },
     "custom_x": {
       "description": "Custom horizontal position (only with custom position)",
@@ -93,10 +75,6 @@
     "custom_y": {
       "description": "Custom vertical position (only with custom position)",
       "label": "Y"
-    },
-    "animation_ms": {
-      "description": "Duration of the scroll between lines, in milliseconds. 0 = instant.",
-      "label": "Transition"
     },
     "custom_color": {
       "description": "Hex colour (#rrggbb) used when the accent is \"custom\".",
@@ -108,12 +86,8 @@
       "label": "Scroll direction",
       "up": "Up"
     },
-    "equalizer": {
-      "description": "Show the animated bars.",
-      "label": "Sound visualiser"
-    },
     "font_family": {
-      "description": "Font used for the lyrics. Image mode accepts any font; text mode only accepts monospaced ones.",
+      "description": "Lyrics font. Any installed font is accepted.",
       "label": "Font family"
     },
     "font_size": {
@@ -125,8 +99,8 @@
       "label": "Time bar"
     },
     "ghost": {
-      "description": "Dim the block slightly while it moves for a softer feel.",
-      "label": "Soft transitions"
+      "description": "Smooth slide (~0.9 s) when the line changes. Off, the change is instant.",
+      "label": "Soft transition between lines"
     },
     "glyph": {
       "description": "Icon shown in the bar.",
@@ -156,14 +130,8 @@
       "description": "Shift the lyrics in milliseconds to fine tune the sync.",
       "label": "Lyrics offset"
     },
-    "render_mode": {
-      "description": "Text: drawn by the terminal. Image: drawn with Pillow, allows other line sizes and any font.",
-      "label": "Rendering mode",
-      "image": "Image",
-      "text": "Text"
-    },
     "spacing": {
-      "description": "Blank rows between lyrics (text mode).",
+      "description": "Line spacing in the carousel.",
       "label": "Line spacing"
     },
     "visible_above": {
@@ -191,9 +159,5 @@
   "custom_color": "Custom colour",
   "color_placeholder": "#rrggbb",
   "glyph_placeholder": "music",
-  "clear_cache": "Clear the lyrics cache",
-  "clear_cache_failed": "Could not clear the lyrics cache.",
-  "clear_cache_done": "Cache cleared. Looking for the lyrics again.",
-  "clear_cache_hint": "Only needed if you switched source, the saved lyrics are wrong, or you want to force a search. For one song just press \"r\" in the window.",
   "write_failed": "Could not save the setting."
 }

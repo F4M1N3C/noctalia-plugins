@@ -34,16 +34,22 @@ local DEFAULTS = {
   visible_above = 6,
   visible_below = 6,
   glyph = "music",
+  visualizer = true,
+  visualizer_position = "bottom",
+  visualizer_coverage = 25,
+  translate_lyrics = false,
 }
 
 local BOOL_KEYS = {
   marker = true, karaoke = true, footer = true,
   hints = true, header = true, ghost = true,
+  visualizer = true,
 }
 local INT_KEYS = {
   font_size = true, spacing = true, offset_ms = true,
   width = true, height = true, visible_above = true, visible_below = true,
   custom_x = true, custom_y = true,
+  visualizer_coverage = true,
 }
 local FLOAT_KEYS = { active_scale = true }
 
@@ -70,6 +76,7 @@ local LIMITS = {
   visible_above = { 0, 20 },
   visible_below = { 0, 20 },
   active_scale = { 1.0, 2.5 },
+  visualizer_coverage = { 5, 50 },
 }
 
 M.LIMITS = LIMITS
@@ -88,6 +95,7 @@ local PATTERNS = {
   -- el campo del panel y el IPC del widget tienen que rechazarla igual. Un
   -- salto de linea tampoco vale: la fuente se pasa al comando de kitty.
   font_family = "^[^\n]+$",
+  visualizer_position = "^(top|bottom|left|right)$",
 }
 
 M.PATTERNS = PATTERNS

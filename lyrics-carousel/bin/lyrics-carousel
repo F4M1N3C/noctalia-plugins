@@ -1928,6 +1928,8 @@ class LyricsCarousel:
             self.visualizer = None
             self.visualizer_position = "bottom"
             self.visualizer_coverage = 25
+        # Timestamp del último cambio de geometría programático (applyGeometry)
+        self._last_geometry_change = 0.0
         # Si la terminal se cierra, las escrituras fallan: hay que salir en
         # vez de quedarse dibujando en el vacio.
         self.output_broken = False
@@ -2000,6 +2002,11 @@ class LyricsCarousel:
         width = size.columns if size.columns > 0 else 96
         height = size.lines if size.lines > 0 else 30
         if width != self.width or height != self.height:
+            # Si el cambio NO es programático (applyGeometry escribe overrides
+            # y luego hace dispatch; el script ve el override ~0.5s antes).
+            if time.monotonic() - getattr(self, "_last_geometry_change", 0) > 0.5:
+                self._save_override("width", width, "int")
+                self._save_override("height", height, "int")
             self.width = width
             self.height = height
             self.dirty = True
@@ -2191,6 +2198,7 @@ class LyricsCarousel:
             or previous.get("anchor") != cfg["anchor"]
         ):
             # La geometría se aplica a la ventana viva, sin recrearla.
+            self._last_geometry_change = time.monotonic()
             if apply_geometry(cfg):
                 self.log("geometría aplicada en caliente")
         # Visualizador: crear/destruir si cambia el estado ON/OFF, actualizar posición/cobertura

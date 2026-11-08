@@ -1057,6 +1057,44 @@ def check_karaoke_sin_resplandor():
     )
 
 
+def check_tamano_fraccionario():
+    """El tamaño de la letra es continuo: no escalona en píxeles enteros.
+
+    Con la caché por entero, el renglón que crece daba un salto de 1 px cada
+    pocos cuadros y se notaba como un escaloncito.
+    """
+    mod = image_module()
+    if mod.Image is None:
+        check("el tamaño fraccionario se puede medir (Pillow)", False, "sin Pillow")
+        return
+
+    renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
+    renderer.fonts = {}
+    renderer.font_files = {"prueba": mod.FALLBACK_FONT}
+    imagen = mod.Image.new("RGBA", (600, 90), (0, 0, 0, 0))
+    pincel = mod.ImageDraw.Draw(imagen)
+
+    def ancho(tam):
+        return pincel.textlength("Hola", font=renderer.font("prueba", tam))
+
+    # 25,1 y 25,4 con la caché por entero caían en la misma fuente (25):
+    # la letra no podia crecer de forma continua.
+    a, b = ancho(25.1), ancho(25.4)
+    check(
+        "el tamaño de la letra es continuo, no escalonado",
+        abs(a - b) > 0.5,
+        "ancho=%.2f/%.2f" % (a, b),
+    )
+    check(
+        "la caché distingue tamaños distintos",
+        renderer.font("prueba", 25.1) is not renderer.font("prueba", 25.4),
+    )
+    check(
+        "la caché reutiliza el mismo tamaño",
+        renderer.font("prueba", 25.1) is renderer.font("prueba", 25.12),
+    )
+
+
 def check_glow_real():
     """La letra cantada es nitida: brillo de la letra, sin halo difuminado.
 
@@ -3357,6 +3395,7 @@ def main(argv):
     check_layout_imagen()
     check_karaoke_imagen_pixel_a_pixel()
     check_karaoke_sin_resplandor()
+    check_tamano_fraccionario()
     check_karaoke_imagen_sigue_los_tiempos()
     check_transicion_real()
     check_transicion_visual_fluida()

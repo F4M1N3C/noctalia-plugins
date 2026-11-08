@@ -78,10 +78,13 @@ class ImageRenderer:
         return path
 
     def font(self, family: str, size: float):
-        key = (family, int(round(size)))
+        # El tamaño se guarda en cuartos de píxel: la letra crece de forma
+        # continua (sin escalones de 1 px) y la caché no crece sin límite,
+        # porque el rango de tamaños posibles es pequeño.
+        key = (family, int(round(size * 4)))
         font = self.fonts.get(key)
         if font is None:
-            font = load_font(self.font_file(family), key[1])
+            font = load_font(self.font_file(family), key[1] / 4.0)
             self.fonts[key] = font
         return font
 

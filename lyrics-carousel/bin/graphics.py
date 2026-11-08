@@ -146,11 +146,13 @@ class GraphicsRenderer:
         self.out.flush()
 
 
-def load_font(path: str, size: int):
+def load_font(path: str, size: float):
     if Image is None or not path:
         return None
     try:
-        return ImageFont.truetype(path, max(1, int(size)))
+        # El tamaño puede ser fraccionario: así la letra que crece no da
+        # escalones de un píxel.
+        return ImageFont.truetype(path, max(1.0, float(size)))
     except OSError:
         return None
 

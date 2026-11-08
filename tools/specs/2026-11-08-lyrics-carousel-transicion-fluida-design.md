@@ -134,7 +134,40 @@ carrusel va fluido.
 | La caché de fuentes con claves fraccionarias crece | El rango de tamaños es finito y se reutiliza; se puede purgar si hace falta |
 | Quitar el halo resta carácter al renglón principal | Es lo pedido; el relleno nítido mantiene el contraste cantado/pendiente |
 
-## 6. Trabajo siguiente (fuera de este documento)
+## 6. Refinamiento: el relevo no oscurece de golpe (karaoke)
+
+**Aviso del usuario:** "el renglón que está a punto de ser el principal tiene la transición
+de tamaño y color, eso está bien, pero cuando llega a ser el principal inmediatamente se
+oscurece un poquito; eso solamente pasa cuando está la opción de karaoke glow".
+
+**Causa raíz.** La línea que va a ser principal se dibuja con `_draw_centered`: un solo
+color que va de blanco al **acento** (rojo vivo). Al volverse principal, la ruta del
+karaoke la dibuja en **dos tonos**: lo cantado en el acento y lo que falta en un rojo
+apagado (`mix(acento, fondo, 0.45)`). Como el relleno arranca en 0, toda la línea pasa de
+golpe al rojo apagado: ese es el oscurecimiento instantáneo. Solo ocurre con "Karaoke
+glow" porque es la única ruta que pinta la línea principal en dos tonos.
+
+**Decisión.** Con el karaoke activo, la entrante hace su transición de color normal
+(blanco → acento) **y encima** una transición de oscuridad: del nivel que tienen los
+renglones siguientes (sin oscurecer) al tono apagado de lo pendiente del renglón principal.
+
+```python
+color = self._lerp(inicio, accent, progress)              # transición de color
+color = self._lerp(color, apagado, progress)               # transición de oscuridad
+```
+
+El camino resultante es blanco → acento → rojo apagado (monótono en brillo) y la línea
+llega al centro ya con el tono que tendrá: el relevo queda continuo. Sin karaoke no
+cambia nada. El tono apagado se calcula en un único sitio
+(`ImageRenderer._karaoke_pendiente`), que usan tanto la ruta del karaoke como la
+entrante, para que no puedan divergir.
+
+**Verificación.** Test nuevo `check_entrada_karaoke_sin_salto` (rojo antes, verde después):
+la entrante con karaoke termina en el tono apagado; ese tono es exactamente el del
+renglón principal sin cantar; la entrante se oscurece de forma continua; y sin karaoke
+sigue terminando en el acento.
+
+## 7. Trabajo siguiente (fuera de este documento)
 
 Mejora permanente de la **búsqueda de letra**: canciones con letra errada o que no se
 encuentra cuando la canción sí la tiene. Se hará su propio documento de diseño tras

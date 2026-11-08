@@ -42,6 +42,10 @@ class ImageRenderer:
       * admite cualquier tipografía, no solo monoespaciadas.
     """
 
+    # Qué fuerza tiene el acento en el tono de lo que aún no se ha cantado
+    # (el karaoke): 45 % del acento sobre el fondo.
+    KARAOKE_PENDIENTE = 0.45
+
     def __init__(self, app):
         self.app = app
         self.gfx = GraphicsRenderer()
@@ -119,6 +123,15 @@ class ImageRenderer:
             int(primero[2] + (segundo[2] - primero[2]) * factor),
         )
 
+    def _karaoke_pendiente(self, accent, background):
+        """El tono apagado de lo que aún no se ha cantado (el karaoke).
+
+        Es el color con el que se dibuja la parte de la línea principal que
+        todavía no se ha cantado. La línea que va a ser principal tiene que
+        llegar a este tono, o al volverse principal se oscurece de golpe.
+        """
+        return self._mix(accent, background, self.KARAOKE_PENDIENTE)
+
     def fit_text(self, text, max_width, size, family):
         """Recorta el texto para que quepa en el ancho disponible."""
         font = self.font(family, size)
@@ -167,11 +180,10 @@ class ImageRenderer:
         sílaba larga tarda más en llenarse, que es lo que hacía parecer
         que reconocía la velocidad de la canción.
 
-        El resplandor es de verdad un resplandor: la capa cantada se
-        difumina y se compone debajo del texto nítido, así que el brillo
-        sale varios píxeles hacia fuera. Antes era un halo de un píxel (la
-        misma frase pegada ocho veces alrededor), que solo pintaba un
-        contorno y se veía como un pegamento.
+        El brillo es el de la propia letra: lo cantado se rellena con el
+        color de acento y lo que falta va en un tono apagado. No hay halo
+        difuminado alrededor (era una sombra que además costaba 3,2 ms por
+        cuadro y hacía bajar el carrusel de 60 fps).
 
         El borde del relleno se desvanece con una rampa de alfa: la letra
         cantada se funde con la que falta en vez de cortar en seco, y el
@@ -493,6 +505,17 @@ class ImageRenderer:
                 # color principal.
                 inicio = self._mix(theme.foreground, background, fade)
                 color = self._lerp(inicio, accent, progress)
+                if app.karaoke and app.cfg["karaoke"]:
+                    # Con karaoke la línea principal se dibuja en dos tonos:
+                    # lo cantado en el acento y lo que falta, apagado. La
+                    # entrante tiene que llegar ya a ese tono apagado: si
+                    # llega al acento, al volverse principal se oscurece de
+                    # golpe. Por eso, encima de la transición de color, hay
+                    # otra de oscuridad: del nivel que tienen los renglones
+                    # siguientes (sin oscurecer) al tono de lo pendiente.
+                    color = self._lerp(
+                        color, self._karaoke_pendiente(accent, background), progress
+                    )
             else:
                 base = theme.foreground if line_index > index else theme.past
                 color = self._mix(base, background, fade)
@@ -517,7 +540,7 @@ class ImageRenderer:
                 # reparte la duración de la línea entre los caracteres.
                 amount = app.karaoke_amount(line, text, position, end)
                 cantada = accent
-                pendiente = self._mix(accent, background, 0.45)
+                pendiente = self._karaoke_pendiente(accent, background)
                 if progress > 0.0:
                     # La línea que deja de ser principal se va apagando
                     # hacia el color de las ya cantadas: al terminar queda

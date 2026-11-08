@@ -787,6 +787,112 @@ def check_transicion_real():
             )
 
 
+# --- escena de prueba del relevo ---------------------------------------
+
+ESCENA_FONDO = (12, 12, 18)
+ESCENA_BLANCO = (240, 240, 245)
+ESCENA_PASADO = (110, 110, 120)
+ESCENA_ROJO = (220, 60, 60)
+ESCENA_SIZE = 20.0
+ESCENA_SCALE = 1.6
+
+
+class _TemaEscena:
+    background = ESCENA_FONDO
+    foreground = ESCENA_BLANCO
+    past = ESCENA_PASADO
+
+
+class _LineaEscena:
+    def __init__(self, text):
+        self.text = text
+        self.start = 0.0
+        self.duration = 4.0
+        self.chars = []
+
+
+def render_relevo(
+    mod,
+    progress,
+    textos,
+    estado=None,
+    karaoke=False,
+    direction="down",
+    cantidad=999.0,
+):
+    """Dibuja el carrusel con las líneas dadas y devuelve la imagen.
+
+    `estado` es la tupla (índice, foco, progreso) que devuelve
+    `scroll_state`; por defecto la línea 1 es la principal y la 2 la que va
+    a tomar el puesto. `cantidad` son los caracteres cantados (con karaoke).
+    """
+    class App:
+        pass
+
+    app = App()
+    app.theme = _TemaEscena()
+    app.cfg = {
+        "visible_above": 2,
+        "visible_below": 2,
+        "direction": direction,
+        "spacing": 3,
+        "marker": False,
+        "karaoke": karaoke,
+    }
+    app.lines = [_LineaEscena(texto) for texto in textos]
+    app.karaoke = karaoke
+    app.next_timed_start = lambda indice: None
+    app.karaoke_amount = lambda *args: cantidad if karaoke else 0.0
+    app.scroll_state = lambda posicion: estado or (1, 2, progress)
+    renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
+    renderer.app = app
+    renderer.fonts = {}
+    renderer.font_files = {"prueba": mod.FALLBACK_FONT}
+    imagen = mod.Image.new("RGBA", (900, 800), (0, 0, 0, 0))
+    pincel = mod.ImageDraw.Draw(imagen)
+    renderer._measure_draw = pincel
+    renderer._draw_lyrics(
+        pincel,
+        400.0,
+        ESCENA_SIZE,
+        ESCENA_SCALE,
+        "prueba",
+        ESCENA_ROJO,
+        0.0,
+        60.0,
+        740.0,
+    )
+    return imagen
+
+
+def alto_texto(imagen):
+    """La altura del texto dibujado (0 si no hay nada)."""
+    caja = imagen.getbbox()
+    return 0 if caja is None else caja[3] - caja[1]
+
+
+def color_opaco(imagen):
+    """El RGB del glifo más opaco (el color con el que se pintó)."""
+    caja = imagen.getbbox()
+    if caja is None:
+        return (0, 0, 0)
+    region = imagen.crop(caja)
+    colores = region.getcolors(maxcolors=200000) or []
+    if not colores:
+        return (0, 0, 0)
+    cuenta, pixel = max(colores, key=lambda par: par[1][3])
+    return pixel[:3]
+
+
+def distancia(uno, otro):
+    return sum((uno[i] - otro[i]) ** 2 for i in range(3)) ** 0.5
+
+
+def brillo(color):
+    """La luminancia perceptiva de un color (para ver si se oscurece)."""
+    return 0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2]
+
+
 def check_transicion_visual_fluida():
     """La transición ghost se ve: tamaño gradual y colores que cruzan.
 
@@ -802,76 +908,25 @@ def check_transicion_visual_fluida():
         check("la transición visual se puede medir (Pillow)", False, "sin Pillow")
         return
 
-    FONDO = (12, 12, 18)
-    BLANCO = (240, 240, 245)
-    PASADO = (110, 110, 120)
-    ROJO = (220, 60, 60)
-    SIZE = 20.0
-    SCALE = 1.6
-
-    class Tema:
-        background = FONDO
-        foreground = BLANCO
-        past = PASADO
-
-    class Linea:
-        def __init__(self, text):
-            self.text = text
-            self.start = 0.0
-            self.duration = 4.0
-            self.chars = []
-
-    class App:
-        pass
+    FONDO = ESCENA_FONDO
+    BLANCO = ESCENA_BLANCO
+    PASADO = ESCENA_PASADO
+    ROJO = ESCENA_ROJO
+    SIZE = ESCENA_SIZE
+    SCALE = ESCENA_SCALE
 
     def render(progress, textos, estado=None, karaoke=False, direction="down"):
         """Dibuja el carrusel con una sola línea con texto y devuelve la imagen."""
-        app = App()
-        app.theme = Tema()
-        app.cfg = {
-            "visible_above": 2,
-            "visible_below": 2,
-            "direction": direction,
-            "spacing": 3,
-            "marker": False,
-            "karaoke": karaoke,
-        }
-        app.lines = [Linea(texto) for texto in textos]
-        app.karaoke = karaoke
-        app.next_timed_start = lambda indice: None
-        app.karaoke_amount = lambda *args: 999.0 if karaoke else 0.0
-        # La línea 1 es la principal y la 2 la que va a tomarser el puesto.
-        app.scroll_state = lambda posicion: estado or (1, 2, progress)
-        renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
-        renderer.app = app
-        renderer.fonts = {}
-        renderer.font_files = {"prueba": mod.FALLBACK_FONT}
-        imagen = mod.Image.new("RGBA", (900, 800), (0, 0, 0, 0))
-        pincel = mod.ImageDraw.Draw(imagen)
-        renderer._measure_draw = pincel
-        renderer._draw_lyrics(
-            pincel, 400.0, SIZE, SCALE, "prueba", ROJO, 0.0, 60.0, 740.0
+        return render_relevo(
+            mod,
+            progress,
+            textos,
+            estado=estado,
+            karaoke=karaoke,
+            direction=direction,
         )
-        return imagen
 
-    def alto(imagen):
-        caja = imagen.getbbox()
-        return 0 if caja is None else caja[3] - caja[1]
-
-    def color_opaco(imagen):
-        """El RGB del glifo más opaco (el color con el que se pintó)."""
-        caja = imagen.getbbox()
-        if caja is None:
-            return (0, 0, 0)
-        region = imagen.crop(caja)
-        colores = region.getcolors(maxcolors=200000) or []
-        if not colores:
-            return (0, 0, 0)
-        cuenta, pixel = max(colores, key=lambda par: par[1][3])
-        return pixel[:3]
-
-    def distancia(uno, otro):
-        return sum((uno[i] - otro[i]) ** 2 for i in range(3)) ** 0.5
+    alto = alto_texto
 
     entrante = ["", "", "ENTRANTE", "", ""]
     saliente = ["", "SALIENTE", "", ""]
@@ -963,6 +1018,93 @@ def check_transicion_visual_fluida():
             and distancia(color_salida_up, ROJO) > 60,
             "color=%r" % (color_salida_up,),
         )
+
+
+def check_entrada_karaoke_sin_salto():
+    """Con karaoke la entrante llega ya al tono apagado: el relevo no salta.
+
+    Sin karaoke la línea principal se dibuja en un solo color (el acento) y
+    el relevo no tiene salto. Con karaoke se dibuja en dos tonos: lo cantado
+    en el acento y lo que falta en un rojo apagado. La entrante llegaba al
+    acento, así que al volverse principal se oscurecía de golpe.
+
+    Con la oscuridad en la transición, la entrante baja del nivel que tienen
+    los renglones siguientes hasta ese tono apagado, y el relevo queda
+    continuo.
+    """
+    mod = image_module()
+    if mod.Image is None:
+        check("el relevo con karaoke se puede medir (Pillow)", False, "sin Pillow")
+        return
+
+    fondo = ESCENA_FONDO
+    rojo = ESCENA_ROJO
+    # El tono apagado de lo que aún no se ha cantado: el mismo 45 % del
+    # acento sobre el fondo que usa la ruta del karaoke.
+    apagado = tuple(
+        int(fondo[i] + (rojo[i] - fondo[i]) * 0.45) for i in range(3)
+    )
+
+    entrante = ["", "", "ENTRANTE", "", ""]
+    principal = ["", "CANTO", "", "", ""]
+
+    # La entrante, al final de la transición, con el tono que tendrá el
+    # renglón principal mientras lo que falta no se ha cantado.
+    final = color_opaco(render_relevo(mod, 1.0, entrante, karaoke=True))
+    check(
+        "con karaoke la entrante llega al tono apagado de lo pendiente",
+        distancia(final, apagado) < 12,
+        "color=%r esperado=%r" % (final, apagado),
+    )
+
+    # Y es exactamente el mismo tono que tiene el renglón principal: al
+    # cambiar de uno a otro no hay salto de color.
+    tono_principal = color_opaco(
+        render_relevo(
+            mod,
+            0.0,
+            principal,
+            estado=(1, 1, 0.0),
+            karaoke=True,
+            cantidad=0.0,
+        )
+    )
+    check(
+        "la entrante y el renglón principal tienen el mismo tono",
+        distancia(final, tono_principal) < 6,
+        "entrante=%r principal=%r" % (final, tono_principal),
+    )
+
+    # La oscuridad es gradual: a mitad de camino la entrante ya está más
+    # cerca del tono apagado que sin karaoke.
+    mitad_karaoke = color_opaco(render_relevo(mod, 0.5, entrante, karaoke=True))
+    mitad_sin = color_opaco(render_relevo(mod, 0.5, entrante, karaoke=False))
+    check(
+        "con karaoke la entrante se oscurece poco a poco",
+        distancia(mitad_karaoke, apagado) < distancia(mitad_sin, apagado),
+        "con=%r sin=%r apagado=%r" % (mitad_karaoke, mitad_sin, apagado),
+    )
+
+    # Y el oscurecimiento no se nota como un escalón: cada tramo se
+    # oscurece un poco más que el anterior.
+    tramos = [
+        color_opaco(render_relevo(mod, p, entrante, karaoke=True))
+        for p in (0.25, 0.5, 0.75, 1.0)
+    ]
+    brillos = [brillo(color) for color in tramos]
+    check(
+        "la entrante se oscurece de forma continua",
+        all(brillos[i] > brillos[i + 1] for i in range(len(brillos) - 1)),
+        "brillos=%r" % ([round(b, 1) for b in brillos],),
+    )
+
+    # Sin karaoke no cambia nada: la entrante sigue terminando en el acento.
+    final_sin = color_opaco(render_relevo(mod, 1.0, entrante, karaoke=False))
+    check(
+        "sin karaoke la entrante sigue terminando en el color principal",
+        distancia(final_sin, rojo) < 12,
+        "color=%r" % (final_sin,),
+    )
 
 
 def check_ritmo_de_frames():
@@ -1132,6 +1274,35 @@ def check_curva_suave():
         "la curva mantiene la mitad en el punto medio",
         abs(curva(0.5) - 0.5) < 1e-9,
         "media=%r" % (curva(0.5),),
+    )
+
+
+def check_primera_ventana_fps():
+    """La primera ventana de estadísticas no dice 0 fps.
+
+    El log mide los fps reales entre frames: la ventana empieza con el
+    primer cuadro dibujado. Si el inicio de la ventana se toma en el
+    momento de logar, la primera línea sale siempre con 0 fps y parece
+    que el plugin va a trompicones cuando va a 60.
+    """
+    mod = script_module()
+    app = mod.LyricsCarousel.__new__(mod.LyricsCarousel)
+    lineas = []
+    app.warn = lambda mensaje: lineas.append(mensaje)
+    app.draw_image = lambda force=False: None
+    app._draw_accum = 0
+    app._draw_frames = 0
+
+    for _ in range(180):
+        app.draw()
+
+    numeros = []
+    if lineas:
+        numeros = re.findall(r"(\d+(?:\.\d+)?) fps reales", lineas[0])
+    check(
+        "la primera ventana de fps no sale en cero",
+        bool(numeros) and float(numeros[0]) > 0.0,
+        "linea=%r" % (lineas[:1],),
     )
 
 
@@ -3439,7 +3610,9 @@ def main(argv):
     check_karaoke_imagen_sigue_los_tiempos()
     check_transicion_real()
     check_transicion_visual_fluida()
+    check_entrada_karaoke_sin_salto()
     check_ritmo_de_frames()
+    check_primera_ventana_fps()
     check_curva_suave()
     check_glow_real()
     check_recarga_por_senal()

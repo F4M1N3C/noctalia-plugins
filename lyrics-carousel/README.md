@@ -18,8 +18,6 @@ The following executables must be installed and available on `PATH`:
 - `hyprland` — the compositor; the window is opened with the Hyprland 0.57 Lua API.
 - `playerctl` — reads the active MPRIS player.
 - `python3` with `python-pillow` — draws the lyrics in image mode.
-- `cava` — real audio bars behind the lyrics. Optional: without it the window
-  draws smooth simulated bars instead.
 
 The lyrics themselves come from the Noctalia Lyrics plugin's source adapter
 (`lyric_sources.py`), so the same providers and the same configuration are reused:
@@ -47,12 +45,12 @@ is that the text cannot be selected.
 
 The text-only mode was removed in 2.4.0: it relied on Kitty's OSC 66 text
 sizing protocol which cannot color individual characters within a scaled
-block, so true per-character karaoke glow was impossible.
+block, so true per-character karaoke was impossible.
 
-Since 2.5.0 the audio visualiser is always the background: `cava` is started
-with its own pipe configuration and its bars are drawn edge to edge behind
-the lyrics, with low opacity so the text stays readable. If `cava` is not
-installed or stops answering, smooth simulated bars take over.
+Since 2.7.0 the window is drawn at its native resolution (no upscaling) and
+the whole plugin runs at 60 real frames per second: the frame deadline is
+measured from the start of the frame, so a frame that takes 8 ms sleeps the
+remaining 8.7 ms instead of a full interval on top of it.
 
 The providers are queried in parallel and the first one to answer wins. The search
 waits up to 15 seconds, so a slow provider is not thrown away; if nobody has answered
@@ -99,7 +97,7 @@ it belongs to the bar widget, not to the lyrics window.
 | `font_size` | `int` | `22` | Size of the lyrics, in pixels. |
 | `direction` | `select` | `down` | `down`: the lyrics come in from the top. `up`: from the bottom. |
 | `marker` | `bool` | `false` | Shows a `>` next to the active line. |
-| `karaoke` | `bool` | `true` | Lights the active line as it is sung, with a glow around it. |
+| `karaoke` | `bool` | `true` | Lights the active line as it is sung, letter by letter. |
 | `footer` | `bool` | `false` | Elapsed time and a progress bar. |
 | `hints` | `bool` | `false` | Keyboard hints at the bottom. |
 | `header` | `bool` | `false` | Title, artist and status tags. |
@@ -123,6 +121,28 @@ it. The font family and the font size also apply live: the font cache is
 invalidated on change, so there is no need to reopen the window.
 
 ## Changelog
+
+### 2.7.0
+
+- **The karaoke is the glow of the letter, not a shadow**: the blurred halo
+  around the sung text is gone. What is left is the crisp fill of the sung
+  part, with its edge fading into the unsung part instead of a hard cut. It
+  also saves 3.2 ms per frame (two Gaussian blurs), which is what kept the
+  carousel below 60 fps.
+- **60 real fps**: the frame deadline is measured from the start of the frame
+  (before: the whole interval was slept *after* the work, so the real cycle
+  was `work + interval` → 36 fps). The log now reports real fps instead of
+  the theoretical ones derived from the draw time alone.
+- **Continuous letter size**: the font size is cached in quarter-pixels, so
+  the line that grows no longer steps one whole pixel at a time.
+- **Smoother scroll**: the slide uses a smootherstep curve (no acceleration
+  at the ends), so the start and the brake of the transition are not felt.
+- **No darkening jump**: with the karaoke on, the line that is about to
+  become the active one arrives at the dim tone of the not-yet-sung letters
+  instead of the bright accent, so the hand-off no longer darkens the line
+  all at once.
+- **Native resolution**: the lyrics are drawn at the window's own size
+  (1200×820 by default) with no upscaling.
 
 ### 2.6.0
 

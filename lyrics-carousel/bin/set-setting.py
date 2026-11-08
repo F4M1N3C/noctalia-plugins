@@ -70,7 +70,6 @@ PATTERNS = {
     # Mismo patron que en lib/settings.luau: la fuente no puede estar
     # vacia ni llevar saltos de linea (se pasa al comando de kitty).
     "font_family": r"^[^\n]+$",
-    "visualizer_position": r"^(top|bottom|left|right)$",
 }
 
 # Los limites (min/max) no se copian aqui: se leen del manifiesto, que es
@@ -189,6 +188,11 @@ def clamp_value(key: str, value):
 def prepare(key: str, value, kind: str):
     """Convierte el valor a su tipo, lo recorta y valida su formato."""
     preparado = clamp_value(key, parse_value(value, kind))
+    # visualizer_position: validacion manual (no hay alternacion | en regex)
+    if key == "visualizer_position":
+        if not isinstance(preparado, str) or preparado not in ("top", "bottom", "left", "right"):
+            raise ValueError(f"formato no válido para {key}: {value!r}")
+        return preparado
     patron = PATTERNS.get(key)
     if patron is not None and (
         not isinstance(preparado, str) or re.fullmatch(patron, preparado) is None

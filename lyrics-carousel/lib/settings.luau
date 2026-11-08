@@ -95,7 +95,6 @@ local PATTERNS = {
   -- el campo del panel y el IPC del widget tienen que rechazarla igual. Un
   -- salto de linea tampoco vale: la fuente se pasa al comando de kitty.
   font_family = "^[^\n]+$",
-  visualizer_position = "^(top|bottom|left|right)$",
 }
 
 M.PATTERNS = PATTERNS
@@ -108,6 +107,15 @@ function M.validate(key, value)
   local pattern = PATTERNS[key]
   if pattern == nil then
     return value
+  end
+  -- visualizer_position: Lua patterns no soportan alternacion con |,
+  -- asi que validamos a mano.
+  if key == "visualizer_position" then
+    local valid = { top = true, bottom = true, left = true, right = true }
+    if type(value) == "string" and valid[value] then
+      return value
+    end
+    return nil
   end
   if type(value) ~= "string" or value:match(pattern) == nil then
     return nil

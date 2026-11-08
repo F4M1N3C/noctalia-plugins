@@ -20,10 +20,11 @@ except ImportError:  # pragma: no cover
 
 FALLBACK_FONT = "/usr/share/fonts/TTF/DejaVuSansMono.ttf"
 
-# Cuadros por segundo del modo imagen. La ventana manda la imagen entera
-# cada vez que cambia, así que 20 bastan para que el karaoke y el
-# visualizador se vean fluidos sin saturar el canal de kitty.
-IMAGE_FPS = 20
+# Cuadros por segundo de la imagen. En reposo (karaoke y fondo animado) 30
+# bastan; mientras el carrusel se desplaza se sube a 60, que es cuando el
+# ojo nota el tirón. La huella del cuadro evita reenviar lo que no cambia.
+IMAGE_FPS = 30
+MOTION_FPS = 60
 
 
 def mmss(seconds):
@@ -351,6 +352,48 @@ class ImageRenderer:
                 cursor += small_h + gap
         return positions
 
+    # -- fondo ----------------------------------------------------------
+
+    def _draw_visualizer(self, image, xpix, ypix, accent):
+        """Barras de cava de fondo, de borde a borde y detras de la letra.
+
+        Se dibujan primero (la letra va encima) con alfa bajo: el fondo se ve
+        como un ecualizador real sin tapar el texto. La altura de cada barra
+        sigue el nivel de audio; si cava no esta, el visualizador devuelve
+        barras simuladas.
+        """
+        visualizer = getattr(self.app, "visualizer", None)
+        if visualizer is None:
+            return
+        try:
+            levels = visualizer.snapshot(simulate=bool(getattr(self.app, "demo", False)))
+        except Exception:  # noqa: BLE001 - el fondo nunca tumba el cuadro
+            return
+        if not levels:
+            return
+        count = len(levels)
+        slot = xpix / float(count)
+        gap = max(1.0, slot * 0.24)
+        width = max(1, int(slot - gap))
+        color = self._mix(accent, self.app.theme.background, 0.55)
+        paint = ImageDraw.Draw(image)
+        for index, level in enumerate(levels):
+            level = max(0.0, min(1.0, float(level)))
+            height = max(2.0, ypix * level)
+            x0 = index * slot + gap / 2.0
+            alpha = int(34 + 58 * level)
+            paint.rectangle(
+                [x0, ypix - height, x0 + width, ypix],
+                fill=color + (alpha,),
+            )
+            # Tapa superior un poco mas viva: da el brillo de cava y marca el
+            # nivel sin subir la opacidad del cuerpo de la barra.
+            if height > 4.0:
+                paint.rectangle(
+                    [x0, ypix - height, x0 + width, ypix - height + 2],
+                    fill=color + (min(170, alpha + 55),),
+                )
+
     # -- render principal -----------------------------------------------
 
     def render(self):
@@ -384,6 +427,9 @@ class ImageRenderer:
         self._measure_draw = draw
         background = theme.background
 
+        # -- fondo: barras del visualizador, a todo el ancho y detras de todo
+        self._draw_visualizer(image, xpix, ypix, accent)
+
         # -- cabecera
         top = size * 1.9
         bottom = ypix - size * 1.9
@@ -402,17 +448,13 @@ class ImageRenderer:
                 fill=self._mix(theme.faint, background, 0.35),
             )
             top = rule_y + size * 0.9
-        if cfg["equalizer"]:
-            eq = app.equalizer_text()
-            self._draw_right(draw, eq, xpix - size * 1.6, top, size * 1.0, accent, family)
-            top += size * 1.5
 
         # -- letra
         center_y = (top + bottom) / 2
         if app.state == "lyrics" and app.lines:
             self._draw_lyrics(draw, center_y, size, scale, family, accent, position, top, bottom)
         else:
-            self._draw_state(draw, center_y, size, family, accent)
+            self._draw_state(draw, center_y, size, family)
 
         # -- pie
         if cfg["footer"]:
@@ -430,20 +472,19 @@ class ImageRenderer:
         position = app.position()
         index, focus, progress = app.scroll_state(position)
         parts = [
-            index, focus, round(progress * 60), app.state, app.track.title,
+            index, focus, round(progress * MOTION_FPS), app.state, app.track.title,
             app.track.artist, int(position) if cfg["footer"] else 0,
             accent, cfg["font_family"], cfg["font_size"], cfg["active_scale"],
             cfg["visible_above"], cfg["visible_below"], cfg["direction"],
             cfg["karaoke"], cfg["marker"], cfg["header"], cfg["footer"],
-            cfg["hints"], cfg["equalizer"], cfg["spacing"], cfg["ghost"],
+            cfg["hints"], cfg["spacing"], cfg["ghost"],
+            round(position * MOTION_FPS),
         ]
-        if cfg["karaoke"] or cfg["equalizer"] or app.state != "lyrics":
-            # El karaoke y el visualizador avanzan con el tiempo, pero
-            # 20 cuadros por segundo bastan: la imagen es grande y
-            # reenviarla en cada iteración del bucle satura la terminal.
-            # El progreso sigue siendo continuo porque dentro del mismo
-            # cuadro el relleno no cambia.
-            parts.append(round(position * IMAGE_FPS))
+        # El fondo se mueve aunque la letra no cambie: su huella entra en la
+        # del cuadro o la imagen se quedaria congelada entre lineas.
+        visualizer = getattr(app, "visualizer", None)
+        if visualizer is not None:
+            parts.append(visualizer.signature())
         return tuple(parts)
 
     def _draw_lyrics(self, draw, center_y, size, scale, family, accent, position, area_top, area_bottom):
@@ -488,9 +529,6 @@ class ImageRenderer:
             else:
                 base = theme.foreground if line_index > index else theme.past
                 color = self._mix(base, background, fade)
-            if app.cfg["ghost"] and 0.0 < progress < 1.0:
-                # Atenúa el bloque mientras se mueve (transición suave).
-                color = self._mix(color, background, 0.18 * (1.0 - progress))
 
             text = self.fit_text(
                 line.text, draw.im.size[0] - size * 6, size * factor, family
@@ -526,7 +564,7 @@ class ImageRenderer:
         x = (draw.im.size[0] - width) / 2 - marker_width - size * 0.35
         draw.text((x, center_y), marker, font=font, fill=color, anchor="lm")
 
-    def _draw_state(self, draw, center_y, size, family, accent):
+    def _draw_state(self, draw, center_y, size, family):
         app = self.app
         theme = app.theme
         if app.state == "loading":
@@ -540,8 +578,6 @@ class ImageRenderer:
             detail = app.tr("open_player")
         self._draw_centered(draw, message, center_y, size, theme.faint, family)
         self._draw_centered(draw, detail, center_y + size * 1.6, size * 0.9, theme.bright, family)
-        eq = app.equalizer_text()
-        self._draw_centered(draw, eq, center_y + size * 3.2, size * 1.1, accent, family)
 
     def _draw_footer(self, draw, xpix, ypix, size, family, accent, position, duration):
         app = self.app
@@ -567,10 +603,24 @@ class ImageRenderer:
     def _draw_hints(self, draw, size, family):
         app = self.app
         theme = app.theme
-        y = app.terminal_pixels()[1] - size * 0.6
-        text = (app.texts.get("hints") or [""])[0]
-        self._draw_left(
-            draw, text, size * 1.6, y, size * 0.8,
+        xpix, ypix = app.terminal_pixels()
+        y = ypix - size * 0.6
+        candidates = app.texts.get("hints") or [""]
+        self._measure_draw = draw
+        limit = max(1.0, xpix - size * 3.2)
+        text = candidates[0]
+        font = self.font(family, size * 0.8)
+        if font is not None:
+            for candidate in candidates:
+                if text_width(draw, candidate, font) <= limit:
+                    text = candidate
+                    break
+            else:
+                text = self.fit_text(candidates[0], limit, size * 0.8, family)
+        # La fila entera queda centrada en la ventana: antes empezaba a la
+        # izquierda y el sobrante se acumulaba a la derecha.
+        self._draw_centered(
+            draw, text, y, size * 0.8,
             self._mix(theme.faint, theme.background, 0.7), family,
         )
 

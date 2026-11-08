@@ -16,7 +16,6 @@ import bisect
 import fcntl
 import hashlib
 import json
-import math
 import os
 import re
 import select
@@ -40,13 +39,19 @@ import urllib.parse
 import urllib.request
 
 APP = "lyrics-carousel"
-VERSION = "2.2.0"
+VERSION = "2.5.0"
 
 # Plazo de espera de la busqueda de letra (segundos). Los proveedores
 # tardan: con 4 s una letra que tarda 6 s se tiraba a la basura.
 SEARCH_TIMEOUT = 15.0
 # Cada cuanto se reintenta una cancion que no tiene letra (segundos).
 RETRY_SECONDS = 60
+# Margen, tras la primera letra, para que llegue otra con tiempos por
+# palabra: se muestra ya la primera y se mejora en cuanto aparece.
+WORD_GRACE = 3.0
+# Cuanto se recuerda que una cancion no tiene version por palabra, para no
+# repetir la busqueda en cada reproduccion (horas).
+WORD_CHECK_HOURS = 24 * 7
 
 # realpath: el script se lanza por el enlace simbolico de ~/.local/bin. Con
 # abspath el directorio seria ~/.local/bin y los modulos hermanos
@@ -58,16 +63,21 @@ if _HERE not in sys.path:
 
 IMAGE_ERROR = ""
 try:
-    from image_renderer import IMAGE_FPS  # noqa: F401  (el ritmo del modo imagen)
+    from image_renderer import IMAGE_FPS, MOTION_FPS  # noqa: F401  (ritmo del modo imagen)
 except Exception:  # noqa: BLE001
     # El modulo puede no estar (Pillow ausente): el modo imagen se apaga y el
-    # ritmo se queda en 20, que es el que usa image_renderer cuando si esta.
-    IMAGE_FPS = 20
+    # ritmo se queda en el que usa image_renderer cuando si esta.
+    IMAGE_FPS = 30
+    MOTION_FPS = 60
 try:
     from image_renderer import ImageRenderer
 except Exception as error:  # noqa: BLE001  (el modo imagen es opcional)
     ImageRenderer = None
     IMAGE_ERROR = repr(error)
+try:
+    from visualizer import Visualizer
+except Exception:  # noqa: BLE001  (el fondo es opcional)
+    Visualizer = None
 
 # Las rutas del estado (settings.toml y overrides) viven en un modulo
 # propio: el script y el helper tienen que buscar el mismo sitio o uno
@@ -91,8 +101,8 @@ CACHE_DIR = os.path.join(
 #
 # La ventana se dibuja en una terminal: no hay forma de pedirle a Noctalia
 # una traduccion, asi que los textos viven aqui, en ingles y en espanol.
-# El idioma se elige con --lang, con el ajuste `language` o con el del
-# sistema (LC_ALL, LC_MESSAGES, LANG).
+# El idioma se elige con --lang o con el del sistema (LC_ALL, LC_MESSAGES,
+# LANG).
 
 TEXTS = {
     "en": {
@@ -155,7 +165,7 @@ def detect_language(choice: str = "auto") -> str:
 
     "auto" mira el idioma del sistema. Si no dice nada, ingles: el plugin
     esta en ingles y el usuario que lo quiera en espanol lo pide con
-    --lang es o con el ajuste `language`.
+    --lang es.
     """
     value = str(choice or "auto").strip().lower()
     if value in LANGUAGES:
@@ -170,147 +180,12 @@ def detect_language(choice: str = "auto") -> str:
 # utilidades
 # --------------------------------------------------------------------------
 
-ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-
-
-def strip_ansi(value: str) -> str:
-    return ANSI_RE.sub("", value)
-
-
-def cell_width(value: str) -> int:
-    """Ancho en celdas de terminal (sin ANSI)."""
-    value = strip_ansi(value)
-    total = 0
-    for char in value:
-        if unicodedata.combining(char):
-            continue
-        if unicodedata.east_asian_width(char) in ("W", "F"):
-            total += 2
-        else:
-            total += 1
-    return total
-
-
-def truncate(value: str, width: int, ellipsis: str = "…") -> str:
-    if width <= 0:
-        return ""
-    if cell_width(value) <= width:
-        return value
-    ell = cell_width(ellipsis)
-    limit = max(0, width - ell)
-    out = []
-    used = 0
-    for char in value:
-        char_width = 0 if unicodedata.combining(char) else (
-            2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
-        )
-        if used + char_width > limit:
-            break
-        out.append(char)
-        used += char_width
-    return "".join(out).rstrip() + (ellipsis if width >= ell else "")
-
 
 def normalize_text(value: str) -> str:
     value = unicodedata.normalize("NFC", value or "")
     value = value.replace("\t", " ").replace("\r", " ").replace("\n", " ")
     value = "".join(ch for ch in value if ch == " " or unicodedata.category(ch)[0] != "C")
     return re.sub(r"\s+", " ", value).strip()
-
-
-# ---- tamaño del texto de kitty (OSC 66) --------------------------------
-#
-# Kitty multiplica el tamaño de la fuente por "s" y lo reduce despues por
-# la fracción "n/d", de modo que el tamaño real es s * (n/d). Con "s" solo
-# se piden números enteros: para un factor entre 1 y 2 hace falta s=2 con
-# una fracción (1.2 = s=2 con n/d=6/10).
-#
-# El ancho del bloque ("w") se mide en celdas escaladas y kitty solo
-# guarda 3 bits para el, asi que no pasa de 7. Con "w" en 0 kitty coloca
-# un caracter por bloque de s x s celdas: el glifo sale a su escala dentro
-# del bloque y el texto queda disperso, con huecos entre caracteres. Por
-# eso el texto se trocea en bloques de 7 celdas escaladas como mucho, con
-# "w" explicito: asi los caracteres quedan pegados.
-KITTY_MAX_BLOCK = 7
-KITTY_MAX_SCALE = 7
-KITTY_MAX_FRACTION = 15
-OSC_RESET = "\x1b]66;s=1;\x07"
-
-
-def kitty_scale_parts(factor: float):
-    """Metadatos de escala de kitty para dibujar al factor pedido.
-
-    Devuelve (s, n, d) o None si el factor no necesita escala. La
-    fracción n/d es la que más se acerca al factor con d <= 15, que es lo
-    que admite kitty, y siempre con n < d.
-
-    Entre las fracciones que se parecen al factor se prefiere la que deja
-    un bloque *pegado* (sin relleno sobrante): el ancho del bloque es
-    `s*w` celdas y el texto mide `k*s*n/d`, y ambas cosas solo coinciden
-    cuando la longitud es múltiplo de `d/gcd(n,d)`. Ese bloque ocupa
-    `n/gcd(n,d)` celdas escaladas, así que si no cabe en el máximo de
-    kitty no hay forma de que quede pegado. Solo se acepta ese cambio si
-    el tamaño se mantiene dentro del 5%: la escala que pidió el usuario
-    manda.
-    """
-    valor = float(factor)
-    if valor <= 1.0 + 1e-9:
-        return None
-    escala = max(1, min(KITTY_MAX_SCALE, int(math.ceil(valor - 1e-9))))
-    objetivo = valor / escala
-    if objetivo >= 1.0 - 1e-9:
-        # Factor entero: el glifo llena su bloque y no deja huecos.
-        return (escala, 0, 0)
-    mejor = None
-    pegado = None
-    for denominador in range(2, KITTY_MAX_FRACTION + 1):
-        for numerador in range(1, denominador):
-            error = abs(numerador / denominador - objetivo)
-            candidato = (error, numerador, denominador)
-            if mejor is None or error < mejor[0]:
-                mejor = candidato
-            if numerador // math.gcd(numerador, denominador) <= KITTY_MAX_BLOCK:
-                if pegado is None or error < pegado[0]:
-                    pegado = candidato
-    elegido = mejor
-    if pegado is not None:
-        error_factor = abs(escala * pegado[1] / pegado[2] - valor)
-        if error_factor <= valor * 0.05:
-            elegido = pegado
-    return (escala, elegido[1], elegido[2])
-
-
-def scale_quantum(partes):
-    """Caracteres que tiene que tener un bloque para quedar pegado.
-
-    El bloque de kitty mide `s*w` celdas y el texto a escala `s*n/d` mide
-    `k*s*n/d` celdas. Para que el texto llene el bloque sin que sobre
-    nada (y no se vea un hueco entre bloques) las dos medidas tienen que
-    coincidir, y eso pasa cuando `k` es múltiplo de `d/gcd(n,d)`.
-
-    Con la escala 1.2 (s=2, n=3, d=5) son 5 caracteres; con la 1.35
-    (s=2, n=2, d=3) son 3. Sin fracción (escala entera) es 1: el relleno
-    puede ir carácter a carácter.
-    """
-    if not partes:
-        return 1
-    _escala, numerador, denominador = partes
-    if not numerador or not denominador:
-        return 1
-    return max(1, denominador // math.gcd(numerador, denominador))
-
-
-def kitty_scale_factor(partes) -> float:
-    """Factor de tamaño real que calcula kitty con esos metadatos."""
-    escala, numerador, denominador = partes
-    if numerador and denominador:
-        return escala * numerador / denominador
-    return float(escala)
-
-
-def mmss(seconds: float) -> str:
-    seconds = max(0, int(seconds or 0))
-    return f"{seconds // 60:02d}:{seconds % 60:02d}"
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -320,8 +195,8 @@ def clamp(value: float, low: float, high: float) -> float:
 def ease_in_out(progress: float) -> float:
     """Curva suave: empieza y termina sin velocidad (smoothstep).
 
-    La misma curva se usa en modo texto y en modo imagen para que el
-    desplazamiento no cambie de carácter al cambiar de modo.
+    Se usa en el desplazamiento del carrusel: el movimiento acelera y frena,
+    sin el tirón de una interpolación lineal.
     """
     value = clamp(progress, 0.0, 1.0)
     return value * value * (3.0 - 2.0 * value)
@@ -347,19 +222,6 @@ def parse_hex(value, fallback=(255, 255, 255)):
         return tuple(int(text[i : i + 2], 16) for i in (0, 2, 4))
     except ValueError:
         return fallback
-
-
-def fg(color, bold: bool = False, italic: bool = False) -> str:
-    codes = []
-    if bold:
-        codes.append("1")
-    if italic:
-        codes.append("3")
-    codes.append(f"38;2;{color[0]};{color[1]};{color[2]}")
-    return "\x1b[" + ";".join(codes) + "m"
-
-
-RESET = "\x1b[0m"
 
 
 # --------------------------------------------------------------------------
@@ -654,7 +516,7 @@ LRC_TAG = re.compile(r"\[(?:(\d{1,3}):)?(\d{1,3}):(\d{1,2})(?:[.:](\d{1,6}))?\]"
 LRC_OFFSET = re.compile(r"\[offset:([+-]?\d+)\]", re.I)
 # Solo las etiquetas de tiempo mejoradas (<00:12.34>): un patron generico
 # <[^>]*> se comia texto normal entre angulos, como "I <3 you > me".
-ENHANCED_TAG = re.compile(r"<\d{1,3}:\d{1,2}(?:[.:]\d{1,6})?>")
+ENHANCED_TAG = re.compile(r"<(\d{1,3}):(\d{1,2})(?:[.:](\d{1,6}))?>")
 
 
 class LyricLine:
@@ -685,6 +547,90 @@ class LyricLine:
         return cls(float(value[0]), float(value[1]), text, chars)
 
 
+def lines_have_chars(lines):
+    """True si la mayoría del texto trae tiempos por carácter utilizables.
+
+    Es la diferencia entre un karaoke que sigue la voz y uno que reparte la
+    duración de la línea a partes iguales. Los adaptadores dan `chars` con
+    un tiempo por carácter; LRCLIB suele dar solo el tiempo de la línea.
+    """
+    con_texto = [line for line in lines or [] if line.text]
+    if not con_texto:
+        return False
+    listas = sum(
+        1
+        for line in con_texto
+        if line.chars and len(line.chars) >= len(line.text)
+    )
+    return listas * 2 >= len(con_texto)
+
+
+def enhanced_pieces(text: str):
+    """Trocea una línea LRC mejorada en (instante o None, texto).
+
+    Las marcas `<mm:ss.xx>` dan el instante de la palabra que sigue. El
+    texto anterior a la primera marca no tiene instante propio: hereda el
+    de la línea.
+    """
+    matches = list(ENHANCED_TAG.finditer(text or ""))
+    if not matches:
+        return []
+    pieces = []
+    head = text[: matches[0].start()]
+    if normalize_text(head):
+        pieces.append((None, head))
+    for index, match in enumerate(matches):
+        seconds = int(match.group(1)) * 60 + int(match.group(2))
+        fraction = match.group(3) or "0"
+        seconds += int(fraction) / (10 ** len(fraction))
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        pieces.append((seconds, text[match.end():end]))
+    return pieces
+
+
+def enhanced_chars(text: str, pieces, start: float, end: float, offset: float):
+    """Tiempos por carácter de una línea LRC mejorada.
+
+    Cada palabra se reparte entre su marca y la siguiente: sus caracteres
+    entran uno a uno, no todos de golpe. El espacio entre palabras entra
+    con la palabra siguiente, así que el relleno no se detiene en él.
+    """
+    words = []
+    for seconds, piece in pieces or []:
+        clean = normalize_text(piece)
+        if not clean:
+            continue
+        when = start if seconds is None else max(start, seconds + offset)
+        words.append((when, clean))
+    if not words:
+        return []
+    if " ".join(piece for _, piece in words) != text:
+        # La normalización de los trozos no reconstruye el texto completo:
+        # mejor no inventar tiempos y dejar el karaoke de nivel de línea.
+        return []
+    chars = []
+    for index, (when, piece) in enumerate(words):
+        if chars and when < chars[-1]:
+            # Dos palabras con la misma marca: el relleno no puede
+            # retroceder.
+            when = chars[-1]
+        if index + 1 < len(words):
+            until = words[index + 1][0]
+        else:
+            # La última palabra no se estira por un silencio largo: si no,
+            # el relleno se queda arrastrándose hasta la línea siguiente.
+            until = min(end, when + max(0.45, 0.35 * len(piece)))
+        if until <= when:
+            until = when + 0.001
+        step = (until - when) / max(1, len(piece))
+        chars.extend(when + step * position for position in range(len(piece)))
+        if index + 1 < len(words):
+            chars.append(words[index + 1][0])
+    if len(chars) != len(text):
+        return []
+    return chars
+
+
 def parse_lrc(text: str):
     text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
     offset = 0.0
@@ -703,11 +649,13 @@ def parse_lrc(text: str):
         tags = list(LRC_TAG.finditer(raw))
         if not tags:
             continue
-        body = ENHANCED_TAG.sub("", LRC_TAG.sub("", raw)).strip()
+        stripped = LRC_TAG.sub("", raw)
+        body = ENHANCED_TAG.sub("", stripped).strip()
         if not body:
             continue
         if re.match(r"^(ar|al|ti|by|re|ve|length|offset):", body, re.I):
             continue
+        pieces = enhanced_pieces(stripped)
         for tag in tags:
             hours = int(tag.group(1) or 0)
             minutes = int(tag.group(2))
@@ -718,14 +666,16 @@ def parse_lrc(text: str):
             start = hours * 3600 + minutes * 60 + seconds + fraction_value + offset
             if start < 0:
                 continue
-            found[round(start, 3)] = body
+            found[round(start, 3)] = (body, pieces)
 
     lines = []
     times = sorted(found)
     for index, start in enumerate(times):
+        body, pieces = found[start]
         end = times[index + 1] if index + 1 < len(times) else start + 6.0
         duration = clamp(end - start, 0.0, 10.0)
-        lines.append(LyricLine(start, duration, found[start]))
+        chars = enhanced_chars(normalize_text(body), pieces, start, end, offset)
+        lines.append(LyricLine(start, duration, body, chars))
     return lines
 
 
@@ -821,7 +771,12 @@ def fetch_lrclib(track: Track, log):
             continue
         ctitle = _normalize_match(candidate.get("trackName", ""))
         cartist = _normalize_match(candidate.get("artistName", ""))
-        synced = bool(candidate.get("syncedLyrics"))
+        synced_lyrics = candidate.get("syncedLyrics") or ""
+        synced = bool(synced_lyrics)
+        # Un LRC mejorado trae tiempos por palabra: es la versión que hace
+        # que el karaoke siga la voz, así que gana a la de nivel de línea
+        # cuando las dos encajan igual de bien.
+        mejorada = bool(ENHANCED_TAG.search(synced_lyrics))
         score = 0.0
         if ctitle == wanted_title:
             score += 5.0
@@ -839,6 +794,8 @@ def fetch_lrclib(track: Track, log):
                     score += 1.5
         if synced:
             score += 3.0
+        if mejorada:
+            score += 1.0
         try:
             cduration = float(candidate.get("duration") or 0)
             if track.duration > 0 and cduration > 0:
@@ -1061,11 +1018,15 @@ def load_lyrics_settings():
 
 
 def adapter_track(track: Track, art_url: str = ""):
+    # No se envía la duración: NetEase la usa para filtrar y si no
+    # coincide exactamente (tolerancia ~24 s) descarta la canción. Con
+    # 0 = "desconocida" el matching es solo por título/artista, que
+    # ya acierta (Lovesong / Adele se encuentra al instante).
     return {
         "title": track.title,
         "artist": track.artist,
         "album": track.album,
-        "duration": int(track.duration * 1_000_000),
+        "duration": 0,
         "artUrl": art_url,
     }
 
@@ -1228,6 +1189,33 @@ def missing_recent(track: Track, hours=0.4) -> bool:
         return time.time() - saved < hours * 3600
     except (OSError, ValueError):
         return False
+
+
+def word_checked_recent(track: Track, hours=WORD_CHECK_HOURS) -> bool:
+    """True si ya se buscó una versión por palabra hace poco.
+
+    Sin esta marca, cada reproducción de una canción cuya letra solo tiene
+    tiempos de línea volvería a lanzar la búsqueda en segundo plano.
+    """
+    path = os.path.join(CACHE_DIR, cache_key(track) + ".noword")
+    try:
+        if not os.path.isfile(path):
+            return False
+        with open(path, encoding="utf-8") as handle:
+            saved = int(handle.read().strip() or 0)
+        return time.time() - saved < hours * 3600
+    except (OSError, ValueError):
+        return False
+
+
+def mark_word_checked(track: Track):
+    path = os.path.join(CACHE_DIR, cache_key(track) + ".noword")
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(str(int(time.time())))
+    except OSError:
+        pass
 
 
 def estimate_times(lines, duration: float):
@@ -1412,7 +1400,14 @@ def estimate_times(lines, duration: float):
     return lines
 
 
-def fetch_lyrics(track: Track, force: bool, log):
+def fetch_lyrics(
+    track: Track,
+    force: bool,
+    log,
+    on_update=None,
+    cancelled=None,
+    upgrade: bool = False,
+):
     if not force:
         cached = load_cache(track)
         if cached:
@@ -1446,10 +1441,11 @@ def fetch_lyrics(track: Track, force: bool, log):
         if source not in available:
             available.append(source)
 
-    # Trabajadores en paralelo: el primero que encuentra letra gana.
-    result = {"lines": None, "source": "", "synced": False}
+    # Trabajadores en paralelo: la primera letra se publica en cuanto
+    # llega, para no hacer esperar. Si otra fuente trae tiempos por
+    # palabra, la mejora en cuanto aparece y es la que se queda en caché.
+    result = {"lines": None, "source": "", "synced": False, "word": False}
     result_lock = threading.Lock()
-    result_event = threading.Event()
 
     def publish(lines, source):
         lines = clean_lyric_lines(lines)
@@ -1457,18 +1453,34 @@ def fetch_lyrics(track: Track, force: bool, log):
             return False
         lines = estimate_times(lines, track.duration)
         synced = len(lines) > 1 and any(line.start >= 0 for line in lines)
+        word = lines_have_chars(lines)
+        aviso = None
         with result_lock:
-            if result["lines"] is None:
-                result["lines"] = lines
-                result["source"] = source
-                result["synced"] = synced
-                result_event.set()
-                # Solo el ganador escribe la cache: si escribieran todos,
-                # el ultimo en llegar podia dejar la letra perdedora.
+            actual_palabra = result["word"]
+            if result["lines"] is not None and not (
+                word and not actual_palabra
+            ):
+                # La primera letra ya está y esta no la mejora: no se pisa
+                # lo que el usuario está viendo ni la caché buena.
+                return False
+            result["lines"] = lines
+            result["source"] = source
+            result["synced"] = synced
+            result["word"] = word
+            # Solo el ganador escribe la cache: si escribieran todos, el
+            # ultimo en llegar podia dejar la letra perdedora. Una mejora
+            # sin tiempos por palabra no reescribe una caché válida.
+            if word or not upgrade:
                 try:
                     save_cache(track, lines, source, synced)
                 except Exception:  # noqa: BLE001
                     pass
+            aviso = (lines, source, synced)
+        if on_update is not None:
+            try:
+                on_update(*aviso)
+            except Exception:  # noqa: BLE001
+                pass
         return True
 
     def worker_builtin_lrclib():
@@ -1503,23 +1515,40 @@ def fetch_lyrics(track: Track, force: bool, log):
         threads.append(t)
 
     if not threads:
-        mark_missing(track)
+        if not upgrade:
+            mark_missing(track)
         return [], "", False
 
     for t in threads:
         t.start()
 
-    # Espera al primer éxito o a que todos terminen (máx. 15 s).
-    #
-    # El plazo es largo porque hay proveedores que tardan: con 4 s una
-    # letra que tarda 6 s se tiraba a la basura y el usuario se quedaba
-    # sin letra pese a estar disponible.
+    # Espera a la primera letra; despues, un margen corto a que llegue una
+    # versión con tiempos por palabra. El plazo general es largo porque
+    # hay proveedores que tardan: con 4 s una letra que tarda 6 s se tiraba
+    # a la basura y el usuario se quedaba sin letra pese a estar
+    # disponible.
     deadline = time.monotonic() + SEARCH_TIMEOUT
-    while not result_event.is_set() and time.monotonic() < deadline:
+    grace_deadline = None
+    while True:
+        with result_lock:
+            lines_now = result["lines"]
+            word_now = result["word"]
+        if word_now:
+            # Ya está lo mejor posible: no se espera al resto.
+            break
+        if cancelled is not None and cancelled():
+            break
+        now = time.monotonic()
+        if lines_now is not None:
+            if grace_deadline is None:
+                grace_deadline = now + WORD_GRACE
+            if now >= grace_deadline:
+                break
+        if now >= deadline:
+            break
         if not any(t.is_alive() for t in threads):
             break
-        time.sleep(0.1)
-    result_event.wait(timeout=0.05)
+        time.sleep(0.05)
 
     # Cancelación best-effort: se dejan terminar los hilos (daemon).
     with result_lock:
@@ -1529,12 +1558,15 @@ def fetch_lyrics(track: Track, force: bool, log):
 
     if lines:
         return lines, source, synced
+    if upgrade:
+        # La caché que se está mostrando sigue siendo válida: no se toca.
+        return [], "", False
     if any(t.is_alive() for t in threads):
         # Se agoto el plazo con proveedores todavia en marcha: la letra
         # puede llegar despues, asi que no se marca la cache negativa
         # (si se marcara, la busqueda se daria por cerrada y no se
         # volveria a mirar esa cancion).
-        log("plazo de busqueda agotado: no se marca la cache negativa")
+        log("plazo de busqueda agotado: no se marca la caché negativa")
         return [], "", False
     mark_missing(track)
     return [], "", False
@@ -1550,10 +1582,10 @@ class Fetcher:
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
 
-    def start(self, track: Track, force: bool = False):
+    def start(self, track: Track, force: bool = False, upgrade: bool = False):
         with self._lock:
             self._generation += 1
-            self._request = (track, force, self._generation)
+            self._request = (track, force, upgrade, self._generation)
             self._result = None
 
     def take(self):
@@ -1570,14 +1602,32 @@ class Fetcher:
             if request is None:
                 time.sleep(0.08)
                 continue
-            track, force, generation = request
+            track, force, upgrade, generation = request
+            entregado = [False]
+
+            def on_update(lines, source, synced):
+                with self._lock:
+                    if generation != self._generation:
+                        return
+                    entregado[0] = True
+                    self._result = (lines, source, synced)
+
             try:
-                lines, source, synced = fetch_lyrics(track, force, self.log)
+                lines, source, synced = fetch_lyrics(
+                    track,
+                    force,
+                    self.log,
+                    on_update=on_update,
+                    cancelled=lambda: self._generation != generation,
+                    upgrade=upgrade,
+                )
             except Exception as error:  # noqa: BLE001
                 self.log(f"fetch: {error!r}")
                 lines, source, synced = [], "", False
             with self._lock:
-                if generation == self._generation:
+                # Lo ya entregado no se repite: volver a aplicarlo
+                # recolocaría el carrusel a mitad de canción.
+                if generation == self._generation and not entregado[0]:
                     self._result = (lines, source, synced)
 
 
@@ -1585,24 +1635,23 @@ class Fetcher:
 # render
 # --------------------------------------------------------------------------
 
-EQ = "▁▂▃▄▅▆▇█"
-
-
 PLUGIN_ID = "faminec/lyrics-carousel"
+
+# Segundos que dura el desplazamiento entre líneas cuando la transición
+# suave está activa. Se recorta al 80 % del hueco si la siguiente línea
+# llega antes, para que nunca se solapen dos movimientos.
+GHOST_SECONDS = 0.9
 
 DEFAULTS = {
     "font_family": "Departure Mono",
     "font_size": 22,
-    "render_mode": "image",
     "direction": "down",
     "marker": False,
     "karaoke": True,
-    "equalizer": False,
     "footer": False,
     "hints": False,
     "header": False,
     "spacing": 2,
-    "animation_ms": 650,
     "ghost": True,
     "offset_ms": 0,
     "width": 1200,
@@ -1615,12 +1664,11 @@ DEFAULTS = {
     "active_scale": 1.35,
     "visible_above": 6,
     "visible_below": 6,
-    "language": "auto",
 }
 
-BOOL_KEYS = ("marker", "karaoke", "equalizer", "footer", "hints", "header", "ghost")
+BOOL_KEYS = ("marker", "karaoke", "footer", "hints", "header", "ghost")
 INT_KEYS = (
-    "font_size", "spacing", "animation_ms", "offset_ms", "width", "height",
+    "font_size", "spacing", "offset_ms", "width", "height",
     "custom_x", "custom_y", "visible_above", "visible_below",
 )
 FLOAT_KEYS = ("active_scale",)
@@ -1675,7 +1723,6 @@ def load_settings() -> dict:
             cfg[key] = DEFAULTS[key]
     cfg["font_size"] = max(6, min(96, cfg["font_size"]))
     cfg["spacing"] = max(1, min(6, cfg["spacing"]))
-    cfg["animation_ms"] = max(0, min(3000, cfg["animation_ms"]))
     # Los limites son los del panel (lib/settings.luau, LIMITS): el
     # manifiesto ya no los declara porque esos ajustes solo se cambian en el
     # panel. El script los recorta al leer, asi que un valor que llegue
@@ -1696,10 +1743,6 @@ def load_settings() -> dict:
     cfg["active_scale"] = max(1.0, min(2.5, cfg["active_scale"]))
     if cfg["direction"] not in ("down", "up"):
         cfg["direction"] = "down"
-    if cfg["render_mode"] not in ("image", "text"):
-        cfg["render_mode"] = DEFAULTS["render_mode"]
-    if cfg["language"] not in ("auto",) + LANGUAGES:
-        cfg["language"] = DEFAULTS["language"]
     if cfg["accent"] not in ACCENT_NAMES:
         cfg["accent"] = DEFAULTS["accent"]
     cfg["font_family"] = str(cfg["font_family"] or DEFAULTS["font_family"])
@@ -1828,13 +1871,11 @@ class LyricsCarousel:
             self.cfg["direction"] = args.direction
         if args.no_karaoke:
             self.cfg["karaoke"] = False
-        if args.render_mode:
-            self.cfg["render_mode"] = args.render_mode
         if args.active_scale:
             self.cfg["active_scale"] = args.active_scale
         if args.accent:
             self.cfg["accent"] = args.accent
-        self._set_language(getattr(args, "lang", None) or self.cfg.get("language", "auto"))
+        self._set_language(getattr(args, "lang", None) or "auto")
         self.direction = 1 if self.cfg["direction"] == "down" else -1
         self.karaoke = bool(self.cfg["karaoke"])
         self.spacing = int(self.cfg["spacing"])
@@ -1849,7 +1890,6 @@ class LyricsCarousel:
         self.demo = args.demo
         self.width = 0
         self.height = 0
-        self.prev_rows = []
         self.scroll = 0.0
         self.scroll_from = 0.0
         self.scroll_to = 0.0
@@ -1867,11 +1907,13 @@ class LyricsCarousel:
         # SIGUSR1: el panel avisa de que la caché se ha vaciado y la
         # ventana abierta tiene que volver a buscar la canción actual.
         self.reload_requested = False
-        self.need_clear = True
         self.last_counters = 0.0
         self._player = PlayerWatcher(args.player) if not self.demo else None
         self.image = None
         self.image_error = ""
+        # El visualizador es siempre el fondo de la ventana: cava real y,
+        # si no está o falla, barras simuladas. Nunca es una opción.
+        self.visualizer = Visualizer(self.log) if Visualizer is not None else None
         # Si la terminal se cierra, las escrituras fallan: hay que salir en
         # vez de quedarse dibujando en el vacio.
         self.output_broken = False
@@ -1881,19 +1923,16 @@ class LyricsCarousel:
             except Exception as error:  # noqa: BLE001
                 self.image = None
                 self.image_error = repr(error)
-        if self.cfg["render_mode"] == "image":
-            # Degradar en silencio deja al usuario creyendo que esta viendo
-            # el modo imagen cuando en realidad es el de texto: se avisa, en
-            # el log y tambien en la propia ventana.
-            if self.image is None:
-                reason = self.image_error or IMAGE_ERROR or self.tr("unknown_reason")
-            elif not getattr(getattr(self.image, "gfx", None), "supported", False):
-                reason = self.tr("no_graphics")
-            else:
-                reason = ""
-            if reason:
-                self.warn(f"modo imagen no disponible: {reason}")
-                self.status_message = self.tr("image_unavailable", reason=reason)
+        # Solo modo imagen: si no hay renderizador, avisar y salir
+        if self.image is None:
+            reason = self.image_error or IMAGE_ERROR or self.tr("unknown_reason")
+        elif not getattr(getattr(self.image, "gfx", None), "supported", False):
+            reason = self.tr("no_graphics")
+        else:
+            reason = ""
+        if reason:
+            self.warn(f"modo imagen no disponible: {reason}")
+            self.status_message = self.tr("image_unavailable", reason=reason)
         self.last_mode = ""
         self._demo_start = time.monotonic() - max(0.0, args.demo_offset)
         if self.demo:
@@ -1949,8 +1988,6 @@ class LyricsCarousel:
         if width != self.width or height != self.height:
             self.width = width
             self.height = height
-            self.prev_rows = [""] * self.height
-            self.need_clear = True
             self.dirty = True
 
     # ---- datos --------------------------------------------------------
@@ -2029,6 +2066,16 @@ class LyricsCarousel:
             self.state = "lyrics" if self.lines else "empty"
             self._snap_scroll()
             self.log(f"tema: {track.title} — {track.artist} (cache)")
+            # La letra se muestra ya, pero si solo trae tiempos de línea se
+            # busca en segundo plano una versión con tiempos por palabra.
+            # Sin red de por medio el karaoke repartiría la línea a partes
+            # iguales y no seguiría la voz.
+            if (
+                not lines_have_chars(self.lines)
+                and not word_checked_recent(track)
+            ):
+                self.fetcher.start(track, force=True, upgrade=True)
+                self.log("buscando una versión con tiempos por palabra")
         else:
             self.state = "loading"
             self.lines = []
@@ -2038,6 +2085,32 @@ class LyricsCarousel:
             self.last_fetch = time.monotonic()
             self.log(f"tema: {track.title} — {track.artist} (buscando)")
         self.dirty = True
+
+    def _apply_fetched(self, lines, source, synced) -> bool:
+        """Aplica un resultado de búsqueda sin pisar una letra igual o mejor.
+
+        Una mejora en segundo plano puede llegar cuando la canción ya va
+        por la mitad. Volver a aplicar la misma letra (o una peor) haría
+        saltar el carrusel sin ganar nada, y una búsqueda fallida no debe
+        borrar la letra que se está mostrando.
+        """
+        if not (self.track.title or self.track.artist):
+            return False
+        nueva_palabra = lines_have_chars(lines)
+        actual_palabra = lines_have_chars(self.lines)
+        if self.lines and not (nueva_palabra and not actual_palabra):
+            if lines and not nueva_palabra:
+                mark_word_checked(self.track)
+            return False
+        self.lines = lines
+        self.source = source
+        self.synced = synced
+        self.state = "lyrics" if lines else "empty"
+        self._snap_scroll()
+        self.dirty = True
+        if lines and not nueva_palabra:
+            mark_word_checked(self.track)
+        return True
 
     def _snap_scroll(self):
         self.last_active = -1
@@ -2053,8 +2126,6 @@ class LyricsCarousel:
             cfg["direction"] = self.args.direction
         if self.args.no_karaoke:
             cfg["karaoke"] = False
-        if self.args.render_mode:
-            cfg["render_mode"] = self.args.render_mode
         if self.args.active_scale:
             cfg["active_scale"] = self.args.active_scale
         if self.args.accent:
@@ -2082,31 +2153,6 @@ class LyricsCarousel:
         # mutacion local (por ejemplo, la que hacia draw_image al fallar)
         # se confunda con una peticion nueva del usuario.
         previous = dict(self.cfg)
-        # El modo texto pedido desde los ajustes es una eleccion explicita:
-        # limpia el fallo anterior y permite volver a pedir imagen despues.
-        # Si en cambio la configuracion sigue pidiendo imagen y el modo se
-        # desactivo solo, no se reactiva en cada recarga (bucle de fallos).
-        if cfg.get("render_mode") == "text":
-            self.image_disabled = False
-            self.image_failures = 0
-            # El aviso de "modo imagen desactivado" ya no aplica.
-            if getattr(self, "status_message", "") == self.tr("image_disabled"):
-                self.status_message = ""
-        elif (
-            cfg.get("render_mode") == "image"
-            and previous.get("render_mode") != "image"
-            and getattr(self, "image_disabled", False)
-        ):
-            # El valor efectivo ha pasado de "text" a "image": lo ha pedido
-            # el usuario (cuando el script desactiva el modo, deja "text"
-            # en el settings.toml y en los overrides, asi que el unico que
-            # puede pedir "image" otra vez es el usuario). Se rearma: si no,
-            # el usuario se queda en modo texto para siempre, aunque
-            # instale Pillow.
-            self.image_disabled = False
-            self.image_failures = 0
-            if getattr(self, "status_message", "") == self.tr("image_disabled"):
-                self.status_message = ""
         # Invalida la cache de fuentes si cambio la familia o el tamaño.
         if (
             str(previous.get("font_family")) != str(cfg.get("font_family"))
@@ -2117,18 +2163,13 @@ class LyricsCarousel:
                     self.image.invalidate_fonts()
                 except Exception:  # noqa: BLE001
                     pass
-            # En modo texto la tipografía es fija de kitty: se avisa para que
-            # el usuario reinicie si hace falta, pero no se cierra la ventana.
-            self.need_clear = True
+            # La tipografía se cachea en el renderizador de imagen: al
+            # cambiarla hay que invalidar la caché, no reiniciar nada.
         self.cfg = cfg
         self.direction = 1 if cfg["direction"] == "down" else -1
         self.karaoke = bool(cfg["karaoke"])
         self.spacing = int(cfg["spacing"])
-        # El idioma puede cambiar desde la pagina de ajustes: se recalcula
-        # (la opcion de la linea de orden manda sobre el ajuste).
-        self._set_language(getattr(self.args, "lang", None) or cfg.get("language", "auto"))
         self.dirty = True
-        self.need_clear = True
         self.log("ajustes: " + json.dumps(cfg, ensure_ascii=False))
         if (
             previous.get("width") != cfg["width"]
@@ -2162,13 +2203,7 @@ class LyricsCarousel:
         result = self.fetcher.take()
         if result is not None:
             lines, source, synced = result
-            if self.track.title or self.track.artist:
-                self.lines = lines
-                self.source = source
-                self.synced = synced
-                self.state = "lyrics" if lines else "empty"
-                self._snap_scroll()
-                self.dirty = True
+            if self._apply_fetched(lines, source, synced):
                 self.log(f"resultado: {len(lines)} líneas ({source})")
 
         if (
@@ -2256,11 +2291,10 @@ class LyricsCarousel:
         index = timed[slot][1]
         focus = index
         progress = 0.0
-        # El ajuste es la duración real del desplazamiento. Nunca se come
-        # más del 80 % del hueco hasta la línea siguiente: si la letra va
-        # rápida, la transición se acorta en vez de solaparse con la que
-        # viene.
-        duration = min(1.2, max(0.0, self.cfg["animation_ms"] / 1000.0))
+        # La transición suave es una duración fija (~0.9 s) y solo existe si
+        # el usuario la ha activado: con `ghost` apagado el carrusel salta
+        # de una línea a la siguiente sin animación.
+        duration = GHOST_SECONDS if self.cfg["ghost"] else 0.0
         nxt = slot + 1
         if nxt < len(timed) and duration > 0:
             next_start = timed[nxt][0]
@@ -2276,9 +2310,9 @@ class LyricsCarousel:
     def karaoke_amount(self, line, text, position, end) -> float:
         """Cuántos caracteres de la línea se han cantado, con decimales.
 
-        Con tiempos por carácter el avance se interpola dentro del carácter
-        en curso, así que el relleno no salta de letra en letra. Sin ellos
-        se reparte la duración de la línea entre los caracteres.
+        Para el modo imagen el relleno es pixel-perfect: el avance se interpola
+        dentro del carácter en curso. Con tiempos por carácter usa esos tiempos;
+        sin ellos reparte la duración de la línea entre los caracteres.
         """
         length = len(text)
         if length <= 0:
@@ -2304,43 +2338,6 @@ class LyricsCarousel:
         start = line.start
         fraction = clamp((position - start) / max(0.35, end - start), 0.0, 1.0)
         return fraction * length
-
-    def karaoke_cut(self, line, text, position, end, partes=None) -> int:
-        """Corte del karaoke en modo texto, en una frontera de bloque.
-
-        El relleno avanza a saltos de un bloque (5 caracteres con la escala
-        1.2, 3 con la 1.35) porque el corte tiene que caer en una frontera
-        de bloque: si cayera en mitad, el bloque partido redondearia su
-        ancho a celdas enteras y se vería un hueco en mitad de la palabra
-        (era lo que pasaba con "t hat" o "nev er").
-
-        Sin escala, o con una escala entera, el bloque es de un carácter y
-        el relleno avanza letra a letra, pegado al compás real.
-
-        El corte sale de los tiempos por carácter y cae en la frontera de
-        bloque más cercana al avance real, así que el relleno va lo más
-        pegado posible a la voz (el error es de medio bloque, no de un
-        bloque entero).
-        """
-        length = len(text)
-        if length <= 0:
-            return 0
-        amount = self.karaoke_amount(line, text, position, end)
-        if amount <= 0.0:
-            return 0
-        if amount >= length:
-            # La linea entera cantada: el corte cae al final del texto, que
-            # es el final del ultimo bloque, asi que no se parte ninguno.
-            return length
-        cuanto = scale_quantum(partes)
-        # El corte cae en la frontera de bloque mas cercana al avance real:
-        # asi el relleno va lo mas pegado posible a la voz (el error es de
-        # medio bloque, no de un bloque entero) y nunca abre un hueco.
-        corte = int(math.floor(amount / cuanto + 0.5)) * cuanto
-        return max(0, min(corte, length))
-
-    def equalizer_text(self):
-        return self._equalizer(time.monotonic(), self.track.playing or self.demo)
 
     def terminal_pixels(self):
         try:
@@ -2369,459 +2366,15 @@ class LyricsCarousel:
             target = index * step + (focus - index) * step * progress
         self.scroll = target
 
-    # ---- colores ------------------------------------------------------
-
-    def _line_color(self, index, active, past, fade):
-        if active:
-            return self.theme.accent_color(self.cfg)
-        base = self.theme.past if past else self.theme.foreground
-        factor = (0.9 if past else 1.0) * fade
-        return blend(self.theme.background, base, factor)
-
-    # ---- piezas de UI -------------------------------------------------
-
-    def _equalizer(self, t, playing=True):
-        """Siete barras con envolvente central y una onda lenta.
-
-        La barra del centro es la más alta y las de los extremos bajan, así
-        que el dibujo se lee como un visualizador y no como una fila de
-        caracteres sueltos. En pausa queda una curva quieta y simétrica.
-        """
-        bars = []
-        center = 3
-        for index in range(7):
-            envelope = 0.42 + 0.58 * (1.0 - abs(index - center) / center)
-            if playing:
-                wave = 0.5 + 0.5 * math.sin(t * 2.0 + index * 0.62)
-                ripple = 0.5 + 0.5 * math.sin(t * 1.1 - index * 0.38)
-                level = envelope * (0.20 + 0.55 * wave + 0.25 * ripple)
-            else:
-                level = envelope * 0.55
-            bars.append(EQ[min(len(EQ) - 1, int(level * (len(EQ) - 1)))])
-        return "".join(bars)
-
-    def _equalizer_only(self, rows, t):
-        """Solo el ecualizador, arriba a la derecha (opcional)."""
-        eq = self._equalizer(t, self.track.playing or self.demo)
-        pad = max(0, self.width - cell_width(eq) - 2)
-        rows[0] = " " * pad + fg(self.theme.accent) + eq + RESET
-
-    def _header(self, rows, t, position, duration):
-        theme = self.theme
-        left_plain = "▌ " + self.tr("brand")
-        left = (
-            fg(theme.accent)
-            + "▌"
-            + RESET
-            + " "
-            + fg(theme.bright)
-            + self.tr("brand")
-            + RESET
-        )
-        status = ""
-        if self.state == "loading":
-            dots = "." * (int(t * 2.5) % 4)
-            status = f"{self.tr('searching')}{dots}"
-        elif self.state == "empty":
-            status = self.tr("no_lyrics")
-        elif self.state == "lyrics":
-            status = self.tr("synced") if self.synced else self.tr("unsynced")
-            if not self.track.playing:
-                status += " · " + self.tr("paused")
-        elif self.state == "idle":
-            status = self.tr("waiting")
-        eq = self._equalizer(t, self.track.playing or self.demo)
-        status = truncate(status, max(0, self.width - cell_width(left_plain) - cell_width(eq) - 6))
-        right_plain = f"{eq}  [{status}]" if status else eq
-        right = fg(theme.accent, bold=False) + eq + RESET
-        if status:
-            right += "  " + fg(theme.faint) + f"[{status}]" + RESET
-        gap = max(1, self.width - cell_width(left_plain) - cell_width(right_plain))
-        rows[0] = left + " " * gap + right
-
-        title = self.track.title or self.tr("nothing_playing")
-        artist = (" — " + self.track.artist) if self.track.artist else ""
-        max_title = max(10, self.width - 2)
-        if cell_width(title) + cell_width(artist) > max_title:
-            artist = ""
-            title = truncate(title, max_title)
-        else:
-            title = truncate(title, max_title - cell_width(artist))
-        title_line = "  " + fg(theme.bright, bold=True) + title + RESET
-        if artist:
-            title_line += fg(theme.faint) + artist + RESET
-        rows[1] = title_line
-
-        rule = "─" * max(1, self.width)
-        rows[2] = fg(blend(theme.background, theme.faint, 0.35)) + rule + RESET
-
-    def _footer(self, rows, position, duration):
-        """Barra de tiempo y progreso (opcional)."""
-        theme = self.theme
-        width = self.width
-        left = mmss(position)
-        right = mmss(duration) if duration > 0 else "--:--"
-        left_width = cell_width(left)
-        right_width = cell_width(right)
-        bar_width = max(4, width - 2 * left_width - 2 * right_width - 8)
-        ratio = clamp(position / duration, 0.0, 1.0) if duration > 0 else 0.0
-        filled = int(bar_width * ratio)
-        bar = fg(theme.accent) + ("\u2501" * filled) + ("\u2578" if filled < bar_width else "") + RESET
-        if filled < bar_width:
-            bar += fg(blend(theme.background, theme.past, 0.5)) + "\u2500" * (bar_width - filled - 1) + RESET
-        left_text = fg(theme.faint) + left + RESET
-        right_text = fg(theme.faint) + right + RESET
-        # La fila entera se centra en la ventana; antes empezaba en la
-        # columna 2 y el sobrante quedaba todo a la derecha, así que la
-        # barra se veía desplazada hacia la izquierda.
-        plain_width = 2 + left_width + 2 + bar_width + 2 + right_width
-        pad = max(0, (width - plain_width) // 2)
-        rows[self.height - 2] = (
-            " " * pad + "  " + left_text + "  " + bar + "  " + right_text
-        )
-
-    def _hints(self, rows):
-        """Fila con los atajos de teclado (opcional)."""
-        theme = self.theme
-        width = self.width
-        source = truncate(self.source or "", 18)
-        candidates = self.texts.get("hints") or [""]
-        hint = ""
-        for candidate in candidates:
-            if cell_width(candidate) + cell_width(source) + 4 <= width:
-                hint = candidate
-                break
-        if not hint:
-            hint = truncate(candidates[-1], max(0, width - 4 - cell_width(source)))
-        space = width - 2 - cell_width(hint) - cell_width(source) - 2
-        left_hint = fg(blend(theme.background, theme.faint, 0.65)) + hint + RESET
-        if source and space >= 1:
-            rows[self.height - 1] = "  " + left_hint + " " * space + fg(theme.faint) + source + RESET + "  "
-        else:
-            rows[self.height - 1] = "  " + left_hint
-
-    def _idle_block(self, rows, t, message, detail, top, bottom):
-        center = (top + bottom) // 2
-        if center - 2 >= top:
-            rows[center - 2] = fg(self.theme.faint) + " " * max(0, (self.width - cell_width(message)) // 2) + message + RESET
-        if detail and center - 1 <= bottom:
-            detail = truncate(detail, self.width - 4)
-            rows[center - 1] = fg(self.theme.bright) + " " * max(0, (self.width - cell_width(detail)) // 2) + detail + RESET
-        eq = self._equalizer(t, self.track.playing or self.demo)
-        pad = max(0, (self.width - cell_width(eq)) // 2)
-        if center + 1 <= bottom:
-            rows[center + 1] = " " * pad + fg(self.theme.accent) + eq + RESET
-
-    def _cuerpo_escalado(self, partes, segmentos, disponible):
-        """Cuerpo de la linea con el tamaño de texto de kitty.
-
-        Los segmentos son trozos de texto con su color, en orden. El texto
-        se trocea en bloques cuya longitud es multiplo del cuanto de la
-        escala (5 caracteres con la escala 1.2, 3 con la 1.35): el bloque
-        de kitty mide `s*w` celdas y los glifos a escala `s*n/d` miden
-        `k*s*n/d`, y las dos medidas solo coinciden cuando la longitud es
-        multiplo del cuanto. Asi el bloque queda pegado y no se ve ningun
-        hueco entre bloques.
-
-        Kitty centra el texto dentro del bloque, asi que el bloque se
-        alinea a la izquierda: el relleno sobrante del ultimo bloque (que
-        puede no ser multiplo del cuanto) queda al final de la linea,
-        donde no se ve, y no en mitad.
-
-        El texto se recorta hasta que los bloques caben en el ancho
-        disponible: kitty no dibuja un bloque mas ancho que la terminal y
-        lo pasa a la linea de abajo, lo que rompe el dibujo. Se quitan
-        bloques enteros, nunca trozos, para que los que quedan sigan
-        cuadrados con la escala. Devuelve el cuerpo y el ancho que ocupa
-        en celdas.
-        """
-        escala, numerador, denominador = partes
-        cuanto = scale_quantum(partes)
-        factor = kitty_scale_factor(partes)
-
-        def celdas_escaladas(largo):
-            """Celdas escaladas que ocupa un trozo de `largo` caracteres."""
-            if largo <= 0:
-                return 0
-            if numerador:
-                return max(
-                    1, int(math.ceil(largo * numerador / denominador - 1e-9))
-                )
-            return largo
-
-        texto = "".join(trozo for trozo, _ in segmentos)
-        limites = []
-        cursor = 0
-        for trozo, color in segmentos:
-            limites.append((cursor, cursor + len(trozo), color))
-            cursor += len(trozo)
-
-        # Los bloques no se parten: sus extremos son multiplos del cuanto,
-        # asi que el corte del karaoke (que tambien lo es) cae justo en
-        # una frontera y no abre ningun hueco.
-        bloques = []
-        inicio = 0
-        while inicio < len(texto):
-            fin = min(len(texto), inicio + cuanto)
-            pedazos = []
-            for desde, hasta, color in limites:
-                a = max(inicio, desde)
-                b = min(fin, hasta)
-                if a < b:
-                    pedazos.append((a, b, color))
-            if pedazos:
-                celdas = sum(celdas_escaladas(b - a) for a, b, _ in pedazos)
-                bloques.append([pedazos, celdas])
-            inicio = fin
-
-        # Recorte: se quitan bloques enteros y se deja un puntito al final.
-        presupuesto = max(1, int(disponible // escala))
-        recortado = False
-        color_final = None
-        while bloques and sum(b[1] for b in bloques) > presupuesto:
-            ultimos = bloques.pop()[0]
-            color_final = ultimos[-1][2]
-            recortado = True
-        if recortado and bloques:
-            total = sum(b[1] for b in bloques)
-            while bloques and total + celdas_escaladas(1) > presupuesto:
-                ultimos = bloques.pop()[0]
-                color_final = ultimos[-1][2]
-            if color_final is None:
-                color_final = bloques[-1][0][-1][2]
-
-        cuerpo = ""
-        ancho = 0.0
-        for pedazos, _ in bloques:
-            for a, b, color in pedazos:
-                trozo = texto[a:b]
-                cuerpo += (
-                    color
-                    + self._osc66(partes, celdas_escaladas(b - a))
-                    + trozo
-                    + "\x07"
-                    + OSC_RESET
-                )
-                ancho += (b - a) * factor
-        if recortado:
-            if color_final is None:
-                color_final = segmentos[-1][1]
-            cuerpo += (
-                color_final
-                + self._osc66(partes, celdas_escaladas(1))
-                + "…"
-                + "\x07"
-                + OSC_RESET
-            )
-            ancho += factor
-        return cuerpo + RESET, int(round(ancho))
-
-    @staticmethod
-    def _osc66(partes, celdas):
-        """Inicio de la secuencia OSC 66 con el tamaño y el ancho del bloque.
-
-        v=0 alinea el glifo arriba del bloque y h=0 lo deja a la izquierda:
-        el texto ocupa el bloque entero, y el relleno que sobra (el del
-        ultimo bloque, que puede no ser multiplo del cuanto) se queda al
-        final de la linea en vez de abrir un hueco en mitad.
-        """
-        escala, numerador, denominador = partes
-        if numerador:
-            return "\x1b]66;s=%d:n=%d:d=%d:w=%d:v=0:h=0;" % (
-                escala,
-                numerador,
-                denominador,
-                celdas,
-            )
-        return "\x1b]66;s=%d:w=%d:v=0:h=0;" % (escala, celdas)
-
-    def _render_lyrics(self, rows, t, position, top, bottom):
-        theme = self.theme
-        center = (top + bottom) / 2.0
-        if not self.lines:
-            return
-        active = self.active_index
-        step = float(self.spacing)
-
-        # Durante el desplazamiento el bloque se atenua un poco (motion
-        # blur) y la linea activa aparece con un fundido suave.
-        motion = 1.0
-        if self.cfg["ghost"] and self.moving:
-            motion = 0.78
-
-        # visible_above/below son líneas de la pantalla. En "down" el
-        # futuro entra por arriba; en "up" el futuro queda abajo. Antes se
-        # contaban siempre por índice, así que al cambiar de dirección las
-        # líneas visibles eran las del lado contrario.
-        if self.direction > 0:
-            first_visible = active - self.cfg["visible_below"]
-            last_visible = active + self.cfg["visible_above"]
-        else:
-            first_visible = active - self.cfg["visible_above"]
-            last_visible = active + self.cfg["visible_below"]
-
-        # La linea activa puede dibujarse escalada con el protocolo de
-        # tamaño de kitty. El bloque que dibuja kitty ocupa s filas hacia
-        # abajo, asi que hay que reservarlas: si se escribe encima, kitty
-        # borra el glifo grande.
-        partes = kitty_scale_parts(float(self.cfg.get("active_scale", 1.0)))
-        filas = partes[0] if partes else 1
-        factor = kitty_scale_factor(partes) if partes else 1.0
-        fila_activa = int(round(center + self.direction * (self.scroll - active * step)))
-        if filas > 1:
-            fila_activa = max(top, min(fila_activa, bottom - filas + 1))
-
-        for index, line in enumerate(self.lines):
-            if index < first_visible or index > last_visible:
-                continue
-            pos = index * step
-            if index == active:
-                y = fila_activa
-            else:
-                y = int(round(center + self.direction * (self.scroll - pos)))
-                # Las filas del bloque de la linea activa quedan libres.
-                if filas > 1 and fila_activa <= y < fila_activa + filas:
-                    y = fila_activa + filas
-            if y < top or y > bottom:
-                continue
-            highlight = index == active and position >= line.start - 0.05
-            past = index < active or (index == active and not highlight)
-            if highlight:
-                fade = 1.0
-            else:
-                distance = abs(y - center)
-                fade = clamp(
-                    1.0 - (distance / max(1.0, (bottom - top) * 0.72)) ** 1.0,
-                    0.30,
-                    1.0,
-                )
-            base_color = self._line_color(index, highlight, past, fade)
-            if not highlight:
-                base_color = blend(theme.background, base_color, motion)
-            prefix = "> " if (self.cfg["marker"] and index == active) else "  "
-            if partes and index == active:
-                # Cada caracter de la linea escalada ocupa "factor" celdas.
-                max_text = max(4, int((self.width - 8) / factor))
-            else:
-                max_text = max(4, self.width - 8)
-            text = truncate(line.text, max_text)
-            plain = prefix + text
-            prefix_color = fg(theme.accent, bold=True) if (highlight and self.cfg["marker"]) else fg(theme.background)
-            if highlight and self.karaoke:
-                end = line.start + (line.duration or 4.0)
-                siguiente = self.next_timed_start(index)
-                if siguiente is not None and siguiente > line.start:
-                    end = min(end, siguiente) if line.duration else siguiente
-                # El corte cae en una frontera de bloque: el relleno
-                # avanza a saltos de bloque (o letra a letra si la linea
-                # no va escalada) y nunca abre un hueco en mitad de una
-                # palabra.
-                cut = self.karaoke_cut(line, text, position, end, partes)
-                sung = blend(theme.background, theme.accent, 1.0)
-                unsung = blend(theme.background, theme.accent, 0.42)
-                segmentos = [
-                    (text[:cut], fg(sung, bold=True)),
-                    (text[cut:], fg(unsung)),
-                ]
-            else:
-                segmentos = [(text, fg(base_color, bold=highlight))]
-            if partes and index == active:
-                body, ancho = self._cuerpo_escalado(
-                    partes, segmentos, max(4, self.width - cell_width(prefix) - 2)
-                )
-                visible = cell_width(prefix) + ancho
-            else:
-                body = "".join(color + trozo + RESET for trozo, color in segmentos)
-                visible = cell_width(plain)
-            left = max(0, (self.width - visible) // 2)
-            pad = " " * left
-            rows[y] = pad + prefix_color + prefix + RESET + body
-
-    def build_frame(self):
-        rows = [""] * self.height
-        t = time.monotonic()
-        cfg = self.cfg
-        if self.demo:
-            position, duration = self._demo_position()
-        else:
-            position = self.track.current_position() if self.track else 0.0
-            duration = self.track.duration if self.track else 0.0
-        position = max(0.0, position + cfg["offset_ms"] / 1000.0)
-
-        top = 0
-        bottom = self.height - 1
-        if cfg["header"]:
-            self._header(rows, t, position, duration)
-            top = 3
-        elif cfg["equalizer"]:
-            self._equalizer_only(rows, t)
-            # El ecualizador ocupa la primera fila: la letra no puede
-            # pisarlo, asi que el contenido empieza debajo.
-            top = 1
-        if cfg["footer"]:
-            bottom = self.height - 2
-            self._footer(rows, position, duration)
-        if cfg["hints"]:
-            bottom = bottom - 1
-            self._hints(rows)
-
-        if self.status_message:
-            # Fila propia para el aviso: el contenido se queda por debajo,
-            # asi no pisa ni la letra ni el pie.
-            notice_row = top if top > 0 else 1
-            notice = truncate(self.status_message, self.width - 4)
-            rows[notice_row] = (
-                " " * max(0, (self.width - cell_width(notice)) // 2)
-                + fg(self.theme.faint)
-                + notice
-                + RESET
-            )
-            top = notice_row + 1
-
-        if self.state == "idle":
-            self._idle_block(
-                rows, t, self.tr("nothing_playing"),
-                self.tr("open_player"),
-                top, bottom,
-            )
-        elif self.state == "loading":
-            self._idle_block(
-                rows, t, self.tr("searching_lyrics"),
-                (self.track.title + " \u2014 " + self.track.artist).strip(" \u2014"),
-                top, bottom,
-            )
-        elif self.state == "empty":
-            self._idle_block(
-                rows, t, self.tr("no_lyrics_title"),
-                self.tr("try_another_source"),
-                top, bottom,
-            )
-        else:
-            self._render_lyrics(rows, t, position, top, bottom)
-        return rows
-
-    def use_image(self):
-        if self.cfg["render_mode"] != "image":
-            return False
-        if getattr(self, "image_disabled", False):
-            return False
-        if self.image is None or not self.image.gfx.supported:
-            return False
-        # Sin tamaño en píxeles (terminales que no lo dan) no se puede
-        # colocar la imagen: se usa el modo texto.
-        try:
-            from graphics import terminal_cells
-
-            return terminal_cells()[2] > 0
-        except Exception:  # noqa: BLE001
-            return False
-
     def draw_image(self, force=False):
+        if self.image is None:
+            # Sin renderizador no hay nada que dibujar: el aviso ya se dio al
+            # arrancar y el bucle de --once termina solo.
+            return
         if self.last_mode != "image":
             sys.stdout.write("\x1b[2J\x1b[H")
             sys.stdout.flush()
             self.last_mode = "image"
-            self.need_clear = False
             self.log("modo: imagen")
         try:
             rendered = self.image.render()
@@ -2841,18 +2394,8 @@ class LyricsCarousel:
             if self.image_failures >= 3:
                 self.log("modo imagen desactivado tras varios fallos")
                 self.image_disabled = True
-                # No se toca self.cfg: es la configuracion leida, y
-                # _reload_config la compara para decidir si el usuario ha
-                # pedido imagen otra vez. Mutarla aqui hacia que la
-                # siguiente recarga pareciera una peticion nueva y rearmara
-                # el modo que acaba de fallar.
-                # Se guarda el cambio: si la configuracion siguiera pidiendo
-                # imagen, cada recarga volveria a activar el modo que falla.
-                self._save_override("render_mode", "text", "string")
                 self.status_message = self.tr("image_disabled")
-                self.need_clear = True
                 self.last_mode = ""
-                self._draw_text_frame()
             return
         if not rendered:
             # No se ha podido colocar la imagen (p. ej. sin tamaño en píxeles).
@@ -2860,57 +2403,20 @@ class LyricsCarousel:
             if self.image_failures >= 3:
                 self.log("modo imagen desactivado: no se puede dibujar")
                 self.image_disabled = True
-                # Igual que arriba: la configuracion en memoria no se muta.
-                self._save_override("render_mode", "text", "string")
-            self.last_mode = ""
-            self.need_clear = True
-            self._draw_text_frame()
             return
         self.image_failures = 0
 
     def draw(self, force=False):
         now = time.monotonic()
-        # El modo imagen dibuja a 20 fps (IMAGE_FPS): la ventana manda la
-        # imagen entera cada cuadro, asi que mas no se nota e iria peor.
-        # El texto si va a 20 fps: es una terminal, no una imagen.
-        interval = 1.0 / IMAGE_FPS if self.use_image() else 0.05
+        # A 60 fps solo mientras el carrusel se mueve (transición suave): en
+        # reposo, con el karaoke y el fondo, 30 fps sobran y la imagen pesa
+        # menos en el canal de kitty.
+        fps = MOTION_FPS if self.moving else IMAGE_FPS
+        interval = 1.0 / fps
         if not force and now - self.last_draw < interval:
             return
         self.last_draw = now
-        if self.use_image():
-            self.draw_image(force)
-            return
-        if self.last_mode == "image":
-            # Se borra la imagen anterior antes de volver al texto.
-            try:
-                if self.image is not None:
-                    self.image.gfx.clear()
-            except Exception:  # noqa: BLE001
-                pass
-            self.last_mode = ""
-            self.need_clear = True
-            self.log("modo: texto")
-        self._draw_text_frame(force)
-
-    def _draw_text_frame(self, force=False):
-        rows = self.build_frame()
-        out = ["\x1b[?2026h"]
-        if self.need_clear:
-            out.append("\x1b[2J\x1b[H")
-            self.need_clear = False
-        for index, row in enumerate(rows):
-            if force or index >= len(self.prev_rows) or self.prev_rows[index] != row:
-                out.append(f"\x1b[{index + 1};1H{row}\x1b[K")
-        out.append("\x1b[?2026l")
-        if len(out) > 2:
-            try:
-                sys.stdout.write("".join(out))
-                sys.stdout.flush()
-            except OSError as error:
-                # La terminal se ha cerrado: no tiene sentido seguir.
-                self.output_broken = True
-                self.log(f"salida: {error!r}")
-        self.prev_rows = rows
+        self.draw_image(force)
 
     # ---- teclado ------------------------------------------------------
 
@@ -3022,6 +2528,11 @@ class LyricsCarousel:
         interactive = not self.args.once
         self._setup_terminal(interactive)
         self._announce_pid()
+        # El visualizador es el fondo de la ventana: cava en modo real y
+        # barras simuladas en demo (no hay audio que escuchar).
+        visualizer = getattr(self, "visualizer", None)
+        if visualizer is not None and not self.demo:
+            visualizer.start()
         try:
             while not self.stop_requested:
                 self.update_size()
@@ -3042,8 +2553,13 @@ class LyricsCarousel:
                     if not self.handle_key(key):
                         self.stop_requested = True
                         break
-                time.sleep(0.033)
+                # El bucle late a 60 Hz: draw() decide si toca dibujar a 60
+                # (transición) o a 30 (reposo).
+                time.sleep(1.0 / MOTION_FPS)
         finally:
+            visualizer = getattr(self, "visualizer", None)
+            if visualizer is not None:
+                visualizer.stop()
             self._forget_pid()
             self._restore_terminal(interactive)
 
@@ -3152,7 +2668,6 @@ def main():
     parser.add_argument("--direction", choices=("down", "up"), default=None, help="sentido del carrusel (por defecto: el del plugin)")
     parser.add_argument("--player", default="", help="nombre de reproductor MPRIS (por defecto: el que esté sonando)")
     parser.add_argument("--no-karaoke", action="store_true", help="no rellenar la línea activa carácter a carácter")
-    parser.add_argument("--render-mode", choices=("image", "text"), default=None, help="forzar el modo de render")
     parser.add_argument("--active-scale", type=float, default=None, help="tamaño de la línea activa")
     parser.add_argument("--accent", default=None, help="color de la línea activa")
     parser.add_argument("--no-keys", action="store_true", help="ocultar la ayuda de teclas")

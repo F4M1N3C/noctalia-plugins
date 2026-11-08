@@ -355,44 +355,103 @@ class ImageRenderer:
     # -- fondo ----------------------------------------------------------
 
     def _draw_visualizer(self, image, xpix, ypix, accent):
-        """Barras de cava de fondo, de borde a borde y detras de la letra.
+        """Barras de cava de fondo, en la zona configurada y detras de la letra.
 
         Se dibujan primero (la letra va encima) con alfa bajo: el fondo se ve
-        como un ecualizador real sin tapar el texto. La altura de cada barra
-        sigue el nivel de audio; si cava no esta, el visualizador devuelve
-        barras simuladas.
+        como un ecualizador real sin tapar el texto. La zona y cobertura
+        se configuran en el panel (visualizer_position, visualizer_coverage).
         """
         visualizer = getattr(self.app, "visualizer", None)
         if visualizer is None:
             return
+        position = getattr(self.app, "visualizer_position", "bottom")
+        coverage = getattr(self.app, "visualizer_coverage", 25) / 100.0
+        
         try:
             levels = visualizer.snapshot(simulate=bool(getattr(self.app, "demo", False)))
         except Exception:  # noqa: BLE001 - el fondo nunca tumba el cuadro
             return
         if not levels:
             return
+        
         count = len(levels)
-        slot = xpix / float(count)
-        gap = max(1.0, slot * 0.24)
-        width = max(1, int(slot - gap))
         color = self._mix(accent, self.app.theme.background, 0.55)
         paint = ImageDraw.Draw(image)
-        for index, level in enumerate(levels):
-            level = max(0.0, min(1.0, float(level)))
-            height = max(2.0, ypix * level)
-            x0 = index * slot + gap / 2.0
-            alpha = int(34 + 58 * level)
-            paint.rectangle(
-                [x0, ypix - height, x0 + width, ypix],
-                fill=color + (alpha,),
-            )
-            # Tapa superior un poco mas viva: da el brillo de cava y marca el
-            # nivel sin subir la opacidad del cuerpo de la barra.
-            if height > 4.0:
-                paint.rectangle(
-                    [x0, ypix - height, x0 + width, ypix - height + 2],
-                    fill=color + (min(170, alpha + 55),),
-                )
+        
+        if position in ("top", "bottom"):
+            # Banda horizontal
+            band_h = max(2, int(ypix * coverage))
+            if position == "bottom":
+                y0 = ypix - band_h
+            else:
+                y0 = 0
+            slot = xpix / float(count)
+            gap = max(1.0, slot * 0.24)
+            width = max(1, int(slot - gap))
+            for index, level in enumerate(levels):
+                level = max(0.0, min(1.0, float(level)))
+                h = max(1.0, band_h * level)
+                x0 = index * slot + gap / 2.0
+                alpha = int(34 + 58 * level)
+                if position == "bottom":
+                    paint.rectangle(
+                        [x0, ypix - h, x0 + width, ypix],
+                        fill=color + (alpha,),
+                    )
+                    # Tapa superior
+                    if h > 4.0:
+                        paint.rectangle(
+                            [x0, ypix - h, x0 + width, ypix - h + 2],
+                            fill=color + (min(170, alpha + 55),),
+                        )
+                else:
+                    paint.rectangle(
+                        [x0, 0, x0 + width, h],
+                        fill=color + (alpha,),
+                    )
+                    # Tapa inferior
+                    if h > 4.0:
+                        paint.rectangle(
+                            [x0, h - 2, x0 + width, h],
+                            fill=color + (min(170, alpha + 55),),
+                        )
+        else:
+            # Banda vertical (left/right)
+            band_w = max(2, int(xpix * coverage))
+            if position == "right":
+                x0 = xpix - band_w
+            else:
+                x0 = 0
+            slot = ypix / float(count)
+            gap = max(1.0, slot * 0.24)
+            width = max(1, int(slot - gap))
+            for index, level in enumerate(levels):
+                level = max(0.0, min(1.0, float(level)))
+                w = max(1.0, band_w * level)
+                y0 = index * slot + gap / 2.0
+                alpha = int(34 + 58 * level)
+                if position == "right":
+                    paint.rectangle(
+                        [xpix - w, y0, xpix, y0 + width],
+                        fill=color + (alpha,),
+                    )
+                    # Tapa izquierda
+                    if w > 4.0:
+                        paint.rectangle(
+                            [xpix - w, y0, xpix - w + 2, y0 + width],
+                            fill=color + (min(170, alpha + 55),),
+                        )
+                else:
+                    paint.rectangle(
+                        [0, y0, w, y0 + width],
+                        fill=color + (alpha,),
+                    )
+                    # Tapa derecha
+                    if w > 4.0:
+                        paint.rectangle(
+                            [w - 2, y0, w, y0 + width],
+                            fill=color + (min(170, alpha + 55),),
+                        )
 
     # -- render principal -----------------------------------------------
 

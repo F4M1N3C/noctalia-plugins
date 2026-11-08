@@ -787,6 +787,184 @@ def check_transicion_real():
             )
 
 
+def check_transicion_visual_fluida():
+    """La transición ghost se ve: tamaño gradual y colores que cruzan.
+
+    Se mide el render de verdad (píxeles), no los cálculos intermedios:
+      * la línea que va a ser principal crece de 1.0 a `active_scale` de
+        forma continua (varios tamaños intermedios, no un salto);
+      * esa línea entra en blanco y termina en el color principal;
+      * la línea que deja de ser principal sale del color principal y
+        termina en el color de las líneas ya cantadas.
+    """
+    mod = image_module()
+    if mod.Image is None:
+        check("la transición visual se puede medir (Pillow)", False, "sin Pillow")
+        return
+
+    FONDO = (12, 12, 18)
+    BLANCO = (240, 240, 245)
+    PASADO = (110, 110, 120)
+    ROJO = (220, 60, 60)
+    SIZE = 20.0
+    SCALE = 1.6
+
+    class Tema:
+        background = FONDO
+        foreground = BLANCO
+        past = PASADO
+
+    class Linea:
+        def __init__(self, text):
+            self.text = text
+            self.start = 0.0
+            self.duration = 4.0
+            self.chars = []
+
+    class App:
+        pass
+
+    def render(progress, textos, estado=None, karaoke=False, direction="down"):
+        """Dibuja el carrusel con una sola línea con texto y devuelve la imagen."""
+        app = App()
+        app.theme = Tema()
+        app.cfg = {
+            "visible_above": 2,
+            "visible_below": 2,
+            "direction": direction,
+            "spacing": 3,
+            "marker": False,
+            "karaoke": karaoke,
+        }
+        app.lines = [Linea(texto) for texto in textos]
+        app.karaoke = karaoke
+        app.next_timed_start = lambda indice: None
+        app.karaoke_amount = lambda *args: 999.0 if karaoke else 0.0
+        # La línea 1 es la principal y la 2 la que va a tomarser el puesto.
+        app.scroll_state = lambda posicion: estado or (1, 2, progress)
+        renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
+        renderer.app = app
+        renderer.fonts = {}
+        renderer.font_files = {"prueba": mod.FALLBACK_FONT}
+        imagen = mod.Image.new("RGBA", (900, 800), (0, 0, 0, 0))
+        pincel = mod.ImageDraw.Draw(imagen)
+        renderer._measure_draw = pincel
+        renderer._draw_lyrics(
+            pincel, 400.0, SIZE, SCALE, "prueba", ROJO, 0.0, 60.0, 740.0
+        )
+        return imagen
+
+    def alto(imagen):
+        caja = imagen.getbbox()
+        return 0 if caja is None else caja[3] - caja[1]
+
+    def color_opaco(imagen):
+        """El RGB del glifo más opaco (el color con el que se pintó)."""
+        caja = imagen.getbbox()
+        if caja is None:
+            return (0, 0, 0)
+        region = imagen.crop(caja)
+        colores = region.getcolors(maxcolors=200000) or []
+        if not colores:
+            return (0, 0, 0)
+        cuenta, pixel = max(colores, key=lambda par: par[1][3])
+        return pixel[:3]
+
+    def distancia(uno, otro):
+        return sum((uno[i] - otro[i]) ** 2 for i in range(3)) ** 0.5
+
+    entrante = ["", "", "ENTRANTE", "", ""]
+    saliente = ["", "SALIENTE", "", ""]
+
+    # -- tamaño: la entrante crece de 1.0 a `scale`, sin saltos.
+    altos = [alto(render(p, entrante)) for p in (0.25, 0.5, 0.75, 1.0)]
+    check(
+        "la línea entrante crece de forma continua",
+        len(set(altos)) == 4 and altos[0] < altos[1] < altos[2] < altos[3],
+        repr(altos),
+    )
+    check(
+        "la línea entrante alcanza el tamaño principal",
+        altos[-1] > altos[0] * 1.25,
+        "altos=%r" % (altos,),
+    )
+
+    # -- tamaño: la saliente encoge de `scale` a 1.0 (no debe romperse).
+    altos_salida = [alto(render(p, saliente)) for p in (0.0, 0.25, 0.5, 0.75, 1.0)]
+    check(
+        "la línea saliente encoge de forma continua",
+        altos_salida[0] > altos_salida[1] > altos_salida[2] > altos_salida[3]
+        and altos_salida[4] <= altos_salida[3],
+        repr(altos_salida),
+    )
+
+    # -- color de la entrante: blanco -> color principal.
+    inicio = color_opaco(render(0.15, entrante))
+    check(
+        "la línea entrante empieza en blanco",
+        distancia(inicio, BLANCO) < distancia(inicio, ROJO),
+        "color=%r" % (inicio,),
+    )
+    final = color_opaco(render(1.0, entrante))
+    check(
+        "la línea entrante termina en el color principal",
+        distancia(final, ROJO) < 12,
+        "color=%r" % (final,),
+    )
+
+    # -- color de la saliente: color principal -> color de las cantadas.
+    inicio_salida = color_opaco(render(0.0, saliente))
+    check(
+        "la línea saliente empieza en el color principal",
+        distancia(inicio_salida, ROJO) < 12,
+        "color=%r" % (inicio_salida,),
+    )
+    final_salida = color_opaco(render(1.0, saliente))
+    check(
+        "la línea saliente termina en el color de las ya cantadas",
+        distancia(final_salida, PASADO) < 45
+        and distancia(final_salida, ROJO) > 60,
+        "color=%r" % (final_salida,),
+    )
+
+    # -- la entrante no parpadea: antes y al empezar la transición se ve igual.
+    antes = render(0.0, entrante, estado=(1, 1, 0.0))
+    check(
+        "la línea entrante no parpadea al empezar la transición",
+        alto(antes) > 0 and alto(render(0.0, entrante)) > 0,
+        "antes=%r despues=%r" % (alto(antes), alto(render(0.0, entrante))),
+    )
+
+    # -- con karaoke (el modo por defecto) la saliente también cambia de color.
+    karaoke_inicio = color_opaco(render(0.0, saliente, karaoke=True))
+    karaoke_final = color_opaco(render(1.0, saliente, karaoke=True))
+    check(
+        "con karaoke la saliente pasa del color principal al de las cantadas",
+        distancia(karaoke_inicio, ROJO) < distancia(karaoke_inicio, BLANCO)
+        and distancia(karaoke_final, PASADO) < 45
+        and distancia(karaoke_final, ROJO) > 60,
+        "inicio=%r final=%r" % (karaoke_inicio, karaoke_final),
+    )
+
+    # -- en sentido "up" el relevo es el mismo, pero subiendo.
+    for sentido in ("up",):
+        altos_up = [alto(render(p, entrante, direction=sentido)) for p in (0.25, 0.5, 0.75, 1.0)]
+        color_up = color_opaco(render(1.0, entrante, direction=sentido))
+        color_salida_up = color_opaco(render(1.0, saliente, direction=sentido))
+        check(
+            "en sentido up la entrante crece y acaba en el color principal",
+            altos_up[0] < altos_up[1] < altos_up[2] < altos_up[3]
+            and distancia(color_up, ROJO) < 12,
+            "altos=%r color=%r" % (altos_up, color_up),
+        )
+        check(
+            "en sentido up la saliente acaba en el color de las cantadas",
+            distancia(color_salida_up, PASADO) < 45
+            and distancia(color_salida_up, ROJO) > 60,
+            "color=%r" % (color_salida_up,),
+        )
+
+
 def check_glow_real():
     """El resplandor de la imagen es de verdad un resplandor.
 
@@ -3089,6 +3267,7 @@ def main(argv):
     check_karaoke_imagen_pixel_a_pixel()
     check_karaoke_imagen_sigue_los_tiempos()
     check_transicion_real()
+    check_transicion_visual_fluida()
     check_glow_real()
     check_recarga_por_senal()
     check_tamano_terminal_real()

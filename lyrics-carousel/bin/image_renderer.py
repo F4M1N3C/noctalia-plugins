@@ -100,6 +100,22 @@ class ImageRenderer:
             int(background[2] + (color[2] - background[2]) * factor),
         )
 
+    @staticmethod
+    def _lerp(primero, segundo, factor):
+        """Interpola de `primero` (factor 0) a `segundo` (factor 1).
+
+        `_mix` mezcla un color sobre el fondo y el factor dice cuanta
+        fuerza tiene el color; aquí el factor es el avance de una
+        transición, así que el orden de los colores es el orden en el que
+        se ven en pantalla.
+        """
+        factor = max(0.0, min(1.0, factor))
+        return (
+            int(primero[0] + (segundo[0] - primero[0]) * factor),
+            int(primero[1] + (segundo[1] - primero[1]) * factor),
+            int(primero[2] + (segundo[2] - primero[2]) * factor),
+        )
+
     def fit_text(self, text, max_width, size, family):
         """Recorta el texto para que quepa en el ancho disponible."""
         font = self.font(family, size)
@@ -461,6 +477,10 @@ class ImageRenderer:
         max_line_h = size * scale * 1.32
         gap = size * 0.30 * max(1, app.cfg["spacing"])
         margin = max_line_h + gap
+        # Posiciones off-screen para entrada/salida suave
+        off_top = area_top - max_line_h - gap
+        off_bottom = area_bottom + max_line_h + gap
+        down = app.cfg["direction"] == "down"
         # Escala interpolada: la línea que sale encoge, la que entra crece.
         for line_index in sorted(visible):
             if line_index < 0 or line_index >= len(lines):
@@ -469,11 +489,19 @@ class ImageRenderer:
             y_a = pos_a.get(line_index)
             y_b = pos_b.get(line_index)
             if y_a is None:
-                # Línea que ENTRA: solo existe en layout nuevo
-                y = y_b
+                # Línea que ENTRA: viene de off-screen
+                if down:
+                    y_a = off_top  # En "down", vienen de ARRIBA
+                else:
+                    y_a = off_bottom  # En "up", vienen de ABAJO
+                y = y_a + (pos_b[line_index] - y_a) * progress
             elif y_b is None:
-                # Línea que SALE: solo existe en layout viejo
-                y = y_a
+                # Línea que SALE: se va hacia off-screen
+                if down:
+                    y_b = off_bottom  # En "down", se van ABAJO
+                else:
+                    y_b = off_top  # En "up", se van ARRIBA
+                y = pos_a[line_index] + (y_b - pos_a[line_index]) * progress
             else:
                 # Línea en ambos: interpolación normal
                 y = y_a + (y_b - y_a) * progress
@@ -483,43 +511,39 @@ class ImageRenderer:
 
             if line_index == index:
                 factor = 1.0 + (scale - 1.0) * (1.0 - progress)
-                transition_alpha = 1.0 - progress
+                # La que deja de ser principal: se encoge hasta su tamaño normal.
             elif line_index == focus:
                 factor = 1.0 + (scale - 1.0) * progress
-                transition_alpha = progress
-            elif line_index in leaving:
-                # Línea que SALE: fade out durante transición
-                factor = 1.0
-                transition_alpha = 1.0 - progress
-            elif line_index in entering:
-                # Línea que ENTRA: fade in durante transición
-                factor = 1.0
-                transition_alpha = progress
+                # La que va a ser principal: crece hasta el tamaño principal.
             else:
                 factor = 1.0
-                transition_alpha = 1.0
             line_size = size * factor
 
             distance = abs(y - center_y)
             span = max(1.0, (area_bottom - area_top) * 0.5)
             fade = max(0.22, 1.0 - (distance / span) ** 1.0)
-            # Solo las líneas que entran/salen pierden alpha durante la transición
-            is_leaving = line_index in leaving
-            is_entering = line_index in entering
-            if is_leaving or is_entering:
-                fade *= transition_alpha
+            # Las líneas del borde (las que entran y salen del encuadre) se
+            # desvanecen. Las dos del relevo no: si perdieran el alfa
+            # desaparecerían de golpe al empezar o al terminar la transición.
+            if line_index in entering and line_index != focus:
+                fade *= progress
+            elif line_index in leaving and line_index != index:
+                fade *= 1.0 - progress
+            # El alfa del resto depende solo de la distancia al centro: la
+            # entrante sigue siendo la de antes y la saliente se queda en
+            # su sitio hasta ocupar el hueco de las ya cantadas.
             is_sung = line_index == index
             is_focus = line_index == focus
             if is_sung:
-                # Línea que SALE (era la activa): accent -> color base (fade out)
-                base = theme.foreground if line_index > index else theme.past
-                base_color = self._mix(base, background, 1.0)
-                color = self._mix(accent, base_color, progress)
+                # La principal que deja de serlo: del color principal al
+                # color de las líneas ya cantadas.
+                destino = self._mix(theme.past, background, fade)
+                color = self._lerp(accent, destino, progress)
             elif is_focus:
-                # Línea que ENTRA (nueva activa): color base -> accent
-                base = theme.foreground if line_index > index else theme.past
-                base_color = self._mix(base, background, 1.0)
-                color = self._mix(base, accent, progress)
+                # La que va a ser principal: del blanco que ya tenía al
+                # color principal.
+                inicio = self._mix(theme.foreground, background, fade)
+                color = self._lerp(inicio, accent, progress)
             else:
                 base = theme.foreground if line_index > index else theme.past
                 color = self._mix(base, background, fade)
@@ -543,9 +567,17 @@ class ImageRenderer:
                 # tiempos por carácter el relleno los respeta, y si no
                 # reparte la duración de la línea entre los caracteres.
                 amount = app.karaoke_amount(line, text, position, end)
-                unsung = self._mix(accent, background, 0.45)
+                cantada = accent
+                pendiente = self._mix(accent, background, 0.45)
+                if progress > 0.0:
+                    # La línea que deja de ser principal se va apagando
+                    # hacia el color de las ya cantadas: al terminar queda
+                    # igual que sus vecinas, sin un salto de color.
+                    destino = self._mix(theme.past, background, fade)
+                    cantada = self._lerp(accent, destino, progress)
+                    pendiente = self._lerp(pendiente, destino, progress)
                 self._draw_karaoke(
-                    draw, text, y, line_size, accent, unsung, amount, family
+                    draw, text, y, line_size, cantada, pendiente, amount, family
                 )
             else:
                 self._draw_centered(draw, text, y, line_size, color, family)

@@ -856,7 +856,7 @@ render = function()
       local position = tostring(valueOf("visualizer_position"))
       return ui.column({ gap = 4 }, {
         ui.row({ align = "center", gap = 8 }, {
-          ui.glyph({ name = "align-vertical-top", size = 14, color = "on_surface_variant" }),
+          ui.glyph({ name = "keyframe-align-vertical", size = 14, color = "on_surface_variant" }),
           ui.label({ text = tr("visualizer_position"), fontSize = 12, color = "on_surface", flexGrow = 1 }),
           ui.button({
             key = "viz-pos-top",

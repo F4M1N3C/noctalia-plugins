@@ -17,7 +17,7 @@
 
 id = "faminec/lyrics-carousel"
 name = "Lyrics Carousel"
-version = "2.5.0"
+version = "2.6.0"
 plugin_api = 34
 author = "faminec"
 license = "MIT"

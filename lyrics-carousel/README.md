@@ -116,6 +116,10 @@ it belongs to the bar widget, not to the lyrics window.
 | `active_scale` | `double` | `1.35` | Size multiplier of the line being sung. |
 | `visible_above` | `int` | `6` | Lines visible above the active one. |
 | `visible_below` | `int` | `6` | Lines visible below the active one. |
+| `visualizer` | `bool` | `true` | Enable audio visualizer (cava). |
+| `visualizer_position` | `select` | `bottom` | Where to draw the visualizer: `top`, `bottom`, `left`, `right`. |
+| `visualizer_coverage` | `int` | `25` | Percentage of window the visualizer covers (5-50). |
+| `translate_lyrics` | `bool` | `false` | Translate lyrics to window language. |
 | `glyph` | `glyph` | `music` | Bar icon (only in the settings page). |
 
 The position and the size are applied live to the running window, without recreating
@@ -123,6 +127,13 @@ it. The font family and the font size also apply live: the font cache is
 invalidated on change, so there is no need to reopen the window.
 
 ## Changelog
+
+### 2.6.0
+
+- **Configurable audio visualizer**: `visualizer` toggle with position (`top`/`bottom`/`left`/`right`) and coverage (5-50%) options. The visualizer runs as a background band behind the lyrics, not full-window.
+- **Persistent window size**: Manual resize is saved to `settings.toml` and restored on reopen. Moving the window (anchor buttons) preserves the configured size.
+- **Lyrics translation disabled by default**: New `translate_lyrics` setting (default `false`) prevents the lyrics adapter from translating to the window language.
+- **Conditional panel UI**: Visualizer position/coverage controls only appear when the visualizer is enabled.
 
 ### 2.5.0
 

@@ -965,6 +965,46 @@ def check_transicion_visual_fluida():
         )
 
 
+def check_ritmo_de_frames():
+    """El bucle late a 60 fps de verdad: el plazo va desde el inicio del frame.
+
+    Dormir el intervalo entero DESPUÉS del trabajo hacía que el ciclo real
+    fuera `trabajo + intervalo`: 36 fps en vez de 60, y con eso el
+    carrusel se veía a tirones.
+    """
+    mod = script_module()
+    resto = mod.resto_para_siguiente_frame
+    intervalo = 1.0 / 60.0
+
+    check(
+        "el plazo se cuenta desde el inicio del frame",
+        abs(resto(0.0, 0.008, intervalo) - (intervalo - 0.008)) < 1e-9,
+        repr(resto(0.0, 0.008, intervalo)),
+    )
+    check(
+        "un frame a tiempo duerme lo que falta",
+        abs(resto(0.0, 0.0, intervalo) - intervalo) < 1e-9,
+        repr(resto(0.0, 0.0, intervalo)),
+    )
+    check(
+        "un frame tardío no duerme",
+        resto(0.0, 0.05, intervalo) == 0.0,
+        repr(resto(0.0, 0.05, intervalo)),
+    )
+    check(
+        "el resto nunca es negativo",
+        resto(10.0, 20.0, intervalo) == 0.0,
+        repr(resto(10.0, 20.0, intervalo)),
+    )
+    check(
+        "los fps reales se miden entre frames",
+        abs(mod.fps_real(180, 3.0) - 60.0) < 1e-9
+        and mod.fps_real(0, 1.0) == 0.0
+        and mod.fps_real(60, 0.0) == 0.0,
+        repr((mod.fps_real(180, 3.0), mod.fps_real(0, 1.0))),
+    )
+
+
 def check_glow_real():
     """El resplandor de la imagen es de verdad un resplandor.
 
@@ -3268,6 +3308,7 @@ def main(argv):
     check_karaoke_imagen_sigue_los_tiempos()
     check_transicion_real()
     check_transicion_visual_fluida()
+    check_ritmo_de_frames()
     check_glow_real()
     check_recarga_por_senal()
     check_tamano_terminal_real()

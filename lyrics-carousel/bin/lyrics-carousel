@@ -198,6 +198,29 @@ def ease_in_out(progress: float) -> float:
     return value * value * (3.0 - 2.0 * value)
 
 
+def resto_para_siguiente_frame(inicio: float, ahora: float, intervalo: float) -> float:
+    """Cuánto falta para el siguiente frame con ritmo de paso fijo.
+
+    El plazo se cuenta desde el INICIO del frame: si el frame ha tardado 8 ms
+    de un intervalo de 16,7 ms solo se duermen 8,7 ms. Dormir el intervalo
+    entero DESPUES del trabajo hacia que el ciclo real fuera
+    `trabajo + intervalo`: 36 fps en vez de 60, y el carrusel se vea a
+    tirones.
+    """
+    return max(0.0, inicio + intervalo - ahora)
+
+
+def fps_real(frames: int, segundos: float) -> float:
+    """Frames por segundo de verdad: frames entre el tiempo que ha pasado.
+
+    El tiempo de dibujo solo no dice nada: lo que se ve es la distancia
+    entre un cuadro y el siguiente.
+    """
+    if segundos <= 0:
+        return 0.0
+    return frames / segundos
+
+
 def blend(a, b, t: float):
     t = clamp(t, 0.0, 1.0)
     return (
@@ -1844,7 +1867,6 @@ class LyricsCarousel:
         self.active_index = 0
         self.last_active = -1
         self.moving = False
-        self.last_draw = 0.0
         self.last_reload = 0.0
         self.last_fetch = 0.0
         # Última comprobación del tamaño de la ventana (redimensionado manual).
@@ -2377,13 +2399,10 @@ class LyricsCarousel:
 
     def draw(self, force=False):
         now = time.monotonic()
-        # Plugin entero a 60 fps (MOTION_FPS): scroll suave.
-        # draw_image tarda ~20 ms; el bucle corre a 60 Hz y saltamos frames
-        # solo si draw_image se pasa del intervalo.
-        interval = 1.0 / MOTION_FPS
-        if not force and now - self.last_draw < interval:
-            return
-        self.last_draw = now
+        # El ritmo lo pone el bucle (plazo de paso fijo): aqui solo se dibuja.
+        # Antes este metodo tambien descartaba frames si se habia pasado del
+        # intervalo, y con el trabajo por delante el ciclo real era
+        # `trabajo + intervalo`: 36 fps en vez de 60.
         draw_start = now
         self.draw_image(force)
         draw_ms = (time.monotonic() - draw_start) * 1000
@@ -2392,9 +2411,12 @@ class LyricsCarousel:
             self._draw_frames = getattr(self, "_draw_frames", 0) + 1
             if self._draw_frames % 180 == 0:
                 avg = self._draw_accum / self._draw_frames
-                self.warn(f"draw avg: {avg:.1f}ms ({1000/avg:.1f} fps theoretical)")
+                desde = getattr(self, "_draw_desde", now)
+                fps = fps_real(self._draw_frames, now - desde)
+                self.warn(f"draw avg: {avg:.1f}ms | {fps:.0f} fps reales")
                 self._draw_accum = 0
                 self._draw_frames = 0
+                self._draw_desde = now
 
     # ---- teclado ------------------------------------------------------
 
@@ -2510,6 +2532,9 @@ class LyricsCarousel:
         self._announce_pid()
         try:
             while not self.stop_requested:
+                # Ritmo de paso fijo: el plazo se cuenta desde el inicio del
+                # frame, asi que el trabajo del frame no se suma al intervalo.
+                inicio_frame = time.monotonic()
                 self.update_size()
                 self._poll_data()
                 self.check_manual_resize()
@@ -2530,7 +2555,11 @@ class LyricsCarousel:
                         self.stop_requested = True
                         break
                 # El bucle late a 60 Hz (MOTION_FPS): plugin entero a 60 fps.
-                time.sleep(1.0 / MOTION_FPS)
+                resto = resto_para_siguiente_frame(
+                    inicio_frame, time.monotonic(), 1.0 / MOTION_FPS
+                )
+                if resto > 0:
+                    time.sleep(resto)
         finally:
             self._forget_pid()
             self._restore_terminal(interactive)

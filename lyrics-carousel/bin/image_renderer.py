@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from graphics import GraphicsRenderer, load_font, terminal_cells, text_width  # noqa: E402
 
 try:
-    from PIL import Image, ImageChops, ImageDraw, ImageFilter
+    from PIL import Image, ImageChops, ImageDraw
 except ImportError:  # pragma: no cover
     Image = None
 
@@ -201,13 +201,13 @@ class ImageRenderer:
         if sung_px <= 0.0:
             return
 
-        # El resplandor se difumina: el radio sale del tamaño de la letra
-        # y el margen deja sitio para que el halo quepa entero.
-        radio = max(2.0, size * 0.22)
+        # La caja de la línea: sin halo difuminado no hace falta el margen
+        # grande, solo unos píxeles para que el antialiasing del glifo no
+        # quede cortado.
         left, top, right, bottom = draw.textbbox(
             (x, center_y), text, font=font, anchor="lm"
         )
-        pad = max(4, int(size * 0.8) + int(radio * 2))
+        pad = 4
         box = (
             max(0, int(left) - pad),
             max(0, int(top) - pad),
@@ -241,58 +241,10 @@ class ImageRenderer:
         completa = capa(sung)
         nitido = completa.crop(corte)
 
-        # El resplandor, en dos radios: el ancho da el halo suave y el
-        # corto el brillo pegado a la letra. Se difumina la mascara de
-        # la letra y se pinta del color del resplandor: si se difumina la
-        # capa entera, el negro transparente de fuera se cuela en el
-        # color y el halo sale sucio.
-        forma = completa.getchannel("A")
-
-        # El resplandor no se corta en el borde de lo cantado: llega un
-        # poco mas alla y se apaga alli. Si se recortase en seco, el halo
-        # acababa en una pared vertical de luz al lado de la letra que
-        # falta, que se veía como un tajo.
+        # El brillo de la letra: solo lo cantado, en su color, sin sombra
+        # difuminada alrededor. El halo era una sombra que ademas costaba
+        # 3,2 ms por cuadro (dos GaussianBlur) y hacia bajar de 60 fps.
         rampa = max(2, int(size * 0.5))
-        mascara = Image.new("L", (width, height), 0)
-        if limit > 0:
-            ImageDraw.Draw(mascara).rectangle(
-                [0, 0, limit - 1, height - 1], fill=255
-            )
-        if rampa > 0:
-            caida = Image.new("L", (rampa, 1))
-            caida.putdata(
-                [
-                    int(255 * (1.0 - (indice + 1) / float(rampa)))
-                    for indice in range(rampa)
-                ]
-            )
-            caida = caida.resize((rampa, height), Image.Resampling.NEAREST)
-            mascara.paste(caida, (limit, 0))
-
-        def difusa(color, sigma):
-            """La forma de la letra difuminada, del color pedido.
-
-            La mascara se difumina a cuarta parte y se amplia: el halo es
-            una luz suave, asi que no se nota, y el modo imagen va a 20
-            cuadros por segundo y no puede gastar la mitad del tiempo en
-            difuminar.
-            """
-            pequena = forma.resize(
-                (max(1, width // 4), max(1, height // 4)),
-                Image.Resampling.BILINEAR,
-            ).filter(ImageFilter.GaussianBlur(max(0.5, sigma / 4.0)))
-            alfa = ImageChops.multiply(
-                pequena.resize((width, height), Image.Resampling.BILINEAR),
-                mascara,
-            )
-            halo = Image.new(
-                "RGBA", (width, height), (color[0], color[1], color[2], 0)
-            )
-            halo.putalpha(alfa)
-            return halo
-
-        resplandor = difusa(self._mix(sung, unsung, 0.45), radio)
-        nucleo = difusa(sung, radio / 2.0)
 
         # El borde del relleno se suaviza: una rampa de alfa en las últimas
         # columnas funde la letra cantada con la que todavía no se ha
@@ -308,12 +260,6 @@ class ImageRenderer:
             suave.paste(columna, (limit - rampa, 0))
             nitido.putalpha(ImageChops.multiply(nitido.getchannel("A"), suave))
 
-        # El orden importa: el halo va debajo, el texto nítido encima. Los
-        # dos halos se funden en una sola capa para no componer dos veces
-        # sobre la imagen entera.
-        base.alpha_composite(
-            Image.alpha_composite(resplandor, nucleo), (box[0], box[1])
-        )
         base.alpha_composite(nitido, (box[0], box[1]))
 
     def _draw_left(self, draw, text, x, y, size, color, family, anchor="lm"):

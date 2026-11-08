@@ -1005,13 +1005,65 @@ def check_ritmo_de_frames():
     )
 
 
-def check_glow_real():
-    """El resplandor de la imagen es de verdad un resplandor.
+def check_karaoke_sin_resplandor():
+    """El karaoke es el brillo de la letra, sin sombra difuminada alrededor.
 
-    Antes era un halo de un píxel (la misma frase pegada ocho veces alrededor):
-    se veía un contorno, no un brillo. Ahora la capa cantada se difumina, así
-    que el halo llega varios píxeles más allá de la letra, y el borde del
-    relleno se desvanece en vez de cortar en seco.
+    Antes la linea cantada se dibujaba dos veces: la nitida y una copia
+    difuminada (el halo). Ese halo era una sombra que ademas costaba 3,2 ms
+    por cuadro (el GaussianBlur) y hacia que el carrusel bajara de 60 fps.
+    """
+    mod = image_module()
+    if mod.Image is None:
+        check("el karaoke sin resplandor se puede medir (Pillow)", False, "sin Pillow")
+        return
+
+    texto = "cantando"
+    imagen = mod.Image.new("RGBA", (600, 90), (0, 0, 0, 0))
+    pincel = mod.ImageDraw.Draw(imagen)
+    renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
+    renderer.fonts = {}
+    renderer.font_files = {"prueba": mod.FALLBACK_FONT}
+    renderer._draw_karaoke(
+        pincel, texto, 45, 20, (0, 200, 0), (0, 90, 0), float(len(texto)), "prueba"
+    )
+
+    # La letra se dibuja centrada: la caja va en la misma x.
+    fuente = renderer.font("prueba", 20)
+    x = (imagen.size[0] - pincel.textlength(texto, font=fuente)) / 2
+    caja = pincel.textbbox((x, 45), texto, font=fuente, anchor="lm")
+    # Fuera de la caja del texto (con 2 px de tolerancia por el antialiasing
+    # del propio glifo) no puede quedar ni un pixel: ahi vivia el halo.
+    fuera = 0
+    for indice, px in enumerate(pixeles(imagen)):
+        if px[3] == 0:
+            continue
+        px_x = indice % imagen.size[0]
+        px_y = indice // imagen.size[0]
+        if (
+            px_x < caja[0] - 2
+            or px_x > caja[2] + 2
+            or px_y < caja[1] - 2
+            or px_y > caja[3] + 2
+        ):
+            fuera += 1
+    check(
+        "el karaoke no deja sombra alrededor de la letra",
+        fuera == 0,
+        "pixeles fuera=%d" % fuera,
+    )
+    check(
+        "la letra cantada sigue pintada",
+        sum(1 for px in pixeles(imagen) if px[1] == 200 and px[3] == 255) > 0,
+    )
+
+
+def check_glow_real():
+    """La letra cantada es nitida: brillo de la letra, sin halo difuminado.
+
+    Antes la linea cantada se dibujaba dos veces: la nitida y una copia
+    difuminada (el halo). Ese halo era una sombra ademas de caro (dos
+    GaussianBlur por cuadro, 3,2 ms) y hacia que el carrusel bajara de
+    60 fps. Lo que se conserva es el relleno con su borde suavizado.
     """
     mod = image_module()
     if mod.Image is None:
@@ -1028,39 +1080,33 @@ def check_glow_real():
     renderer.font_files = {"prueba": mod.FALLBACK_FONT}
     renderer._draw_karaoke(pincel, texto, 40, 20, cantado, pendiente, 4.0, "prueba")
 
-    glifo = mod.Image.new("L", imagen.size, 0)
-    brillo = mod.Image.new("L", imagen.size, 0)
+    # Lo que queda del resplandor lejos de la letra. El halo difuminado
+    # salia de la caja del texto; ahora no queda nada fuera de ella.
+    fuente = renderer.font("prueba", 20)
+    x = (imagen.size[0] - pincel.textlength(texto, font=fuente)) / 2
+    caja = pincel.textbbox((x, 40), texto, font=fuente, anchor="lm")
+    fuera_caja = 0
     for indice, px in enumerate(pixeles(imagen)):
-        x = indice % imagen.size[0]
-        y = indice // imagen.size[0]
         if px[3] == 0:
             continue
-        if px[:3] == cantado or px[:3] == pendiente:
-            glifo.putpixel((x, y), 255)
-        else:
-            brillo.putpixel((x, y), 255)
-
-    # Lo que queda del resplandor lejos de la letra. Con el halo de un
-    # pixel de antes el resplandor no llegaba mas de dos pixeles (el
-    # pixel del halo y el borde difuminado): aqui se mide a tres.
-    try:
-        from PIL import ImageChops, ImageFilter
-
-        dilatado = glifo.filter(ImageFilter.MaxFilter(7))
-        lejos = ImageChops.subtract(brillo, dilatado)
-        pixeles_lejos = sum(lejos.histogram()[1:])
-    except ImportError:  # pragma: no cover
-        pixeles_lejos = 0
+        px_x = indice % imagen.size[0]
+        px_y = indice // imagen.size[0]
+        if (
+            px_x < caja[0] - 2
+            or px_x > caja[2] + 2
+            or px_y < caja[1] - 2
+            or px_y > caja[3] + 2
+        ):
+            fuera_caja += 1
     check(
-        "el resplandor llega varios pixeles mas alla de la letra",
-        pixeles_lejos > 200,
-        "pixeles=%s" % (pixeles_lejos,),
+        "no queda halo difuminado lejos de la letra",
+        fuera_caja == 0,
+        "pixeles=%s" % (fuera_caja,),
     )
 
-    # El resplandor no se corta en seco en el borde de lo cantado: llega
-    # un poco mas alla y se apaga. Si se recortase justo en el borde,
-    # el halo terminaba en una pared vertical de luz al lado de la letra
-    # que faltaba.
+    # Y mas alla del borde de lo cantado no hay luz de otro color: lo que
+    # queda es el borde del relleno (tonos entre cantado y pendiente), no
+    # una sombra derramada al lado.
     ultimo = 0
     for indice, px in enumerate(pixeles(imagen)):
         if px[3] > 0 and px[:3] == cantado:
@@ -1070,11 +1116,16 @@ def check_glow_real():
         x = indice % imagen.size[0]
         if x <= ultimo or px[3] == 0:
             continue
-        if px[:3] != cantado and px[:3] != pendiente:
+        rojo, verde, azul = px[:3]
+        if not (
+            pendiente[0] <= rojo <= cantado[0]
+            and pendiente[1] <= verde <= cantado[1]
+            and pendiente[2] <= azul <= cantado[2]
+        ):
             mas_alla += 1
     check(
-        "el resplandor se apaga en vez de cortarse en el borde",
-        mas_alla > 100,
+        "no hay luz derramada mas alla de lo cantado",
+        mas_alla == 0,
         "pixeles=%s" % (mas_alla,),
     )
 
@@ -1109,7 +1160,7 @@ def check_glow_real():
         )
     ]
     check(
-        "el resplandor no ensucia los colores de la letra",
+        "el relleno no ensucia los colores de la letra",
         not fuera,
         "colores=%s" % (sorted(fuera)[:5],),
     )
@@ -3305,6 +3356,7 @@ def main(argv):
     check_reintento_letra()
     check_layout_imagen()
     check_karaoke_imagen_pixel_a_pixel()
+    check_karaoke_sin_resplandor()
     check_karaoke_imagen_sigue_los_tiempos()
     check_transicion_real()
     check_transicion_visual_fluida()

@@ -74,10 +74,6 @@ try:
 except Exception as error:  # noqa: BLE001  (el modo imagen es opcional)
     ImageRenderer = None
     IMAGE_ERROR = repr(error)
-try:
-    from visualizer import Visualizer
-except Exception:  # noqa: BLE001  (el fondo es opcional)
-    Visualizer = None
 
 # Las rutas del estado (settings.toml y overrides) viven en un modulo
 # propio: el script y el helper tienen que buscar el mismo sitio o uno
@@ -1044,7 +1040,7 @@ def adapter_request(source: str, track: Track, settings: dict):
         "credentials": creds,
         "options": {
             "translation_language": settings.get("translation", "zh-Hans"),
-            "translate_lyrics": settings.get("translate_lyrics", False),
+            "translate_lyrics": False,
         },
     }
     return request
@@ -1667,17 +1663,13 @@ DEFAULTS = {
     "active_scale": 1.35,
     "visible_above": 6,
     "visible_below": 6,
-    "visualizer": True,
-    "visualizer_position": "bottom",
-    "visualizer_coverage": 25,
     "translate_lyrics": False,
 }
 
-BOOL_KEYS = ("marker", "karaoke", "footer", "hints", "header", "ghost", "visualizer")
+BOOL_KEYS = ("marker", "karaoke", "footer", "hints", "header", "ghost")
 INT_KEYS = (
     "font_size", "spacing", "offset_ms", "width", "height",
     "custom_x", "custom_y", "visible_above", "visible_below",
-    "visualizer_coverage",
 )
 FLOAT_KEYS = ("active_scale",)
 
@@ -1749,11 +1741,8 @@ def load_settings() -> dict:
     except (TypeError, ValueError):
         cfg["custom_y"] = 100
     cfg["active_scale"] = max(1.0, min(2.5, cfg["active_scale"]))
-    cfg["visualizer_coverage"] = max(5, min(50, cfg["visualizer_coverage"]))
     if cfg["direction"] not in ("down", "up"):
         cfg["direction"] = "down"
-    if cfg.get("visualizer_position") not in ("top", "bottom", "left", "right"):
-        cfg["visualizer_position"] = DEFAULTS["visualizer_position"]
     if cfg["accent"] not in ACCENT_NAMES:
         cfg["accent"] = DEFAULTS["accent"]
     cfg["font_family"] = str(cfg["font_family"] or DEFAULTS["font_family"])
@@ -1871,15 +1860,6 @@ class LyricsCarousel:
         self._player = PlayerWatcher(args.player) if not self.demo else None
         self.image = None
         self.image_error = ""
-        # Visualizador: solo si está activado en la configuración
-        if self.cfg.get("visualizer", True) and Visualizer is not None:
-            self.visualizer = Visualizer(self.log)
-            self.visualizer_position = self.cfg.get("visualizer_position", "bottom")
-            self.visualizer_coverage = self.cfg.get("visualizer_coverage", 25)
-        else:
-            self.visualizer = None
-            self.visualizer_position = "bottom"
-            self.visualizer_coverage = 25
         # Si la terminal se cierra, las escrituras fallan: hay que salir en
         # vez de quedarse dibujando en el vacio.
         self.output_broken = False
@@ -2168,18 +2148,6 @@ class LyricsCarousel:
         # La geometría de la ventana la aplica el panel (es quien tiene la
         # API de Noctalia): aquí no se toca, solo se vigila el tamaño por si
         # el usuario redimensiona la ventana a mano.
-        # Visualizador: crear/destruir si cambia el estado ON/OFF, actualizar posición/cobertura
-        new_viz = cfg.get("visualizer", True)
-        if new_viz and self.visualizer is None and Visualizer is not None:
-            self.visualizer = Visualizer(self.log)
-            if not self.demo:
-                self.visualizer.start()
-        elif not new_viz and self.visualizer is not None:
-            self.visualizer.stop()
-            self.visualizer = None
-        if self.visualizer is not None:
-            self.visualizer_position = cfg.get("visualizer_position", "bottom")
-            self.visualizer_coverage = cfg.get("visualizer_coverage", 25)
 
     def _poll_data(self):
         # Recarga de ajustes: vale tanto en modo demo como en modo real.
@@ -2409,14 +2377,24 @@ class LyricsCarousel:
 
     def draw(self, force=False):
         now = time.monotonic()
-        # Plugin entero a 60 fps (MOTION_FPS): visualizer fluido + scroll suave.
-        # draw_image tarda ~25 ms; el bucle corre a 60 Hz y saltamos frames
+        # Plugin entero a 60 fps (MOTION_FPS): scroll suave.
+        # draw_image tarda ~20 ms; el bucle corre a 60 Hz y saltamos frames
         # solo si draw_image se pasa del intervalo.
         interval = 1.0 / MOTION_FPS
         if not force and now - self.last_draw < interval:
             return
         self.last_draw = now
+        draw_start = now
         self.draw_image(force)
+        draw_ms = (time.monotonic() - draw_start) * 1000
+        if draw_ms > 0:
+            self._draw_accum = getattr(self, "_draw_accum", 0) + draw_ms
+            self._draw_frames = getattr(self, "_draw_frames", 0) + 1
+            if self._draw_frames % 180 == 0:
+                avg = self._draw_accum / self._draw_frames
+                self.warn(f"draw avg: {avg:.1f}ms ({1000/avg:.1f} fps theoretical)")
+                self._draw_accum = 0
+                self._draw_frames = 0
 
     # ---- teclado ------------------------------------------------------
 
@@ -2530,15 +2508,6 @@ class LyricsCarousel:
         interactive = not self.args.once
         self._setup_terminal(interactive)
         self._announce_pid()
-        # El visualizador es el fondo de la ventana: cava en modo real y
-        # barras simuladas en demo (no hay audio que escuchar).
-        visualizer = getattr(self, "visualizer", None)
-        if visualizer is not None and not self.demo:
-            visualizer.start()
-            self.warn(
-                "visualizador: cava %s"
-                % ("arrancado" if visualizer.start() else "no arrancó")
-            )
         try:
             while not self.stop_requested:
                 self.update_size()
@@ -2550,18 +2519,6 @@ class LyricsCarousel:
                 # esta en el centro.
                 position = self.position()
                 self._update_scroll(position)
-                if visualizer is not None and time.monotonic() - self._last_viz_log > 30.0:
-                    self._last_viz_log = time.monotonic()
-                    bars = visualizer.snapshot()
-                    self.warn(
-                        "visualizador: %d barras, medio %.3f, max %.3f, pos %s"
-                        % (
-                            len(bars),
-                            sum(bars) / max(1, len(bars)),
-                            max(bars) if bars else 0.0,
-                            getattr(self, "visualizer_position", "?"),
-                        )
-                    )
                 self.draw(force=self.dirty)
                 self.dirty = False
                 if self.args.once or self.output_broken:
@@ -2575,9 +2532,6 @@ class LyricsCarousel:
                 # El bucle late a 60 Hz (MOTION_FPS): plugin entero a 60 fps.
                 time.sleep(1.0 / MOTION_FPS)
         finally:
-            visualizer = getattr(self, "visualizer", None)
-            if visualizer is not None:
-                visualizer.stop()
             self._forget_pid()
             self._restore_terminal(interactive)
 

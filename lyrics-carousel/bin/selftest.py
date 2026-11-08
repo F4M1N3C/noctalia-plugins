@@ -149,16 +149,7 @@ def esperar_ajuste(ruta: str, clave: str, valor, segundos: float = 10.0) -> bool
     return False
 
 
-def visualizer_module():
-    """Carga bin/visualizer.py (cava y barras de reserva)."""
-    loader = importlib.machinery.SourceFileLoader(
-        "lyrics_visualizer_mod", os.path.join(HERE, "visualizer.py")
-    )
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
-
+# visualizer_module() removed - visualizer feature removed
 
 def run_script(path: str, cwd: str = "/"):
     """Ejecuta el script con --diagnostics y devuelve el JSON."""
@@ -906,58 +897,6 @@ def check_glow_real():
     )
 
 
-def check_visualizador():
-    """El visualizador lee cava y, si no está, dibuja barras de reserva."""
-    vis = visualizer_module()
-
-    # Una línea de cava: 64 valores separados por `;`, con salto final.
-    frame = ";".join(["0", "50", "100"] + ["25"] * (vis.BARS - 3)) + ";"
-    levels = vis.parse_frame(frame)
-    check(
-        "la salida de cava se convierte en 64 niveles",
-        levels is not None and len(levels) == vis.BARS,
-        "levels=%s" % (None if levels is None else len(levels),),
-    )
-    if levels is not None:
-        check(
-            "los niveles se normalizan entre 0 y 1",
-            levels[0] == 0.0 and abs(levels[1] - 0.5) < 1e-9
-            and levels[2] == 1.0 and abs(levels[3] - 0.25) < 1e-9,
-            repr(levels[:4]),
-        )
-
-    check(
-        "una línea a medias no pinta barras rotas",
-        vis.parse_frame("0;50;100;") is None,
-        "se esperaba None",
-    )
-    check(
-        "un valor no numérico descarta el cuadro",
-        vis.parse_frame(";".join(["x"] * vis.BARS) + ";") is None,
-        "se esperaba None",
-    )
-
-    # Barras de reserva: llenan el ancho, se mueven y no se salen de rango.
-    first = vis.simulated_levels(32, now=1.0)
-    second = vis.simulated_levels(32, now=2.0)
-    check("las barras simuladas son 32", len(first) == 32, len(first))
-    check(
-        "las barras simuladas quedan entre 0 y 1",
-        all(0.0 <= level <= 1.0 for level in first),
-        "min=%s max=%s" % (min(first), max(first)),
-    )
-    check("las barras simuladas se mueven", first != second, "no cambian")
-
-    # En modo demo nunca se lanza cava: snapshot usa la simulación.
-    visualizer = vis.Visualizer(log=lambda message: None)
-    visualizer.demo = True
-    demo = visualizer.snapshot()
-    check("el modo demo usa barras simuladas", len(demo) == vis.BARS, len(demo))
-    check(
-        "la huella del fondo cambia con las barras",
-        len(visualizer.signature()) == vis.BARS,
-        len(visualizer.signature()),
-    )
 
 
 def check_recarga_por_senal():
@@ -2399,108 +2338,6 @@ def check_hints_centrados():
         )
 
 
-def check_visualizer_zona():
-    """Visualizador se dibuja solo en la zona configurada."""
-    mod = image_module()
-    if mod.Image is None:
-        check("el visualizador se puede medir (Pillow)", False, "sin Pillow")
-        return
-
-    # Test 1: position="top", coverage=10% -> solo top 10% de la imagen
-    imagen = mod.Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
-    pincel = mod.ImageDraw.Draw(imagen)
-    app = types.SimpleNamespace(
-        visualizer=types.SimpleNamespace(
-            snapshot=lambda simulate=False: [1.0] * 64,
-        ),
-        visualizer_position="top",
-        visualizer_coverage=10,
-        theme=types.SimpleNamespace(background=(10, 10, 10)),
-        demo=False,
-    )
-    renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
-    renderer.app = app
-    renderer._draw_visualizer(imagen, 1000, 1000, (255, 0, 0))
-    
-    # Verificar que la mayoría de píxeles no transparentes están en el top 10% (0-100px)
-    # Permitir algunos píxeles fuera por las "tapas" de las barras (2px)
-    pixels_in_zone = 0
-    pixels_out_zone = 0
-    for y in range(1000):
-        for x in range(1000):
-            if imagen.getpixel((x, y))[3] != 0:
-                if y < 102:  # 100px + 2px de tapa
-                    pixels_in_zone += 1
-                else:
-                    pixels_out_zone += 1
-    check(
-        "visualizer top 10% mayormente en zona",
-        pixels_in_zone > 0 and pixels_out_zone == 0,
-        f"in={pixels_in_zone} out={pixels_out_zone}",
-    )
-
-    # Test 2: position="bottom", coverage=20% -> solo bottom 20%
-    imagen = mod.Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
-    app.visualizer_position = "bottom"
-    app.visualizer_coverage = 20
-    renderer._draw_visualizer(imagen, 1000, 1000, (255, 0, 0))
-    
-    pixels_in_zone = 0
-    pixels_out_zone = 0
-    for y in range(1000):
-        for x in range(1000):
-            if imagen.getpixel((x, y))[3] != 0:
-                if y >= 798:  # 800px - 2px de tapa
-                    pixels_in_zone += 1
-                else:
-                    pixels_out_zone += 1
-    check(
-        "visualizer bottom 20% mayormente en zona",
-        pixels_in_zone > 0 and pixels_out_zone == 0,
-        f"in={pixels_in_zone} out={pixels_out_zone}",
-    )
-
-    # Test 3: position="left", coverage=15% -> solo left 15%
-    imagen = mod.Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
-    app.visualizer_position = "left"
-    app.visualizer_coverage = 15
-    renderer._draw_visualizer(imagen, 1000, 1000, (255, 0, 0))
-    
-    pixels_in_zone = 0
-    pixels_out_zone = 0
-    for x in range(1000):
-        for y in range(1000):
-            if imagen.getpixel((x, y))[3] != 0:
-                if x < 152:  # 150px + 2px de tapa
-                    pixels_in_zone += 1
-                else:
-                    pixels_out_zone += 1
-    check(
-        "visualizer left 15% mayormente en zona",
-        pixels_in_zone > 0 and pixels_out_zone == 0,
-        f"in={pixels_in_zone} out={pixels_out_zone}",
-    )
-
-    # Test 4: position="right", coverage=25% -> solo right 25%
-    imagen = mod.Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
-    app.visualizer_position = "right"
-    app.visualizer_coverage = 25
-    renderer._draw_visualizer(imagen, 1000, 1000, (255, 0, 0))
-    
-    pixels_in_zone = 0
-    pixels_out_zone = 0
-    for x in range(1000):
-        for y in range(1000):
-            if imagen.getpixel((x, y))[3] != 0:
-                if x >= 748:  # 750px - 2px de tapa
-                    pixels_in_zone += 1
-                else:
-                    pixels_out_zone += 1
-    check(
-        "visualizer right 25% mayormente en zona",
-        pixels_in_zone > 0 and pixels_out_zone == 0,
-        f"in={pixels_in_zone} out={pixels_out_zone}",
-    )
 
 
 def check_translate_lyrics_false_default():
@@ -3253,7 +3090,6 @@ def main(argv):
     check_karaoke_imagen_sigue_los_tiempos()
     check_transicion_real()
     check_glow_real()
-    check_visualizador()
     check_recarga_por_senal()
     check_tamano_terminal_real()
     check_rutas_estado()
@@ -3261,7 +3097,6 @@ def main(argv):
     check_limites_ajustes()
     check_limites_del_panel_y_el_script()
     check_formatos_del_helper()
-    check_helper_acepta_las_claves_nuevas()
     check_titulo_vacio_no_rebusca()
     check_timeout_adaptador()
     check_tiempos_reales_no_se_pisan()
@@ -3291,7 +3126,6 @@ def main(argv):
     check_atajo_no_se_pierde()
     check_panel_cubre_manifiesto()
     check_hints_centrados()
-    check_visualizer_zona()
     check_translate_lyrics_false_default()
     check_reparto_de_ajustes()
     check_panel_attached()

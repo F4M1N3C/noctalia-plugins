@@ -855,51 +855,6 @@ render = function()
     toggleRow("ghost", tr("ghost"), "sparkles"),
     toggleRow("footer", tr("footer"), "clock"),
     toggleRow("hints", tr("hints"), "keyboard"),
-    toggleRow("visualizer", tr("visualizer"), "wave-sine"),
-
-    -- Visualizador: opciones condicionales (posición y cobertura) -------
-    (function()
-      local visualizerOn = boolOf("visualizer")
-      if not visualizerOn then
-        return ui.column({})
-      end
-      local position = tostring(valueOf("visualizer_position"))
-      return ui.column({ gap = 4 }, {
-        ui.row({ align = "center", gap = 8 }, {
-          ui.glyph({ name = "keyframe-align-vertical", size = 14, color = "on_surface_variant" }),
-          ui.label({ text = tr("visualizer_position"), fontSize = 12, color = "on_surface", flexGrow = 1 }),
-          ui.button({
-            key = "viz-pos-top",
-            text = tr("top"),
-            variant = position == "top" and "secondary" or "ghost",
-            fontSize = 11,
-            onClick = function() setSetting("visualizer_position", "top") end,
-          }),
-          ui.button({
-            key = "viz-pos-bottom",
-            text = tr("bottom"),
-            variant = position == "bottom" and "secondary" or "ghost",
-            fontSize = 11,
-            onClick = function() setSetting("visualizer_position", "bottom") end,
-          }),
-          ui.button({
-            key = "viz-pos-left",
-            text = tr("left"),
-            variant = position == "left" and "secondary" or "ghost",
-            fontSize = 11,
-            onClick = function() setSetting("visualizer_position", "left") end,
-          }),
-          ui.button({
-            key = "viz-pos-right",
-            text = tr("right"),
-            variant = position == "right" and "secondary" or "ghost",
-            fontSize = 11,
-            onClick = function() setSetting("visualizer_position", "right") end,
-          }),
-        }),
-        sliderRow("visualizer_coverage", tr("visualizer_coverage"), 5, 50, 5, true),
-      })
-    end)(),
 
     -- Letra --------------------------------------------------------------
     ui.separator({ thickness = 1, spacing = 6 }),

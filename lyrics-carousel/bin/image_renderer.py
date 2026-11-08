@@ -352,139 +352,6 @@ class ImageRenderer:
                 cursor += small_h + gap
         return positions
 
-    # -- fondo ----------------------------------------------------------
-
-    def _draw_visualizer(self, image, xpix, ypix, accent):
-        """Barras de cava de fondo, en la zona configurada y detras de la letra.
-
-        Se dibujan primero (la letra va encima). Para fluidez tipo cava:
-        el visualizer se renderiza a 1/2 de resolucion y se escala con
-        BILINEAR (suave), reduciendo datos enviados a kitty ~4x.
-        Se recorta a la zona configurada con una mascara para que no se
-        desborde por el escalado bilineal.
-        """
-        visualizer = getattr(self.app, "visualizer", None)
-        if visualizer is None:
-            return
-        position = getattr(self.app, "visualizer_position", "bottom")
-        coverage = getattr(self.app, "visualizer_coverage", 25) / 100.0
-
-        try:
-            levels = visualizer.snapshot(simulate=bool(getattr(self.app, "demo", False)))
-        except Exception:  # noqa: BLE001 - el fondo nunca tumba el cuadro
-            return
-        if not levels:
-            return
-
-        count = len(levels)
-        color = self._mix(accent, self.app.theme.background, 0.55)
-
-        # Resolucion reducida para el visualizer (1/2 = 2x menos datos en cada eje)
-        scale = 2
-        sx = max(1, xpix // scale)
-        sy = max(1, ypix // scale)
-
-        if position in ("top", "bottom"):
-            band_h = max(2, int(sy * coverage))
-            if position == "bottom":
-                y0 = sy - band_h
-            else:
-                y0 = 0
-            slot = sx / float(count)
-            gap = max(1.0, slot * 0.24)
-            width = max(1, int(slot - gap))
-
-            # Imagen pequeña solo para la banda del visualizer
-            viz_img = Image.new("RGBA", (sx, sy), (0, 0, 0, 0))
-            paint = ImageDraw.Draw(viz_img)
-            for index, level in enumerate(levels):
-                level = max(0.0, min(1.0, float(level)))
-                h = max(2.0, band_h * (level ** 0.8))
-                x0 = index * slot + gap / 2.0
-                alpha = int(90 + 100 * level)
-                if position == "bottom":
-                    paint.rectangle(
-                        [x0, sy - h, x0 + width, sy],
-                        fill=color + (alpha,),
-                    )
-                    if h > 3.0:
-                        paint.rectangle(
-                            [x0, sy - h, x0 + width, sy - h + 2],
-                            fill=color + (min(235, alpha + 80),),
-                        )
-                else:
-                    paint.rectangle(
-                        [x0, 0, x0 + width, h],
-                        fill=color + (alpha,),
-                    )
-                    if h > 3.0:
-                        paint.rectangle(
-                            [x0, h - 2, x0 + width, h],
-                            fill=color + (min(235, alpha + 80),),
-                        )
-            # Escalar a resolucion completa con BILINEAR (suave)
-            viz_img = viz_img.resize((xpix, ypix), Image.BILINEAR)
-            # Mascara de zona: recorta el visualizer a su banda
-            mask = Image.new("L", (xpix, ypix), 0)
-            mask_draw = ImageDraw.Draw(mask)
-            band_h_full = int(ypix * coverage)
-            if position == "bottom":
-                mask_draw.rectangle([0, ypix - band_h_full, xpix, ypix], fill=255)
-            else:
-                mask_draw.rectangle([0, 0, xpix, band_h_full], fill=255)
-            # Aplicar mascara: poner alpha=0 fuera de la zona
-            viz_img.putalpha(Image.composite(viz_img.split()[-1], Image.new("L", (xpix, ypix), 0), mask))
-            image.alpha_composite(viz_img)
-
-        else:
-            # Banda vertical (left/right)
-            band_w = max(2, int(sx * coverage))
-            if position == "right":
-                x0 = sx - band_w
-            else:
-                x0 = 0
-            slot = sy / float(count)
-            gap = max(1.0, slot * 0.24)
-            width = max(1, int(slot - gap))
-
-            viz_img = Image.new("RGBA", (sx, sy), (0, 0, 0, 0))
-            paint = ImageDraw.Draw(viz_img)
-            for index, level in enumerate(levels):
-                level = max(0.0, min(1.0, float(level)))
-                w = max(2.0, band_w * (level ** 0.8))
-                y0 = index * slot + gap / 2.0
-                alpha = int(90 + 100 * level)
-                if position == "right":
-                    paint.rectangle(
-                        [sx - w, y0, sx, y0 + width],
-                        fill=color + (alpha,),
-                    )
-                    if w > 3.0:
-                        paint.rectangle(
-                            [sx - w, y0, sx - w + 2, y0 + width],
-                            fill=color + (min(235, alpha + 80),),
-                        )
-                else:
-                    paint.rectangle(
-                        [0, y0, w, y0 + width],
-                        fill=color + (alpha,),
-                    )
-                    if w > 3.0:
-                        paint.rectangle(
-                            [w - 2, y0, w, y0 + width],
-                            fill=color + (min(235, alpha + 80),),
-                        )
-            viz_img = viz_img.resize((xpix, ypix), Image.BILINEAR)
-            mask = Image.new("L", (xpix, ypix), 0)
-            mask_draw = ImageDraw.Draw(mask)
-            band_w_full = int(xpix * coverage)
-            if position == "right":
-                mask_draw.rectangle([xpix - band_w_full, 0, xpix, ypix], fill=255)
-            else:
-                mask_draw.rectangle([0, 0, band_w_full, ypix], fill=255)
-            viz_img.putalpha(Image.composite(viz_img.split()[-1], Image.new("L", (xpix, ypix), 0), mask))
-            image.alpha_composite(viz_img)
-
     # -- render principal -----------------------------------------------
 
     def render(self):
@@ -505,53 +372,62 @@ class ImageRenderer:
         duration = app.track.duration if app.track else 0.0
 
         self.frames += 1
-        # Si el cuadro no ha cambiado no se dibuja ni se envía nada. El
-        # tamaño va en la huella: si la ventana se redimensiona hay que
-        # reenviar la imagen aunque el contenido sea el mismo.
         signature = self._frame_signature(accent) + (cols, rows, xpix, ypix)
         if signature == self.last_signature:
             return True
         self.last_signature = signature
 
-        image = Image.new("RGBA", (xpix, ypix), (0, 0, 0, 0))
+        # Render a 1/3 de resolucion para alcanzar 60fps en kitty:
+        # 1200x820 -> 400x273 = 9x menos datos. Kitty escala con filtro BILINEAR.
+        render_scale = 3
+        rx = max(1, xpix // render_scale)
+        ry = max(1, ypix // render_scale)
+
+        image = Image.new("RGBA", (rx, ry), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
         self._measure_draw = draw
         background = theme.background
 
-        # -- fondo: barras del visualizador, a todo el ancho y detras de todo
-        self._draw_visualizer(image, xpix, ypix, accent)
+        # Escalamos tamaños para la resolucion de render
+        rs = float(render_scale)
+        rsize = size / rs
+        rscale = scale
+        rposition = position / rs
+        rtop = (size * 1.9) / rs
+        rbottom = ry - (size * 1.9) / rs
 
         # -- cabecera
-        top = size * 1.9
-        bottom = ypix - size * 1.9
         if cfg["header"]:
             title = app.track.title or app.tr("nothing_playing")
             artist = app.track.artist or ""
-            self._draw_left(draw, title, size * 1.6, top, size * 0.95, theme.bright, family)
+            self._draw_left(draw, title, rsize * 1.6, rtop, rsize * 0.95, theme.bright, family)
             if artist:
                 self._draw_left(
-                    draw, "— " + artist, size * 1.6, top + size * 1.2,
-                    size * 0.8, theme.faint, family,
+                    draw, "— " + artist, rsize * 1.6, rtop + rsize * 1.2,
+                    rsize * 0.8, theme.faint, family,
                 )
-            rule_y = top + size * 2.0
+            rule_y = rtop + rsize * 2.0
             ImageDraw.Draw(image).rectangle(
-                [size * 1.6, rule_y, xpix - size * 1.6, rule_y + max(1, size * 0.05)],
+                [rsize * 1.6, rule_y, rx - rsize * 1.6, rule_y + max(1, rsize * 0.05)],
                 fill=self._mix(theme.faint, background, 0.35),
             )
-            top = rule_y + size * 0.9
+            rtop = rule_y + rsize * 0.9
 
         # -- letra
-        center_y = (top + bottom) / 2
+        rcenter_y = (rtop + rbottom) / 2
         if app.state == "lyrics" and app.lines:
-            self._draw_lyrics(draw, center_y, size, scale, family, accent, position, top, bottom)
+            self._draw_lyrics(draw, rcenter_y, rsize, rscale, family, accent, rposition, rtop, rbottom)
         else:
-            self._draw_state(draw, center_y, size, family)
+            self._draw_state(draw, rcenter_y, rsize, family)
 
         # -- pie
         if cfg["footer"]:
-            self._draw_footer(draw, xpix, ypix, size, family, accent, position, duration)
+            self._draw_footer(draw, rx, ry, rsize, family, accent, rposition, duration)
         if cfg["hints"]:
-            self._draw_hints(draw, size, family)
+            self._draw_hints(draw, rsize, family)
+
+        # Escalar a resolucion completa para kitty (BILINEAR suave)
+        image = image.resize((xpix, ypix), Image.BILINEAR)
 
         self.sends += 1
         return self.gfx.present(image, cols, rows)

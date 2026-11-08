@@ -36,14 +36,6 @@
   "height": "Alto",
   "hints": "Atajos de teclado",
   "karaoke": "Efecto karaoke",
-  "visualizer": "Visualizador de audio",
-  "visualizer_position": "Posición del visualizador",
-  "visualizer_coverage": "Cobertura del visualizador (%)",
-  "top": "Arriba",
-  "bottom": "Abajo",
-  "left": "Izquierda",
-  "right": "Derecha",
-  "translate_lyrics": "Traducir letra",
   "launch": "Abrir el carrusel",
   "launch_failed": "No se pudo abrir la terminal.",
   "marker": "Marca de la línea activa",
@@ -149,26 +141,6 @@
     "visible_below": {
       "description": "Cuántos renglones se muestran por debajo de la línea activa.",
       "label": "Renglones visibles abajo"
-    },
-    "visualizer": {
-      "description": "Muestra las barras de audio animadas en el fondo de la ventana.",
-      "label": "Visualizador de audio"
-    },
-    "visualizer_position": {
-      "description": "Dónde dibujar el visualizador: arriba, abajo, izquierda o derecha.",
-      "label": "Posición del visualizador",
-      "top": "Arriba",
-      "bottom": "Abajo",
-      "left": "Izquierda",
-      "right": "Derecha"
-    },
-    "visualizer_coverage": {
-      "description": "Porcentaje de la ventana que cubre el visualizador (5-50%).",
-      "label": "Cobertura del visualizador (%)"
-    },
-    "translate_lyrics": {
-      "description": "Si está activado, intenta traducir la letra al idioma de la ventana.",
-      "label": "Traducir letra"
     },
     "width": {
       "description": "Ancho de la ventana de terminal en píxeles.",

@@ -34,22 +34,17 @@ local DEFAULTS = {
   visible_above = 6,
   visible_below = 6,
   glyph = "music",
-  visualizer = true,
-  visualizer_position = "bottom",
-  visualizer_coverage = 25,
   translate_lyrics = false,
 }
 
 local BOOL_KEYS = {
   marker = true, karaoke = true, footer = true,
   hints = true, header = true, ghost = true,
-  visualizer = true,
 }
 local INT_KEYS = {
   font_size = true, spacing = true, offset_ms = true,
   width = true, height = true, visible_above = true, visible_below = true,
   custom_x = true, custom_y = true,
-  visualizer_coverage = true,
 }
 local FLOAT_KEYS = { active_scale = true }
 
@@ -76,7 +71,6 @@ local LIMITS = {
   visible_above = { 0, 20 },
   visible_below = { 0, 20 },
   active_scale = { 1.0, 2.5 },
-  visualizer_coverage = { 5, 50 },
 }
 
 M.LIMITS = LIMITS
@@ -107,15 +101,6 @@ function M.validate(key, value)
   local pattern = PATTERNS[key]
   if pattern == nil then
     return value
-  end
-  -- visualizer_position: Lua patterns no soportan alternacion con |,
-  -- asi que validamos a mano.
-  if key == "visualizer_position" then
-    local valid = { top = true, bottom = true, left = true, right = true }
-    if type(value) == "string" and valid[value] then
-      return value
-    end
-    return nil
   end
   if type(value) ~= "string" or value:match(pattern) == nil then
     return nil

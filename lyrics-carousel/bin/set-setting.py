@@ -46,18 +46,14 @@ ALLOWED = {
     "ghost", "offset_ms", "width", "height", "anchor",
     "custom_x", "custom_y", "accent", "custom_color", "active_scale",
     "visible_above", "visible_below", "glyph",
-    "visualizer", "visualizer_position", "visualizer_coverage",
-    "translate_lyrics",
 }
 
 BOOL_KEYS = {
     "marker", "karaoke", "footer", "hints", "header", "ghost",
-    "visualizer", "translate_lyrics",
 }
 INT_KEYS = {
     "font_size", "spacing", "offset_ms", "width", "height",
     "custom_x", "custom_y", "visible_above", "visible_below",
-    "visualizer_coverage",
 }
 FLOAT_KEYS = {"active_scale"}
 

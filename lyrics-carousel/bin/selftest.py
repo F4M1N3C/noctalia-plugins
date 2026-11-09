@@ -2124,6 +2124,169 @@ def check_fetch_palabra_no_espera():
             )
 
 
+def check_letra_sin_acentos():
+    """Una letra latina sin tildes ni ñ no puede pisar a la que sí las tiene.
+
+    NetEase devuelve a veces la letra de Frijolero como «algn», «petrleo»,
+    «pases» o «Quin». Esa versión trae tiempos por carácter y por eso ganaba
+    a la de LRCLIB, que está bien escrita. El carrusel debe quedarse con la
+    que tiene los acentos, llegue antes o después.
+    """
+    rota = [
+        "Yo ya estoy hasta la madre",
+        "De que me pongan sombrero",
+        "Escucha entonces cuando digo",
+        "No me llames Frijolero",
+        "Y aunque exista algn respeto",
+        "Y no metamos las narices",
+        "Nunca inflamos la moneda",
+        "Haciendo guerra a otros pases",
+        "Te pagamos con petrleo",
+        "O intereses nuestra deuda",
+        "Quin se queda con la feria",
+        "El nino juega en el patio",
+    ]
+    buena = [
+        "Yo ya estoy hasta la madre",
+        "De que me pongan sombrero",
+        "Escucha entonces cuando digo",
+        "No me llames Frijolero",
+        "Y aunque exista algún respeto",
+        "Y no metamos las narices",
+        "Nunca inflamos la moneda",
+        "Haciendo guerra a otros países",
+        "Te pagamos con petróleo",
+        "E intereses nuestra deuda",
+        "Quién se queda con la feria",
+        "El niño juega en el patio",
+    ]
+    ingles = (
+        "We drove across the desert looking for a place to rest and found "
+        "nothing but sand and sky and silence everywhere we turned until "
+        "morning came"
+    )
+
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with env_temporal({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            mod.load_lyrics_settings = lambda: {
+                "sources": ["lrclib", "netease"],
+                "credentials": {},
+                "translation": "zh-Hans",
+            }
+            mod.load_cache = lambda track: None
+            mod.missing_recent = lambda track: False
+            mod.save_cache = lambda *args: None
+            mod.SEARCH_TIMEOUT = 3.0
+            mod.WORD_GRACE = 2.0
+
+            def lineas(textos, con_chars=False):
+                salida = []
+                for indice, texto in enumerate(textos):
+                    line = mod.LyricLine(1.0 + indice * 4.0, 3.0, texto)
+                    if con_chars:
+                        line.chars = [
+                            1.0 + indice * 4.0 + paso * 0.05
+                            for paso in range(len(texto))
+                        ]
+                    salida.append(line)
+                return salida
+
+            def buscar(letra_lrclib, letra_adaptador, espera_lrclib=0.0, espera_adaptador=0.0):
+                def fetch(track, log):
+                    time.sleep(espera_lrclib)
+                    return letra_lrclib, None
+
+                def adaptador(source, track, settings, log):
+                    time.sleep(espera_adaptador)
+                    return letra_adaptador, None
+
+                mod.fetch_lrclib = fetch
+                mod.run_adapter = adaptador
+                return mod.fetch_lyrics(
+                    mod.Track("Frijolero", "Molotov", duration=208.0),
+                    True,
+                    lambda message: None,
+                )
+
+            detector = getattr(mod, "texto_sin_acentos", None)
+            check("existe el detector de letras sin acentos", callable(detector))
+            if detector is not None:
+                check(
+                    "la letra rota se detecta sin acentos",
+                    detector(lineas(rota)),
+                    "no se detectó",
+                )
+                check(
+                    "la letra corregida no se marca",
+                    not detector(lineas(buena)),
+                    "se marcó la letra buena",
+                )
+                check(
+                    "una letra inglesa sin acentos no se marca",
+                    not detector(lineas([ingles])),
+                    "se marcó el inglés",
+                )
+
+            # A) La completa llega primero y la rota por palabra después.
+            lines, source, _ = buscar(
+                lineas(buena), lineas(rota, True), espera_adaptador=0.2
+            )
+            texto = " ".join(line.text for line in lines or [])
+            check(
+                "la letra completa gana a la rota por palabra",
+                "algún" in texto and "petróleo" in texto and source == "lrclib",
+                "source=%s texto=%r" % (source, texto[:60]),
+            )
+
+            # B) La rota por palabra llega primero y la completa después.
+            lines, source, _ = buscar(
+                lineas(buena), lineas(rota, True), espera_lrclib=0.2
+            )
+            texto = " ".join(line.text for line in lines or [])
+            check(
+                "la letra completa sustituye a la rota por palabra",
+                "algún" in texto and "petróleo" in texto and source == "lrclib",
+                "source=%s texto=%r" % (source, texto[:60]),
+            )
+
+            # C) Sin alternativa, la única letra disponible se muestra igual.
+            lines, source, _ = buscar(lineas(rota, True), [])
+            texto = " ".join(line.text for line in lines or [])
+            check(
+                "sin alternativa, la letra rota se muestra igual",
+                bool(lines) and "algn" in texto,
+                "source=%s texto=%r" % (source, texto[:60]),
+            )
+
+            # D) Una mejora en segundo plano tampoco puede degradar la letra
+            #    buena que ya se está mostrando.
+            app = object.__new__(mod.LyricsCarousel)
+            app.track = mod.Track("Frijolero", "Molotov", duration=208.0)
+            actual = lineas(buena)
+            app.lines = actual
+            app.source = "lrclib"
+            app.synced = True
+            app.state = "lyrics"
+            app._snap_scroll = lambda: None
+            mod.mark_word_checked = lambda track: None
+            aplicar = getattr(app, "_apply_fetched", None)
+            if aplicar is None:
+                check(
+                    "la letra rota no sustituye a la buena ya mostrada",
+                    False,
+                    "falta _apply_fetched",
+                )
+            else:
+                check(
+                    "la letra rota no sustituye a la buena ya mostrada",
+                    aplicar(lineas(rota, True), "netease", True) is False
+                    and app.source == "lrclib"
+                    and app.lines is actual,
+                    "source=%s" % (app.source,),
+                )
+
+
 def check_mejora_no_pisa_cache():
     """Una búsqueda de mejora sin tiempos por palabra no reescribe la caché."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
@@ -3727,6 +3890,7 @@ def main(argv):
     check_tiempos_por_palabra()
     check_fetch_prefiere_palabra()
     check_fetch_palabra_no_espera()
+    check_letra_sin_acentos()
     check_mejora_no_pisa_cache()
     check_cache_se_mejora_sola()
     check_resultado_no_pisa_letra_igual()

@@ -184,6 +184,35 @@ def normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+# Letras latinas: NetEase a veces publica la letra sin tildes ni ñ (algn,
+# petrleo, pases, Quin). Se detecta por vocabulario: una letra española,
+# portuguesa o francesa tiene stopwords de sobra; el inglés, que tampoco
+# lleva acentos, no las comparte.
+LATIN_ACCENTS = frozenset("áéíóúüñçãõâêôàèìòùÁÉÍÓÚÜÑÇÃÕÂÊÔÀÈÌÒÙ")
+LATIN_STOPWORDS = frozenset(
+    "que de la el y no me mi es un una por para con los las del al se lo como "
+    "mas pero sin sus te tu yo en da su si ya este esta esto ese esa eso hay "
+    "muy cuando donde quien cual porque sobre entre hasta desde todo todos "
+    "toda todas otro otra vez son fue ser estar".split()
+)
+
+
+def texto_sin_acentos(lines) -> bool:
+    """True si la letra parece latina pero no tiene ninguna tilde ni ñ.
+
+    Marca las letras rotas de NetEase, no las que simplemente no llevan
+    acentos: exige vocabulario latino (25 palabras y 8 stopwords distintas)
+    y cero letras acentuadas.
+    """
+    text = " ".join(line.text for line in lines)
+    words = re.findall(r"[^\W\d_]+", text.lower(), re.UNICODE)
+    if len(words) < 25:
+        return False
+    if len(set(words) & LATIN_STOPWORDS) < 8:
+        return False
+    return not any(character in LATIN_ACCENTS for character in text)
+
+
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
@@ -1470,7 +1499,13 @@ def fetch_lyrics(
     # Trabajadores en paralelo: la primera letra se publica en cuanto
     # llega, para no hacer esperar. Si otra fuente trae tiempos por
     # palabra, la mejora en cuanto aparece y es la que se queda en caché.
-    result = {"lines": None, "source": "", "synced": False, "word": False}
+    result = {
+        "lines": None,
+        "source": "",
+        "synced": False,
+        "word": False,
+        "sin_acentos": False,
+    }
     result_lock = threading.Lock()
 
     def publish(lines, source):
@@ -1480,19 +1515,28 @@ def fetch_lyrics(
         lines = estimate_times(lines, track.duration)
         synced = len(lines) > 1 and any(line.start >= 0 for line in lines)
         word = lines_have_chars(lines)
+        sin_acentos = texto_sin_acentos(lines)
         aviso = None
         with result_lock:
             actual_palabra = result["word"]
-            if result["lines"] is not None and not (
-                word and not actual_palabra
-            ):
-                # La primera letra ya está y esta no la mejora: no se pisa
-                # lo que el usuario está viendo ni la caché buena.
-                return False
+            if result["lines"] is not None:
+                actual_sin_acentos = result["sin_acentos"]
+                if sin_acentos and not actual_sin_acentos:
+                    # Una letra sin tildes no cambia la que ya está bien
+                    # escrita, aunque traiga tiempos por carácter.
+                    return False
+                mejora = (word and not actual_palabra) or (
+                    actual_sin_acentos and not sin_acentos
+                )
+                if not mejora:
+                    # La primera letra ya está y esta no la mejora: no se pisa
+                    # lo que el usuario está viendo ni la caché buena.
+                    return False
             result["lines"] = lines
             result["source"] = source
             result["synced"] = synced
             result["word"] = word
+            result["sin_acentos"] = sin_acentos
             # Solo el ganador escribe la cache: si escribieran todos, el
             # ultimo en llegar podia dejar la letra perdedora. Una mejora
             # sin tiempos por palabra no reescribe una caché válida.
@@ -1559,7 +1603,8 @@ def fetch_lyrics(
         with result_lock:
             lines_now = result["lines"]
             word_now = result["word"]
-        if word_now:
+            sin_acentos_now = result["sin_acentos"]
+        if word_now and not sin_acentos_now:
             # Ya está lo mejor posible: no se espera al resto.
             break
         if cancelled is not None and cancelled():
@@ -2094,6 +2139,14 @@ class LyricsCarousel:
             return False
         nueva_palabra = lines_have_chars(lines)
         actual_palabra = lines_have_chars(self.lines)
+        if (
+            self.lines
+            and texto_sin_acentos(lines)
+            and not texto_sin_acentos(self.lines)
+        ):
+            # Una letra sin tildes no sustituye a la que ya está bien escrita,
+            # aunque la búsqueda de mejora la devuelva con tiempos por carácter.
+            return False
         if self.lines and not (nueva_palabra and not actual_palabra):
             if lines and not nueva_palabra:
                 mark_word_checked(self.track)

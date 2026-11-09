@@ -2,7 +2,7 @@
 
 > **Para agentes:** SUB-SKILL OBLIGATORIA: usar superpowers:executing-plans (o
 > superpowers:subagent-driven-development) para ejecutar este plan tarea a tarea. Los pasos
-> usan casillas (`- [ ]`) para seguir el avance.
+> usan casillas (`- [x]`) para seguir el avance.
 
 **Objetivo:** que el carrusel se mueva a 60 fps reales con ritmo regular y que la línea
 cantada se vea como el brillo de cada letra, sin halo difuminado.
@@ -58,7 +58,7 @@ el autotest las pueda comprobar sin terminal.
 - Produce: `resto_para_siguiente_frame(inicio: float, ahora: float, intervalo: float) -> float`
   (función de módulo) y `fps_real(frames: int, segundos: float) -> float` (función de módulo).
 
-- [ ] **Paso 1: escribir el test que falla**
+- [x] **Paso 1: escribir el test que falla**
 
 En `bin/selftest.py`, una función nueva `check_ritmo_de_frames()` que importa el script con
 `script_module()` y comprueba:
@@ -81,12 +81,12 @@ check("los fps reales se calculan sobre el tiempo entre frames",
 
 y registrar la llamada en `main()` junto a las demás comprobaciones.
 
-- [ ] **Paso 2: ejecutar el test y ver que falla**
+- [x] **Paso 2: ejecutar el test y ver que falla**
 
 `cd /home/faminec/noctalia-plugins && PYTHONDONTWRITEBYTECODE=1 python3 lyrics-carousel/bin/selftest.py --verbose | grep FALLO`
 → debe fallar con `AttributeError` (las funciones no existen todavía).
 
-- [ ] **Paso 3: implementar las dos funciones puras**
+- [x] **Paso 3: implementar las dos funciones puras**
 
 En `bin/lyrics-carousel`, junto a `ease_in_out` (~línea 191):
 
@@ -109,7 +109,7 @@ def fps_real(frames: int, segundos: float) -> float:
     return frames / segundos
 ```
 
-- [ ] **Paso 4: aplicar el ritmo de paso fijo en el bucle**
+- [x] **Paso 4: aplicar el ritmo de paso fijo en el bucle**
 
 En el bucle principal (`bin/lyrics-carousel`, ~línea 2515): guardar `inicio_frame =
 time.monotonic()` **antes** de `self.check_manual_resize()` y sustituir el `time.sleep(1.0
@@ -127,7 +127,7 @@ En `draw()` (~línea 2378): **quitar** el salto por intervalo
 (`if not force and now - self.last_draw < interval: return` y el `self.last_draw = now`),
 porque ahora el plazo lo gobierna el bucle y ese salto solo servía para descartar frames.
 
-- [ ] **Paso 5: cambiar la métrica del log a fps reales**
+- [x] **Paso 5: cambiar la métrica del log a fps reales**
 
 En el bloque de estadísticas de `draw()` (~línea 2390): acumular también el instante en el
 que se empezó la ventana y logar los fps **reales**:
@@ -145,12 +145,12 @@ que se empezó la ventana y logar los fps **reales**:
 `self._draw_desde` se inicializa a `time.monotonic()` al entrar en el bloque por primera
 vez (con `getattr`, como ya se hace con `_draw_accum`).
 
-- [ ] **Paso 6: ejecutar el test y la suite**
+- [x] **Paso 6: ejecutar el test y la suite**
 
 `PYTHONDONTWRITEBYTECODE=1 python3 lyrics-carousel/bin/selftest.py` → 0 fallos.
 `lua5.4 lyrics-carousel/bin/test-panel.lua lyrics-carousel/panel.luau` → 204 correctas.
 
-- [ ] **Paso 7: commit**
+- [x] **Paso 7: commit**
 
 ```bash
 git add lyrics-carousel/bin/lyrics-carousel lyrics-carousel/bin/selftest.py
@@ -170,7 +170,7 @@ git commit -m "perf(lyrics-carousel): ritmo de paso fijo a 60 fps reales"
   (sin cambios en la firma).
 - Produce: la misma firma; el resultado es la **misma letra** pero sin halo difuminado.
 
-- [ ] **Paso 1: escribir el test que falla**
+- [x] **Paso 1: escribir el test que falla**
 
 En `bin/selftest.py`, una función nueva `check_karaoke_sin_resplandor()`:
 
@@ -202,11 +202,11 @@ check("la letra cantada sigue pintada",
       sum(1 for px in pixeles(imagen) if px[1] == 200 and px[3] == 255) > 0)
 ```
 
-- [ ] **Paso 2: ejecutar el test y ver que falla**
+- [x] **Paso 2: ejecutar el test y ver que falla**
 
 → `fuera` sale **mayor que 0** (el halo difuminado se sale de la caja del texto).
 
-- [ ] **Paso 3: quitar la capa difuminada**
+- [x] **Paso 3: quitar la capa difuminada**
 
 En `_draw_karaoke` (`bin/image_renderer.py`):
 
@@ -218,11 +218,11 @@ En `_draw_karaoke` (`bin/image_renderer.py`):
 - quitar `ImageFilter` del `import` de Pillow si deja de usarse en el fichero (comprobar
   con `grep -n ImageFilter image_renderer.py`).
 
-- [ ] **Paso 4: ejecutar el test y la suite**
+- [x] **Paso 4: ejecutar el test y la suite**
 
 → el test nuevo pasa y el total queda en 0 fallos.
 
-- [ ] **Paso 5: commit**
+- [x] **Paso 5: commit**
 
 ```bash
 git add lyrics-carousel/bin/image_renderer.py lyrics-carousel/bin/selftest.py
@@ -243,7 +243,7 @@ git commit -m "feat(lyrics-carousel): el karaoke es el brillo de la letra, sin r
 - Produce: `ImageRenderer.font(family, size)` cachea por `(family, int(round(size * 4)))` y
   devuelve la fuente del tamaño **cuartel de píxel** más cercano.
 
-- [ ] **Paso 1: escribir el test que falla**
+- [x] **Paso 1: escribir el test que falla**
 
 En `bin/selftest.py`, `check_tamano_fraccionario()`:
 
@@ -264,12 +264,12 @@ check("la caché reutiliza el mismo tamaño",
       renderer.font("prueba", 25.4) is renderer.font("prueba", 25.45))
 ```
 
-- [ ] **Paso 2: ejecutar el test y ver que falla**
+- [x] **Paso 2: ejecutar el test y ver que falla**
 
 → con la caché por entero, `25.4` y `25.6` dan la misma fuente ⇒ el ancho no cambia ⇒
 FALLA.
 
-- [ ] **Paso 3: permitir tamaño fraccionario en `load_font`**
+- [x] **Paso 3: permitir tamaño fraccionario en `load_font`**
 
 En `bin/graphics.py`:
 
@@ -283,7 +283,7 @@ def load_font(path: str, size: float):
         return None
 ```
 
-- [ ] **Paso 4: cachear por cuartos de píxel**
+- [x] **Paso 4: cachear por cuartos de píxel**
 
 En `bin/image_renderer.py`:
 
@@ -299,12 +299,12 @@ En `bin/image_renderer.py`:
         return font
 ```
 
-- [ ] **Paso 5: ejecutar el test y la suite**
+- [x] **Paso 5: ejecutar el test y la suite**
 
 → 0 fallos. Comprobar además que `fit_text` sigue recortando bien con tamaño
 fraccionario (el autotest de la geometría lo cubre).
 
-- [ ] **Paso 6: commit**
+- [x] **Paso 6: commit**
 
 ```bash
 git add lyrics-carousel/bin/graphics.py lyrics-carousel/bin/image_renderer.py lyrics-carousel/bin/selftest.py
@@ -323,7 +323,7 @@ git commit -m "feat(lyrics-carousel): tamaño de letra continuo (cuartos de píx
 - Produce: `ease_in_out(progress: float) -> float` con la curva smootherstep
   (6t⁵−15t⁴+10t³). Se usa **solo** en `scroll_state` (verificado: no hay más usos).
 
-- [ ] **Paso 1: escribir el test que falla**
+- [x] **Paso 1: escribir el test que falla**
 
 En `bin/selftest.py`, `check_curva_suave()`:
 
@@ -340,11 +340,11 @@ check("la curva es monótona",
       all(curva(i / 20.0) <= curva((i + 1) / 20.0) for i in range(20)))
 ```
 
-- [ ] **Paso 2: ejecutar el test y ver que falla**
+- [x] **Paso 2: ejecutar el test y ver que falla**
 
 → con `smoothstep` la segunda derivada en los extremos vale ~3 ⇒ FALLA.
 
-- [ ] **Paso 3: cambiar la curva**
+- [x] **Paso 3: cambiar la curva**
 
 ```python
 def ease_in_out(progress: float) -> float:
@@ -358,13 +358,13 @@ def ease_in_out(progress: float) -> float:
     return value**3 * (value * (value * 6.0 - 15.0) + 10.0)
 ```
 
-- [ ] **Paso 4: ejecutar el test y la suite**
+- [x] **Paso 4: ejecutar el test y la suite**
 
 → 0 fallos. El test existente `check_transicion_real` (que comprueba
 `progress ≈ 0.5` en mitad y la curva arrancando/terminando despacio) debe seguir
 en verde: con smootherstep el punto medio sigue siendo 0.5.
 
-- [ ] **Paso 5: commit**
+- [x] **Paso 5: commit**
 
 ```bash
 git add lyrics-carousel/bin/lyrics-carousel lyrics-carousel/bin/selftest.py
@@ -379,7 +379,7 @@ git commit -m "feat(lyrics-carousel): curva smootherstep para el relevo"
 - Modificar: `lyrics-carousel/README.md` (si describe el resplandor del karaoke)
 - Test: `lyrics-carousel/bin/selftest.py` (suite completa)
 
-- [ ] **Paso 1: suite completa**
+- [x] **Paso 1: suite completa**
 
 ```bash
 cd /home/faminec/noctalia-plugins
@@ -391,7 +391,7 @@ bash tools/validate-community.sh lyrics-carousel
 
 → todo en verde, sin errores ni avisos inesperados.
 
-- [ ] **Paso 2: comprobar en vivo el ritmo real**
+- [x] **Paso 2: comprobar en vivo el ritmo real**
 
 Lanzar el plugin en modo demo y leer el log:
 
@@ -404,14 +404,14 @@ sleep 15 && tail -4 ~/.cache/lyrics-carousel/debug.log
 → las líneas del log deben decir **~60 fps reales** y salir cada **~3 s** (antes: ~5 s y
 36 fps). Después cerrar esa ventana y relanzar el plugin normal.
 
-- [ ] **Paso 3: revisión visual de la transición**
+- [x] **Paso 3: revisión visual de la transición**
 
 Generar una tira de fotogramas de la transición (como la de
 `/tmp/opencode/tira_transicion.py`) y pasársela a un subagente multimodal para que
 compruebe: tamaño continuo, color continuo, **sin halo** alrededor de la letra y sin
 saltos entre fotogramas.
 
-- [ ] **Paso 4: desplegar**
+- [x] **Paso 4: desplegar**
 
 ```bash
 cd /home/faminec/noctalia-plugins/lyrics-carousel
@@ -420,7 +420,7 @@ rsync -a --delete ./ ~/.local/share/noctalia/plugins/lyrics-carousel/
 rm -rf ~/.local/share/noctalia/plugins/lyrics-carousel/bin/__pycache__
 ```
 
-- [ ] **Paso 5: documentar y commitear**
+- [x] **Paso 5: documentar y commitear**
 
 Actualizar el README si menciona el resplandor y commitear el resto.
 
@@ -442,3 +442,30 @@ Actualizar el README si menciona el resplandor y commitear el resto.
   `fit_text` no cambia y el test de geometría sigue en verde.
 - **Proporción:** 5 tareas, 30 pasos; el plan no transcribe el código de los ficheros
   modificados, solo las funciones y las aserciones nuevas.
+
+---
+
+## Evidencia de la verificación (2026-11-08)
+
+Todas las tareas están ejecutadas y verificadas. Lo que se comprobó y cómo:
+
+| Comprobación | Resultado |
+| --- | --- |
+| `selftest.py` | 246 comprobaciones, 0 fallos |
+| `test-panel.lua` | 204 comprobaciones correctas |
+| `verify-plugins.py --no-ui` | sin errores ni avisos inesperados |
+| `tools/validate-community.sh` | `Validated 1 plugin manifest(s).` |
+| Ritmo real en vivo (log) | `draw avg: 10.0ms | 60 fps reales` (antes: 36 fps y "fps theoretical") |
+| Coste por cuadro | `_draw_lyrics` con karaoke: 2,82 ms; sin karaoke: 1,87 ms |
+| Revisión visual (subagente multimodal) | relleno sin halo, límite cantado/pendiente visible y con avance monótono; relevo sin saltos de tamaño ni de color |
+| Revisión de código (subagente) | sin issues críticos; los dos "important" encontrados (rampa invertida y salto de alfa de la saliente) se corrigieron en `3de2796c` |
+
+### Lo que se corrigió después de la revisión
+
+- `3de2796c`: la rampa de alfa del final del relleno iba al revés (el color se
+  encendía al llegar al límite y cortaba en seco); y la ruta del karaoke no
+  heredaba el alfa de la distancia al centro, así que la línea saliente perdía
+  opacidad de golpe en el relevo.
+- `0a1969b9`: refinamiento pedido por el usuario (el relevo con karaoke no
+  oscurece de golpe) y el log, que arrancaba con una ventana de 0 fps.
+

@@ -330,7 +330,6 @@ def check_desfase_scroll():
             app.track.stamp = time.monotonic()
             app.stop_requested = False
             app.output_broken = False
-            app.dirty = False
             app.lines = []
             posiciones = []
             app._poll_data = lambda: None
@@ -595,7 +594,12 @@ def check_karaoke_imagen_pixel_a_pixel():
             pincel, texto, 45, 20, cantado, pendiente, amount, "prueba"
         )
         datos = pixeles(imagen)
-        return sum(1 for px in datos if px[1] == pendiente[1])
+        # Solo la tinta visible: con el borde del relleno suavizado, el
+        # último glifo deja un resto de alfa 2/255 (invisible) en su borde
+        # antialiasado.
+        return sum(
+            1 for px in datos if px[1] == pendiente[1] and px[3] >= 16
+        )
 
     total = len(texto)
     check(
@@ -1289,7 +1293,9 @@ def check_primera_ventana_fps():
     app = mod.LyricsCarousel.__new__(mod.LyricsCarousel)
     lineas = []
     app.warn = lambda mensaje: lineas.append(mensaje)
-    app.draw_image = lambda force=False: None
+    # Un dibujo mínimo pero medible: si el reloj no avanzara, el contador
+    # de cuadros no se movería y el test fallaría por el motivo equivocado.
+    app.draw_image = lambda force=False: time.sleep(0.0002)
     app._draw_accum = 0
     app._draw_frames = 0
 
@@ -1306,17 +1312,112 @@ def check_primera_ventana_fps():
     )
 
 
-def check_glow_real():
-    """La letra cantada es nitida: brillo de la letra, sin halo difuminado.
+def check_karaoke_borde_suave():
+    """El borde del relleno se desvanece: no hay un tajo con lo que falta.
 
-    Antes la linea cantada se dibujaba dos veces: la nitida y una copia
-    difuminada (el halo). Ese halo era una sombra ademas de caro (dos
-    GaussianBlur por cuadro, 3,2 ms) y hacia que el carrusel bajara de
+    La rampa de alfa del final del relleno tiene que ir en el sentido
+    correcto: el color cantado se apaga hacia el límite y se funde con lo
+    que todavía no se ha cantado. Con la rampa al revés el rojo terminaba en
+    seco (una pared vertical de luz) y el último carácter se quedaba a
+    medias.
+    """
+    mod = image_module()
+    if mod.Image is None:
+        check("el borde del relleno se puede medir (Pillow)", False, "sin Pillow")
+        return
+
+    FONDO = (31, 31, 31)
+    CANTADO = (229, 57, 53)
+    PENDIENTE = (120, 42, 40)
+    # El corte cae dentro de la cuarta M: así la rampa se aplica sobre la
+    # letra y no en un hueco entre palabras.
+    texto = "MMMMMMMM"
+
+    renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
+    renderer.fonts = {}
+    renderer.font_files = {"prueba": mod.FALLBACK_FONT}
+    imagen = mod.Image.new("RGBA", (900, 120), FONDO + (255,))
+    pincel = mod.ImageDraw.Draw(imagen)
+    renderer._draw_karaoke(
+        pincel, texto, 60, 40.0, CANTADO, PENDIENTE, 3.5, "prueba"
+    )
+
+    # Por columna, cuánta más lejos del tono pendiente, más cantada está.
+    saturacion = {}
+    for indice, px in enumerate(pixeles(imagen)):
+        if px[3] != 255:
+            continue
+        color = px[:3]
+        if color == FONDO:
+            continue
+        valor = distancia(color, PENDIENTE) - distancia(color, CANTADO)
+        x = indice % imagen.size[0]
+        saturacion[x] = max(saturacion.get(x, 0), valor)
+
+    cantadas = {x: v for x, v in saturacion.items() if v > 0}
+    check(
+        "el relleno tiene zona cantada",
+        bool(cantadas),
+        "columnas=%d" % (len(cantadas),),
+    )
+    if cantadas:
+        primero = min(cantadas)
+        ultimo = max(cantadas)
+        check(
+            "el borde del relleno se desvanece hacia el límite",
+            cantadas[ultimo] < cantadas[primero],
+            "primero=%r ultimo=%r" % (cantadas[primero], cantadas[ultimo]),
+        )
+
+
+def check_relevo_sin_salto_de_alfa():
+    """Al cambiar de línea principal no se pierde opacidad de golpe.
+
+    La ruta del karaoke pintaba el texto siempre opaco, mientras que la
+    ruta normal lo pinta con el alfa de la distancia al centro. En el
+    instante del relevo la línea saliente pasaba de opaca a semitransparente
+    de un cuadro a otro: un parpadeo en el sitio donde el cambio tiene que
+    ser invisible.
+    """
+    mod = image_module()
+    if mod.Image is None:
+        check("el alfa del relevo se puede medir (Pillow)", False, "sin Pillow")
+        return
+
+    saliente = ["", "SALIENTE", "", "", ""]
+    # El último cuadro de la transición y el primero tras el cambio: la
+    # línea saliente está en el mismo sitio en los dos, solo cambia la ruta
+    # con la que se dibuja.
+    antes = render_relevo(
+        mod, 1.0, saliente, estado=(1, 2, 1.0), karaoke=True, cantidad=0.0
+    )
+    despues = render_relevo(
+        mod, 0.0, saliente, estado=(2, 2, 0.0), karaoke=True, cantidad=0.0
+    )
+
+    def alfa_max(imagen):
+        return max((px[3] for px in pixeles(imagen)), default=0)
+
+    alfa_antes = alfa_max(antes)
+    alfa_despues = alfa_max(despues)
+    check(
+        "la línea saliente no pierde opacidad en el relevo",
+        abs(alfa_antes - alfa_despues) <= 1,
+        "antes=%d despues=%d" % (alfa_antes, alfa_despues),
+    )
+
+
+def check_relleno_nitro():
+    """La letra cantada es nítida: brillo de la letra, sin halo difuminado.
+
+    Antes la línea cantada se dibujaba dos veces: la nítida y una copia
+    difuminada (el halo). Ese halo era una sombra además de caro (dos
+    GaussianBlur por cuadro, 3,2 ms) y hacía que el carrusel bajara de
     60 fps. Lo que se conserva es el relleno con su borde suavizado.
     """
     mod = image_module()
     if mod.Image is None:
-        check("el resplandor se puede medir (Pillow)", False, "sin Pillow")
+        check("el relleno se puede medir (Pillow)", False, "sin Pillow")
         return
 
     texto = "cantando"
@@ -1486,7 +1587,6 @@ def check_tamano_terminal_real():
             app = object.__new__(mod.LyricsCarousel)
             app.width = 0
             app.height = 0
-            app.dirty = False
             original = mod.shutil.get_terminal_size
             mod.shutil.get_terminal_size = lambda fallback=None: os.terminal_size(
                 (23, 9)
@@ -1711,7 +1811,6 @@ def check_titulo_vacio_no_rebusca():
             app.lines = []
             app.source = ""
             app.synced = False
-            app.dirty = False
             app.last_fetch = 0.0
             app.log = lambda message: None
             arranques = []
@@ -1827,7 +1926,6 @@ def _app_de_config(mod):
     app.image_disabled = False
     app.image_failures = 0
     app.status_message = ""
-    app.dirty = False
     app.pending_overrides = {}
     app.log = lambda message: None
     app.tr = lambda key, args=None: key
@@ -2089,7 +2187,6 @@ def check_cache_se_mejora_sola():
                 app.source = ""
                 app.synced = False
                 app.state = "idle"
-                app.dirty = False
                 app.last_fetch = 0.0
                 app.fetcher = FetcherFalso()
                 app.reload_lyrics()
@@ -2113,7 +2210,6 @@ def check_cache_se_mejora_sola():
                 app.source = ""
                 app.synced = False
                 app.state = "idle"
-                app.dirty = False
                 app.last_fetch = 0.0
                 app.fetcher = FetcherFalso()
                 app.reload_lyrics()
@@ -2145,7 +2241,6 @@ def check_resultado_no_pisa_letra_igual():
                 app.source = "lrclib"
                 app.synced = True
                 app.state = "lyrics"
-                app.dirty = False
                 app._snap_scroll = lambda: None
                 aplicar = getattr(app, "_apply_fetched", None)
                 if aplicar is None:
@@ -3606,6 +3701,8 @@ def main(argv):
     check_layout_imagen()
     check_karaoke_imagen_pixel_a_pixel()
     check_karaoke_sin_resplandor()
+    check_karaoke_borde_suave()
+    check_relevo_sin_salto_de_alfa()
     check_tamano_fraccionario()
     check_karaoke_imagen_sigue_los_tiempos()
     check_transicion_real()
@@ -3614,7 +3711,7 @@ def main(argv):
     check_ritmo_de_frames()
     check_primera_ventana_fps()
     check_curva_suave()
-    check_glow_real()
+    check_relleno_nitro()
     check_recarga_por_senal()
     check_tamano_terminal_real()
     check_rutas_estado()

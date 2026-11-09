@@ -141,13 +141,18 @@ invalidated on change, so there is no need to reopen the window.
   become the active one arrives at the dim tone of the not-yet-sung letters
   instead of the bright accent, so the hand-off no longer darkens the line
   all at once.
+- **The fill edge fades instead of cutting**: the sung part dissolves into
+  the unsung part over the last column of the letter being sung, instead of
+  ending in a straight wall of light. The outgoing line also keeps the
+  opacity of its distance to the centre, so it does not lose it in one
+  frame at the hand-off.
 - **Native resolution**: the lyrics are drawn at the window's own size
   (1200×820 by default) with no upscaling.
 
 ### 2.6.0
 
 - **Visualizer removed**: The audio visualizer (`cava` behind lyrics) has been removed. It never looked as smooth as standalone `cava` and added complexity without benefit. The plugin is now **image-only, 60 fps**.
-- **60 fps native render**: The whole plugin runs at 60 fps (MOTION_FPS). Render happens at 1/3 resolution (400×273) with BILINEAR upscale → ~19 ms/draw (≈50 fps) with stable frame pacing.
+- **60 fps native render**: The whole plugin runs at 60 fps (MOTION_FPS). Render happens at 1/3 resolution (400×273) with BILINEAR upscale → ~19 ms/draw (≈50 fps) with stable frame pacing. Superseded in 2.7.0: the lyrics are now drawn at the native resolution with a fixed-step frame deadline.
 - **Persistent window size**: Manual resize is saved to `settings.toml` and restored on reopen. Moving the window (anchor buttons) preserves the configured size.
 - **No lyrics translation**: `translate_lyrics` removed (was always `false` by default).
 - **Cleaner panel**: Visualizer toggle, position/coverage controls, and translate option removed. Only relevant settings remain.

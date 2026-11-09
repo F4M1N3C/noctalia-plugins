@@ -171,7 +171,9 @@ class ImageRenderer:
                 return candidata
         return None
 
-    def _draw_karaoke(self, draw, text, center_y, size, sung, unsung, amount, family):
+    def _draw_karaoke(
+        self, draw, text, center_y, size, sung, unsung, amount, family, alfa=255
+    ):
         """Rellena la línea cantada de izquierda a derecha, píxel a píxel.
 
         `amount` son los caracteres cantados con decimales. El avance se
@@ -188,6 +190,10 @@ class ImageRenderer:
         El borde del relleno se desvanece con una rampa de alfa: la letra
         cantada se funde con la que falta en vez de cortar en seco, y el
         ojo sigue la luz que avanza.
+
+        `alfa` es la opacidad de la línea (la de su distancia al centro):
+        sin ella, la línea saliente llegaba opaca al relevo y al cambiar
+        de ruta de dibujo se volvía translúcida de golpe.
         """
         font = self.font(family, size)
         if font is None:
@@ -198,7 +204,8 @@ class ImageRenderer:
         total = text_width(draw, text, font)
         x = (base.size[0] - total) / 2
         length = len(text)
-        draw.text((x, center_y), text, font=font, fill=unsung, anchor="lm")
+        relleno = unsung if alfa >= 255 else unsung + (max(0, int(alfa)),)
+        draw.text((x, center_y), text, font=font, fill=relleno, anchor="lm")
         if length <= 0:
             return
         amount = max(0.0, min(float(length), amount))
@@ -247,6 +254,14 @@ class ImageRenderer:
                 fill=color,
                 anchor="lm",
             )
+            if alfa < 255:
+                # La capa hereda la opacidad de la línea: si no, la línea
+                # saliente llegaría opaca al relevo y al cambiar de ruta de
+                # dibujo se volvería translúcida de golpe.
+                factor = max(0.0, min(1.0, alfa / 255.0))
+                layer.putalpha(
+                    layer.getchannel("A").point(lambda valor: int(valor * factor))
+                )
             return layer
 
         # El trozo cantado se recorta con crop (un píxel más no cambia nada):
@@ -257,22 +272,26 @@ class ImageRenderer:
         nitido = completa.crop(corte)
 
         # El brillo de la letra: solo lo cantado, en su color, sin sombra
-        # difuminada alrededor. El halo era una sombra que ademas costaba
-        # 3,2 ms por cuadro (dos GaussianBlur) y hacia bajar de 60 fps.
+        # difuminada alrededor. El halo era una sombra que además costaba
+        # 3,2 ms por cuadro (dos GaussianBlur) y hacía bajar de 60 fps.
         rampa = max(2, int(size * 0.5))
 
         # El borde del relleno se suaviza: una rampa de alfa en las últimas
         # columnas funde la letra cantada con la que todavía no se ha
-        # cantado, en vez de cortar el color en seco.
-        if rampa < limit:
+        # cantado, en vez de cortar el color en seco (un tajo vertical de
+        # luz). La rampa baja hacia el límite: el color cantado se apaga
+        # al llegar al borde. Con la rampa al revés el rojo se encendía
+        # justo al final y se cortaba en seco.
+        if limit > 0:
             suave = Image.new("L", (limit, height), 255)
+            tramo = min(rampa, limit)
             valores = [
-                int(255 * (indice + 1) / float(rampa)) for indice in range(rampa)
+                int(255 * (tramo - indice) / float(tramo)) for indice in range(tramo)
             ]
-            columna = Image.new("L", (rampa, 1))
+            columna = Image.new("L", (tramo, 1))
             columna.putdata(valores)
-            columna = columna.resize((rampa, height), Image.Resampling.NEAREST)
-            suave.paste(columna, (limit - rampa, 0))
+            columna = columna.resize((tramo, height), Image.Resampling.NEAREST)
+            suave.paste(columna, (limit - tramo, 0))
             nitido.putalpha(ImageChops.multiply(nitido.getchannel("A"), suave))
 
         base.alpha_composite(nitido, (box[0], box[1]))
@@ -549,7 +568,15 @@ class ImageRenderer:
                     cantada = self._lerp(accent, destino, progress)
                     pendiente = self._lerp(pendiente, destino, progress)
                 self._draw_karaoke(
-                    draw, text, y, line_size, cantada, pendiente, amount, family
+                    draw,
+                    text,
+                    y,
+                    line_size,
+                    cantada,
+                    pendiente,
+                    amount,
+                    family,
+                    int(fade * 255),
                 )
             else:
                 self._draw_centered(draw, text, y, line_size, color, family)

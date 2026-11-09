@@ -153,8 +153,13 @@ def load_font(path: str, size: float):
         # El tamaño puede ser fraccionario: así la letra que crece no da
         # escalones de un píxel.
         return ImageFont.truetype(path, max(1.0, float(size)))
-    except OSError:
-        return None
+    except (OSError, TypeError, ValueError):
+        # Una versión antigua de Pillow puede no aceptar el tamaño
+        # fraccionario: se cae al entero en vez de tumbar el render.
+        try:
+            return ImageFont.truetype(path, max(1, int(round(float(size)))))
+        except (OSError, TypeError, ValueError):
+            return None
 
 
 def text_width(draw, text, font) -> float:

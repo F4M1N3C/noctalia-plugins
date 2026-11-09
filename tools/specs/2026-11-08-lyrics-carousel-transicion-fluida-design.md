@@ -104,7 +104,9 @@ en caché, reutilizadas en cada transición (la caché no crece sin límite).
 extremos. El centro de la transición acelera algo más (1,875× la media frente a 1,5×), que
 es el precio de un arranque y un frenado más limpios.
 
-Se usa **solo** para el scroll; el resto de interpolaciones del plugin no cambian.
+Se usa **solo** para el scroll: el resto de interpolaciones del plugin no cambian. Como el
+tamaño y el color del relevo se calculan con el mismo progreso, heredan la curva (el
+tamaño y el color pasan a acelerar y frenar con ella).
 
 ### E. Métrica honesta
 

@@ -1877,7 +1877,6 @@ class LyricsCarousel:
         self._last_size_check = 0.0
         self._last_viz_log = 0.0
         self.status_message = ""
-        self.dirty = True
         self.stop_requested = False
         # SIGUSR1: el panel avisa de que la caché se ha vaciado y la
         # ventana abierta tiene que volver a buscar la canción actual.
@@ -1960,7 +1959,6 @@ class LyricsCarousel:
         if width != self.width or height != self.height:
             self.width = width
             self.height = height
-            self.dirty = True
 
     def check_manual_resize(self):
         """Guarda el tamaño si el usuario ha redimensionado la ventana a mano.
@@ -2051,7 +2049,6 @@ class LyricsCarousel:
             self.lines = []
             self.source = ""
             self.synced = False
-            self.dirty = True
             return
         self.reload_lyrics(force=self.args.force)
         self.args.force = False
@@ -2084,7 +2081,6 @@ class LyricsCarousel:
             self.fetcher.start(track, force=force)
             self.last_fetch = time.monotonic()
             self.log(f"tema: {track.title} — {track.artist} (buscando)")
-        self.dirty = True
 
     def _apply_fetched(self, lines, source, synced) -> bool:
         """Aplica un resultado de búsqueda sin pisar una letra igual o mejor.
@@ -2107,7 +2103,6 @@ class LyricsCarousel:
         self.synced = synced
         self.state = "lyrics" if lines else "empty"
         self._snap_scroll()
-        self.dirty = True
         if lines and not nueva_palabra:
             mark_word_checked(self.track)
         return True
@@ -2169,7 +2164,6 @@ class LyricsCarousel:
         self.direction = 1 if cfg["direction"] == "down" else -1
         self.karaoke = bool(cfg["karaoke"])
         self.spacing = int(cfg["spacing"])
-        self.dirty = True
         self.log("ajustes: " + json.dumps(cfg, ensure_ascii=False))
         # La geometría de la ventana la aplica el panel (es quien tiene la
         # API de Noctalia): aquí no se toca, solo se vigila el tamaño por si
@@ -2361,7 +2355,7 @@ class LyricsCarousel:
             target = index * step + (focus - index) * step * progress
         self.scroll = target
 
-    def draw_image(self, force=False):
+    def draw_image(self):
         if self.image is None:
             # Sin renderizador no hay nada que dibujar: el aviso ya se dio al
             # arrancar y el bucle de --once termina solo.
@@ -2401,14 +2395,14 @@ class LyricsCarousel:
             return
         self.image_failures = 0
 
-    def draw(self, force=False):
+    def draw(self):
         now = time.monotonic()
         # El ritmo lo pone el bucle (plazo de paso fijo): aqui solo se dibuja.
         # Antes este metodo tambien descartaba frames si se habia pasado del
         # intervalo, y con el trabajo por delante el ciclo real era
         # `trabajo + intervalo`: 36 fps en vez de 60.
         draw_start = now
-        self.draw_image(force)
+        self.draw_image()
         draw_ms = (time.monotonic() - draw_start) * 1000
         if draw_ms > 0:
             self._draw_accum = getattr(self, "_draw_accum", 0) + draw_ms
@@ -2421,7 +2415,9 @@ class LyricsCarousel:
             if self._draw_frames % 180 == 0:
                 avg = self._draw_accum / self._draw_frames
                 desde = getattr(self, "_draw_desde", now)
-                fps = fps_real(self._draw_frames, now - desde)
+                # 180 cuadros son 179 intervalos: se cuentan los
+                # intervalos, no los cuadros, o el fps sale un 0,6 % alto.
+                fps = fps_real(max(0, self._draw_frames - 1), now - desde)
                 self.warn(f"draw avg: {avg:.1f}ms | {fps:.0f} fps reales")
                 self._draw_accum = 0
                 self._draw_frames = 0
@@ -2485,7 +2481,6 @@ class LyricsCarousel:
         self.reload_requested = False
         if self.demo:
             self._load_demo()
-            self.dirty = True
         elif self.track.title or self.track.artist:
             self.reload_lyrics(force=True)
         return True
@@ -2514,13 +2509,11 @@ class LyricsCarousel:
             self.direction *= -1
             self.cfg["direction"] = "down" if self.direction > 0 else "up"
             self._save_override("direction", self.cfg["direction"], "string")
-            self.dirty = True
             return True
         if key in ("k", "K"):
             self.karaoke = not self.karaoke
             self.cfg["karaoke"] = self.karaoke
             self._save_override("karaoke", self.karaoke, "bool")
-            self.dirty = True
             return True
         if key in ("r", "R"):
             if self.demo:
@@ -2528,7 +2521,6 @@ class LyricsCarousel:
                 # de muestra (buscarla haria cuatro peticiones a los
                 # proveedores sin ningun sentido).
                 self._load_demo()
-                self.dirty = True
                 return True
             if self.track.title or self.track.artist:
                 self.reload_lyrics(force=True)
@@ -2553,8 +2545,7 @@ class LyricsCarousel:
                 # esta en el centro.
                 position = self.position()
                 self._update_scroll(position)
-                self.draw(force=self.dirty)
-                self.dirty = False
+                self.draw()
                 if self.args.once or self.output_broken:
                     # La terminal se ha cerrado: se sale limpio en vez de
                     # quedarse dibujando en el vacio.

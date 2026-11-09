@@ -2,6 +2,19 @@
 
 Synced lyrics in a floating kitty window, in the spirit of `cava`, `lavat` or `unimatrix`.
 
+## Install
+
+Add this repository as a plugin source and enable the plugin:
+
+```sh
+noctalia msg plugins source add dev path https://github.com/F4M1N3C/noctalia-plugins
+noctalia msg plugins enable faminec/lyrics-carousel
+```
+
+Then add the **Lyrics Carousel** bar widget from Noctalia's widget picker. Clicking it
+opens the panel (attached to the widget) and holds every setting of the plugin; the
+lyrics window itself is opened from the panel's **Open the carousel** button.
+
 ## Plugin
 
 | Field | Value |
@@ -11,13 +24,25 @@ Synced lyrics in a floating kitty window, in the spirit of `cava`, `lavat` or `u
 
 ## Requirements
 
+The plugin works on **Hyprland 0.57 or newer only**: the lyrics window is opened
+with the Hyprland Lua API (`hl.dsp.exec_cmd`) and its geometry is applied with
+`hl.dsp.window.*`. There is no Niri or Sway backend, and before Hyprland 0.57 the
+window cannot be placed that way — that is why the thumbnail carries the
+`Hyprland 0.57+ · Widget` tag.
+
 The following executables must be installed and available on `PATH`:
 
-- `kitty` — the terminal the window runs in, and the graphics protocol used by the image
-  renderer.
-- `hyprland` — the compositor; the window is opened with the Hyprland 0.57 Lua API.
-- `playerctl` — reads the active MPRIS player.
-- `python3` with `python-pillow` — draws the lyrics in image mode.
+| Executable | Package | What it is used for |
+| --- | --- | --- |
+| `kitty` | `kitty` | The terminal the lyrics window runs in, and the graphics protocol the image renderer draws with. |
+| `hyprland` | `hyprland` | The compositor. The plugin only runs on Hyprland. |
+| `hyprctl` | `hyprland` | Lists, moves, resizes, focuses and closes the lyrics window (panel geometry, self-test). |
+| `playerctl` | `playerctl` | Reads the active MPRIS player so the plugin knows what is playing. |
+| `python3` | `python` | Runs the carousel script (`bin/lyrics-carousel`) and the settings helper (`bin/set-setting.py`). |
+| `fc-match` | `fontconfig` | Resolves the configured font family to a file for Pillow (image mode accepts any installed font). |
+
+`python3` needs Pillow (`python-pillow`) for the image renderer. The plugin never
+installs anything: every dependency has to be there before the plugin is enabled.
 
 The lyrics themselves come from the Noctalia Lyrics plugin's source adapter
 (`lyric_sources.py`), so the same providers and the same configuration are reused:
@@ -121,6 +146,17 @@ it. The font family and the font size also apply live: the font cache is
 invalidated on change, so there is no need to reopen the window.
 
 ## Changelog
+
+### 2.7.1
+
+- **The right lyrics, not the first with timing**: a NetEase lyrics that comes
+  without any accented vowel nor `ñ` (e.g. `algn`, `petrleo`, `pases`, `Quin`)
+  no longer wins over a correctly written one (LRCLIB) just because it carries
+  per-character timing. Spanish/Portuguese/French lyrics are detected by
+  vocabulary (at least 25 words and 8 distinct stop-words) and zero accented
+  letters; a no-accent version neither replaces a correct one nor is cut
+  early, and a correct one can still replace it even without per-word timing.
+  English, which is also accent-free, is never marked.
 
 ### 2.7.0
 

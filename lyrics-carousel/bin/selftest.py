@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Autotest del plugin Lyrics Carousel.
+"""Self-test for the Lyrics Carousel plugin.
 
-Comprueba las suposiciones del entorno de instalación, que son la causa raíz
-de los fallos más molestos: el script puede lanzarse por un enlace simbólico
-(en ese caso sus módulos hermanos y el helper no están en el mismo
-directorio), el directorio de datos puede no existir y pueden faltar
-herramientas externas.
+Checks the assumptions about the installation environment, which are the root
+cause of the most annoying failures: the script may be launched through a
+symbolic link (in which case its sibling modules and the helper are not in
+the same directory), the data directory may not exist, and external tools may
+be missing.
 
-Uso:  python3 bin/selftest.py [--verbose]
-Devuelve 1 si algo falla.
+Usage:  python3 bin/selftest.py [--verbose]
+Returns 1 if anything fails.
 
-El autotest no deja rastro: no importa el script (eso escribiría bytecode en
-el directorio desde el que se lanza), lo ejecuta como proceso con
---diagnostics.
+The self-test leaves no trace: it does not import the script (that would
+write bytecode into the directory it is launched from), it runs it as a
+process with --diagnostics.
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ import time
 import types
 from contextlib import contextmanager
 
-# Cargar el script con SourceFileLoader (script_module) escribiria
-# bin/__pycache__/*.pyc: el autotest no debe dejar rastro en el plugin.
+# Loading the script with SourceFileLoader (script_module) would write
+# bin/__pycache__/*.pyc: the self-test must not leave traces in the plugin.
 sys.dont_write_bytecode = True
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -42,17 +42,17 @@ SCRIPT = os.path.join(HERE, "lyrics-carousel")
 DATA_DIR = os.path.expanduser(
     "~/.local/state/noctalia/plugins/data/faminec/lyrics-carousel"
 )
-# Por donde se lanza de verdad: el enlace simbólico del PATH.
+# Where it is actually launched from: the PATH symlink.
 LAUNCHER = os.path.expanduser("~/.local/bin/lyrics-carousel")
 
 results = []
 
 
-def pixeles(imagen):
-    """Píxeles de una imagen, sin el método que Pillow va a retirar."""
-    if hasattr(imagen, "get_flattened_data"):
-        return imagen.get_flattened_data()
-    return list(imagen.getdata())
+def pixels(image):
+    """Pixels of an image, without the method Pillow is going to remove."""
+    if hasattr(image, "get_flattened_data"):
+        return image.get_flattened_data()
+    return list(image.getdata())
 
 
 def check(name: str, ok: bool, detail: str = ""):
@@ -61,41 +61,41 @@ def check(name: str, ok: bool, detail: str = ""):
 
 
 @contextmanager
-def env_temporal(valores):
-    """Aplica variables de entorno solo durante el bloque.
+def temporary_env(values):
+    """Applies environment variables only for the duration of the block.
 
-    Las pruebas no pueden tocar el estado real: el cache de letras, el
-    settings.toml y los overrides se redirigen a un directorio temporal.
+    Tests must not touch the real state: the lyrics cache, settings.toml and
+    the overrides are redirected to a temporary directory.
     """
-    anterior = dict(os.environ)
+    previous = dict(os.environ)
     try:
-        os.environ.update(valores)
+        os.environ.update(values)
         yield
     finally:
         os.environ.clear()
-        os.environ.update(anterior)
+        os.environ.update(previous)
 
 
 @contextmanager
-def estado_temporal(base: str):
-    """Estado de Noctalia temporal para el proceso actual.
+def temporary_state(base: str):
+    """Temporary Noctalia state for the current process.
 
-    Sustituye todas las variables que pueden apuntar al estado real, no
-    solo XDG_STATE_HOME: paths.py prioriza LYRICS_CAROUSEL_STATE y
-    NOCTALIA_STATE_HOME, asi que con esas definidas el script leeria (y
-    escribiria) en los ajustes de verdad.
+    Replaces every variable that may point to the real state, not just
+    XDG_STATE_HOME: paths.py prioritizes LYRICS_CAROUSEL_STATE and
+    NOCTALIA_STATE_HOME, so with those defined the script would read (and
+    write) the real settings.
 
-    Devuelve la ruta del directorio de estado (<base>/.local/state/noctalia).
+    Returns the path of the state directory (<base>/.local/state/noctalia).
     """
-    anterior = dict(os.environ)
-    estado = os.path.join(base, ".local", "state")
-    destino = os.path.join(estado, "noctalia")
-    os.makedirs(destino, exist_ok=True)
-    os.environ["XDG_STATE_HOME"] = estado
-    os.environ["NOCTALIA_STATE_HOME"] = estado
-    os.environ["LYRICS_CAROUSEL_STATE"] = destino
+    previous = dict(os.environ)
+    state_value = os.path.join(base, ".local", "state")
+    destination = os.path.join(state_value, "noctalia")
+    os.makedirs(destination, exist_ok=True)
+    os.environ["XDG_STATE_HOME"] = state_value
+    os.environ["NOCTALIA_STATE_HOME"] = state_value
+    os.environ["LYRICS_CAROUSEL_STATE"] = destination
     os.environ["LYRICS_CAROUSEL_OVERRIDES"] = os.path.join(
-        destino,
+        destination,
         "plugins",
         "data",
         "faminec",
@@ -103,17 +103,17 @@ def estado_temporal(base: str):
         "overrides.json",
     )
     try:
-        yield destino
+        yield destination
     finally:
         os.environ.clear()
-        os.environ.update(anterior)
+        os.environ.update(previous)
 
 
 def script_module():
-    """Carga el script como modulo para poder probar sus funciones sueltas.
+    """Loads the script as a module so its individual functions can be tested.
 
-    El script no tiene extension .py, asi que se carga con SourceFileLoader.
-    El nombre del modulo no es "__main__": cargar el script no lo ejecuta.
+    The script has no .py extension, so it is loaded with SourceFileLoader.
+    The module name is not "__main__": loading the script does not run it.
     """
     loader = importlib.machinery.SourceFileLoader("lyrics_carousel_mod", SCRIPT)
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -122,12 +122,12 @@ def script_module():
     return module
 
 
-def leer_ajustes(ruta: str) -> dict:
-    """Ajustes del plugin en un settings.toml (vacio si no se puede leer)."""
+def read_settings(file_path: str) -> dict:
+    """Plugin settings from a settings.toml (empty if it cannot be read)."""
     try:
         import tomllib
 
-        with open(ruta, "rb") as handle:
+        with open(file_path, "rb") as handle:
             data = tomllib.load(handle)
     except Exception:  # noqa: BLE001
         return {}
@@ -135,15 +135,15 @@ def leer_ajustes(ruta: str) -> dict:
     return section if isinstance(section, dict) else {}
 
 
-def esperar_ajuste(ruta: str, clave: str, valor, segundos: float = 10.0) -> bool:
-    """Espera a que el script guarde un ajuste en el settings.toml.
+def wait_for_setting(file_path: str, setting_key: str, setting_value, segundos: float = 10.0) -> bool:
+    """Waits for the script to store a setting in settings.toml.
 
-    El script escribe en segundo plano (el helper va en un proceso aparte),
-    asi que el valor no aparece de golpe: se espera un poco.
+    The script writes in the background (the helper runs in a separate
+    process), so the value does not appear right away: wait a little.
     """
-    limite = time.monotonic() + segundos
-    while time.monotonic() < limite:
-        if leer_ajustes(ruta).get(clave) == valor:
+    deadline = time.monotonic() + segundos
+    while time.monotonic() < deadline:
+        if read_settings(file_path).get(setting_key) == setting_value:
             return True
         time.sleep(0.2)
     return False
@@ -152,7 +152,7 @@ def esperar_ajuste(ruta: str, clave: str, valor, segundos: float = 10.0) -> bool
 # visualizer_module() removed - visualizer feature removed
 
 def run_script(path: str, cwd: str = "/"):
-    """Ejecuta el script con --diagnostics y devuelve el JSON."""
+    """Runs the script with --diagnostics and returns the JSON."""
     process = subprocess.run(
         [sys.executable, path, "--diagnostics"],
         capture_output=True,
@@ -163,56 +163,56 @@ def run_script(path: str, cwd: str = "/"):
     )
     if process.returncode != 0:
         raise RuntimeError(
-            f"salida {process.returncode}: {process.stderr.strip()[:200]}"
+            f"output {process.returncode}: {process.stderr.strip()[:200]}"
         )
     return json.loads(process.stdout)
 
 
 def check_diagnostics(label: str, path: str):
-    """Comprueba que el script encuentra sus modulos y su helper."""
+    """Checks that the script finds its modules and its helper."""
     try:
         info = run_script(path)
     except Exception as error:  # noqa: BLE001
-        check(f"diagnóstico ({label})", False, repr(error)[:160])
+        check(f"diagnostics ({label})", False, repr(error)[:160])
         return None
-    # Lo que tiene que resolver es el directorio real de ese script (el
-    # enlace simbólico apunta al despliegue, no al repo).
-    esperado = os.path.dirname(os.path.realpath(path))
+    # What it has to resolve is the real directory of that script (the
+    # symlink points to the deployment, not to the repo).
+    expected = os.path.dirname(os.path.realpath(path))
     check(
-        f"diagnóstico ({label})",
-        info.get("bin_dir") == esperado,
-        f"bin_dir={info.get('bin_dir')} esperado={esperado}",
+        f"diagnostics ({label})",
+        info.get("bin_dir") == expected,
+        f"bin_dir={info.get('bin_dir')} expected={expected}",
     )
     check(
-        f"módulos hermanos ({label})",
+        f"sibling modules ({label})",
         bool(info.get("image_renderer")) and bool(info.get("graphics")),
         info.get("image_error") or "",
     )
     check(
-        f"helper localizado ({label})",
+        f"helper located ({label})",
         bool(info.get("helper_exists")),
         info.get("helper") or "",
     )
     return info
 
 
-def check_atajos():
-    """Los atajos 'd' y 'k' alternan sus ajustes y los guardan de verdad.
+def check_shortcuts():
+    """The 'd' and 'k' shortcuts toggle their settings and really store them.
 
-    Todo ocurre en un directorio temporal (entorno_de_prueba): el script
-    escribe en el settings.toml y en los overrides, y la prueba no debe
-    tocar el estado real del usuario ni competir con la escritura
-    asincrona del script.
+    Everything happens in a temporary directory (test environment): the
+    script writes to settings.toml and to the overrides, and the test must
+    not touch the user's real state nor compete with the script's
+    asynchronous write.
     """
-    temporal = tempfile.mkdtemp(prefix="lyrics-carousel-selftest-")
-    estado = os.path.join(temporal, ".local", "state")
-    cache = os.path.join(temporal, ".cache")
-    ajustes = os.path.join(estado, "noctalia", "settings.toml")
-    os.makedirs(os.path.dirname(ajustes), exist_ok=True)
+    temporary = tempfile.mkdtemp(prefix="lyrics-carousel-selftest-")
+    state_value = os.path.join(temporary, ".local", "state")
+    cache = os.path.join(temporary, ".cache")
+    settings_file = os.path.join(state_value, "noctalia", "settings.toml")
+    os.makedirs(os.path.dirname(settings_file), exist_ok=True)
     os.makedirs(cache, exist_ok=True)
-    with open(ajustes, "w", encoding="utf-8") as handle:
+    with open(settings_file, "w", encoding="utf-8") as handle:
         handle.write("")
-    entorno = entorno_de_prueba(temporal)
+    environment = test_environment(temporary)
     log = os.path.join(cache, "lyrics-carousel", "debug.log")
     try:
         import fcntl
@@ -233,7 +233,7 @@ def check_atajos():
                     "--demo",
                     "--debug",
                 ],
-                entorno,
+                environment,
             )
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 90, 0, 0))
         time.sleep(2.5)
@@ -249,76 +249,76 @@ def check_atajos():
             pass
         os.close(fd)
     except Exception as error:  # noqa: BLE001
-        check("el atajo 'd' guarda la dirección", False, repr(error)[:120])
-        check("el atajo 'k' guarda el karaoke", False, repr(error)[:120])
-        shutil.rmtree(temporal, ignore_errors=True)
+        check("the 'd' shortcut saves the direction", False, repr(error)[:120])
+        check("the 'k' shortcut saves the karaoke", False, repr(error)[:120])
+        shutil.rmtree(temporary, ignore_errors=True)
         return
     try:
-        # El valor tiene que quedar en el settings.toml: si solo se queda
-        # en la capa de overrides, el usuario lo pierde al reiniciar.
-        ok = esperar_ajuste(ajustes, "direction", "up")
+        # The value has to end up in settings.toml: if it only stays in the
+        # overrides layer, the user loses it when restarting.
+        ok = wait_for_setting(settings_file, "direction", "up")
         check(
-            "el atajo 'd' guarda la dirección",
+            "the 'd' shortcut saves the direction",
             ok,
-            "esperado up, hay %s" % (leer_ajustes(ajustes).get("direction"),),
+            "expected up, got %s" % (read_settings(settings_file).get("direction"),),
         )
-        ok_k = esperar_ajuste(ajustes, "karaoke", False)
+        ok_k = wait_for_setting(settings_file, "karaoke", False)
         check(
-            "el atajo 'k' guarda el karaoke",
+            "the 'k' shortcut saves the karaoke",
             ok_k,
-            "esperado false, hay %s" % (leer_ajustes(ajustes).get("karaoke"),),
+            "expected false, got %s" % (read_settings(settings_file).get("karaoke"),),
         )
-        # El modo demo es autonomo: ni al arrancar ni al recargar ('r')
-        # debe pedir letra a internet.
-        peticiones = []
-        escrito = ""
+        # Demo mode is self-contained: neither at startup nor on reload ('r')
+        # may it fetch lyrics from the internet.
+        requests = []
+        written = ""
         if os.path.isfile(log):
             try:
                 with open(log, encoding="utf-8", errors="replace") as handle:
-                    escrito = handle.read()
-                peticiones = [
-                    linea
-                    for linea in escrito.split("\n")
+                    written = handle.read()
+                requests = [
+                    lyric_line
+                    for lyric_line in written.split("\n")
                     if any(
-                        marca in linea.lower()
-                        for marca in ("http", "kugou", "splayer", "netease", "lrclib")
+                        marker in lyric_line.lower()
+                        for marker in ("http", "kugou", "splayer", "netease", "lrclib")
                     )
                 ]
             except OSError:
-                escrito = ""
-        # El guardia solo sirve si el script escribio su registro de
-        # depuracion: las peticiones a los proveedores solo se anotan con
-        # --debug, asi que sin el el log pareceria limpio siempre.
-        # Se busca una linea que solo sale con depuracion.
-        depuracion = any(
-            marca in escrito
-            for marca in ("demo: ", "modo: ", "ajustes: ", "resultado: ")
+                written = ""
+        # The guard only works if the script wrote its debug log: requests
+        # to the providers are only recorded with --debug, so without it the
+        # log would always look clean.
+        # Look for a line that only shows up with debugging enabled.
+        debug_output = any(
+            marker in written
+            for marker in ("demo: ", "mode: ", "settings: ", "result: ")
         )
         check(
-            "el log del script permite comprobarlo",
-            depuracion,
+            "the script log allows checking it",
+            debug_output,
             ""
-            if depuracion
-            else "el script no escribio su registro de depuracion",
+            if debug_output
+            else "the script did not write its debug log",
         )
         check(
-            "el modo demo no pide letra a internet",
-            not peticiones,
-            "; ".join(peticiones[:2]),
+            "the demo mode does not request lyrics from the internet",
+            not requests,
+            "; ".join(requests[:2]),
         )
     finally:
-        shutil.rmtree(temporal, ignore_errors=True)
+        shutil.rmtree(temporary, ignore_errors=True)
 
 
-def check_desfase_scroll():
-    """El scroll usa la posicion con el desfase aplicado.
+def check_scroll_offset():
+    """The scroll uses the position with the offset applied.
 
-    El resaltado ya usaba position() (con desfase) pero el scroll usaba la
-    posicion cruda: con offset_ms distinto de cero la linea resaltada no era
-    la que estaba en el centro.
+    The highlight already used position() (with the offset) but the scroll
+    used the raw position: with a non-zero offset_ms the highlighted line was
+    not the one in the center.
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             app = object.__new__(mod.LyricsCarousel)
             app.args = types.SimpleNamespace(once=True, debug=False)
@@ -331,76 +331,76 @@ def check_desfase_scroll():
             app.stop_requested = False
             app.output_broken = False
             app.lines = []
-            posiciones = []
+            positions = []
             app._poll_data = lambda: None
             app.update_size = lambda: None
             app.draw = lambda force=False: None
             app._read_keys = lambda: []
             app._setup_terminal = lambda interactive: None
             app._restore_terminal = lambda interactive: None
-            app._update_scroll = lambda position: posiciones.append(position)
+            app._update_scroll = lambda position: positions.append(position)
             app.run()
-            esperado = app.position()
-            ok = bool(posiciones) and abs(posiciones[0] - esperado) < 0.05
+            expected = app.position()
+            ok = bool(positions) and abs(positions[0] - expected) < 0.05
             check(
-                "el desfase se aplica al scroll",
+                "the offset is applied to the scroll",
                 ok,
-                "scroll=%s esperado=%s" % (posiciones[:1], round(esperado, 3)),
+                "scroll=%s expected=%s" % (positions[:1], round(expected, 3)),
             )
 
 
-def check_busqueda_letra():
-    """La busqueda espera 15 s y no marca la cache negativa al agotarse."""
+def check_lyrics_search():
+    """The search waits 15 s and does not mark the negative cache on timeout."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             check(
-                "el plazo de búsqueda de letra son 15 s",
+                "the lyrics search timeout is 15 s",
                 getattr(mod, "SEARCH_TIMEOUT", None) == 15.0,
                 "SEARCH_TIMEOUT=%s" % (getattr(mod, "SEARCH_TIMEOUT", None),),
             )
             mod.load_lyrics_settings = lambda: {"sources": ["lrclib"]}
-            marcados = []
-            mod.mark_missing = lambda track: marcados.append(track)
+            marked_tracks = []
+            mod.mark_missing = lambda track: marked_tracks.append(track)
             track = mod.Track("cancion", "artista", duration=120.0)
 
-            # Un proveedor que no responde: se agota el plazo y la cache
-            # negativa NO se marca (la letra puede llegar despues).
+            # A provider that does not answer: the deadline expires and the
+            # negative cache is NOT marked (the lyrics may arrive later).
             mod.SEARCH_TIMEOUT = 0.4
 
-            def lento(track, log):
+            def slow(track, log):
                 time.sleep(3.0)
                 return [], None
 
-            mod.fetch_lrclib = lento
+            mod.fetch_lrclib = slow
             mod.fetch_lyrics(track, True, lambda message: None)
             check(
-                "una búsqueda que agota el plazo no marca la caché negativa",
-                not marcados,
-                "se marcaron %d" % len(marcados),
+                "a search that exhausts the timeout does not mark the negative cache",
+                not marked_tracks,
+                "marked %d" % len(marked_tracks),
             )
 
-            # Todos los proveedores terminan sin letra: la cache negativa
-            # se marca (no tiene sentido reintentar cada 60 s la misma
-            # cancion).
-            marcados.clear()
+            # All the providers finish without lyrics: the negative cache
+            # is marked (retrying the same song every 60 s makes no
+            # sense).
+            marked_tracks.clear()
             mod.SEARCH_TIMEOUT = 5.0
             mod.fetch_lrclib = lambda track, log: ([], None)
             mod.fetch_lyrics(track, True, lambda message: None)
             check(
-                "una búsqueda terminada sin letra marca la caché negativa",
-                len(marcados) == 1,
-                "se marcaron %d" % len(marcados),
+                "a search that ends without lyrics marks the negative cache",
+                len(marked_tracks) == 1,
+                "marked %d" % len(marked_tracks),
             )
 
 
-def check_reintento_letra():
-    """Una letra vacia se reintenta a los 60 s (no a los 180)."""
+def check_lyrics_retry():
+    """An empty lyric is retried after 60 s (not after 180)."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             check(
-                "el reintento de letra vacía son 60 s",
+                "the retry for empty lyrics is 60 s",
                 getattr(mod, "RETRY_SECONDS", None) == 60,
                 "RETRY_SECONDS=%s" % (getattr(mod, "RETRY_SECONDS", None),),
             )
@@ -413,75 +413,75 @@ def check_reintento_letra():
             app.last_cfg = time.monotonic()
             app.last_reload = time.monotonic()
             app.theme = mod.Theme()
-            arranques = []
+            start_calls = []
 
-            class FetcherFalso:
+            class FakeFetcher:
                 def take(self):
                     return None
 
                 def start(self, track, force=False):
-                    arranques.append(force)
+                    start_calls.append(force)
 
-            app.fetcher = FetcherFalso()
+            app.fetcher = FakeFetcher()
             app.last_fetch = time.monotonic() - 61
             app._poll_data()
             check(
-                "una letra vacía se reintenta pasados los 60 s",
-                len(arranques) == 1,
-                "arranques=%s" % (arranques,),
+                "empty lyrics are retried after 60 s",
+                len(start_calls) == 1,
+                "starts=%s" % (start_calls,),
             )
-            arranques.clear()
+            start_calls.clear()
             app.last_fetch = time.monotonic() - 10
             app._poll_data()
             check(
-                "una letra vacía no se reintenta antes de los 60 s",
-                not arranques,
-                "arranques=%s" % (arranques,),
+                "empty lyrics are not retried before 60 s",
+                not start_calls,
+                "starts=%s" % (start_calls,),
             )
 
 
-def bloques_osc66(linea):
-    """Extrae los bloques OSC 66 de una fila: (metadatos, texto)."""
-    patron = re.compile("\x1b\\]66;([^;]*);([^\x07]*)\x07")
-    return patron.findall(linea)
+def osc66_blocks(lyric_line):
+    """Extracts the OSC 66 blocks from a row: (metadata, text)."""
+    pattern = re.compile("\x1b\\]66;([^;]*);([^\x07]*)\x07")
+    return pattern.findall(lyric_line)
 
 
-def texto_visible(linea):
-    """Quita las secuencias de control de una fila y deja el texto.
+def visible_text(lyric_line):
+    """Strips the control sequences from a row and leaves the text.
 
-    El texto de los bloques OSC 66 va dentro de la secuencia, asi que de
-    esos se recupera solo el payload.
+    The text of the OSC 66 blocks travels inside the sequence, so only the
+    payload is recovered from them.
     """
-    linea = re.sub("\x1b\\]66;[^;]*;([^\x07]*)\x07", r"\1", linea)
-    return re.sub("\x1b\\][^\x07]*\x07|\x1b\\[[0-9;]*m", "", linea)
+    lyric_line = re.sub("\x1b\\]66;[^;]*;([^\x07]*)\x07", r"\1", lyric_line)
+    return re.sub("\x1b\\][^\x07]*\x07|\x1b\\[[0-9;]*m", "", lyric_line)
 
 
-def metadatos_osc66(metadatos):
-    """Convierte 's=2:n=6:d=10:w=7' en un diccionario."""
-    datos = {}
-    for parte in metadatos.split(":"):
-        if "=" in parte:
-            clave, valor = parte.split("=", 1)
-            datos[clave] = valor
-    return datos
+def osc66_metadata(metadatos):
+    """Converts 's=2:n=6:d=10:w=7' into a dictionary."""
+    data = {}
+    for part in metadatos.split(":"):
+        if "=" in part:
+            setting_key, setting_value = part.split("=", 1)
+            data[setting_key] = setting_value
+    return data
 
 
-def factor_osc66(datos):
-    """Factor de tamaño que calcula kitty con esos metadatos.
+def factor_osc66(data):
+    """Size factor that kitty computes from that metadata.
 
-    Kitty multiplica el tamaño de la fuente por s y lo reduce despues por
-    la fraccion n/d. Con s=1 y n/d=2/10 el texto sale al 20% de su tamaño.
+    Kitty multiplies the font size by s and then reduces it by the n/d
+    fraction. With s=1 and n/d=2/10 the text comes out at 20% of its size.
     """
-    escala = int(datos.get("s", 1))
-    numerador = int(datos.get("n", 0))
-    denominador = int(datos.get("d", 0))
-    if numerador and denominador:
-        return escala * numerador / denominador
-    return float(escala)
+    scale_factor = int(data.get("s", 1))
+    numerator = int(data.get("n", 0))
+    denominator = int(data.get("d", 0))
+    if numerator and denominator:
+        return scale_factor * numerator / denominator
+    return float(scale_factor)
 
 
 def image_module():
-    """Carga image_renderer para probar la disposición de las líneas."""
+    """Loads image_renderer to test the layout of the lines."""
     if HERE not in sys.path:
         sys.path.insert(0, HERE)
     import image_renderer
@@ -489,12 +489,12 @@ def image_module():
     return image_renderer
 
 
-def check_layout_imagen():
-    """La disposición del modo imagen es simétrica y no solapa bloques.
+def check_image_layout():
+    """The layout of image mode is symmetric and does not overlap blocks.
 
-    En "down" las líneas futuras entran por arriba y las pasadas salen por
-    abajo; en "up" al revés. Un signo invertido mete las vecinas dentro del
-    bloque activo y el espaciado deja de ser uniforme.
+    In "down" the upcoming lines enter from the top and the past ones leave
+    through the bottom; in "up" it is the other way around. An inverted sign
+    pulls the neighbours inside the active block and the spacing stops being uniform.
     """
     mod = image_module()
 
@@ -517,148 +517,148 @@ def check_layout_imagen():
         small_h = size * 1.32
         big_h = size * scale * 1.32
         gap = size * 0.30 * 3
-        paso = big_h / 2 + gap + small_h / 2
+        time_step = big_h / 2 + gap + small_h / 2
 
         check(
-            "el layout de imagen dibuja las cinco líneas",
+            "the image layout draws the five lines",
             sorted(pos) == [3, 4, 5, 6, 7],
             repr(sorted(pos)),
         )
         check(
-            "el layout de imagen centra la línea activa",
+            "the image layout centers the active line",
             pos.get(5) == center,
             repr(pos.get(5)),
         )
         check(
-            "el layout de imagen deja el mismo hueco a los dos lados",
+            "the image layout leaves the same gap on both sides",
             abs(abs(pos.get(6, 0) - center) - abs(pos.get(4, 0) - center)) < 1e-6,
-            "arriba=%.2f abajo=%.2f" % (pos.get(6, 0), pos.get(4, 0)),
+            "top=%.2f bottom=%.2f" % (pos.get(6, 0), pos.get(4, 0)),
         )
         check(
-            "el layout de imagen separa las vecinas del bloque activo",
-            abs(pos.get(6, 0) - center) >= paso - 1e-6
-            and abs(pos.get(4, 0) - center) >= paso - 1e-6,
-            "paso=%.2f real=%.2f/%.2f"
-            % (paso, abs(pos.get(6, 0) - center), abs(pos.get(4, 0) - center)),
+            "the image layout separates the neighbours from the active block",
+            abs(pos.get(6, 0) - center) >= time_step - 1e-6
+            and abs(pos.get(4, 0) - center) >= time_step - 1e-6,
+            "step=%.2f actual=%.2f/%.2f"
+            % (time_step, abs(pos.get(6, 0) - center), abs(pos.get(4, 0) - center)),
         )
         if direction == "down":
             check(
-                "en down las líneas futuras van arriba",
+                "in down the future lines go above",
                 pos[7] < pos[6] < center < pos[4] < pos[3],
                 repr({k: round(v, 1) for k, v in pos.items()}),
             )
         else:
             check(
-                "en up las líneas futuras van abajo",
+                "in up the future lines go below",
                 pos[3] < pos[4] < center < pos[6] < pos[7],
                 repr({k: round(v, 1) for k, v in pos.items()}),
             )
 
 
-def check_karaoke_imagen_pixel_a_pixel():
-    """El karaoke de imagen se rellena a nivel de píxel y con decimales.
+def check_karaoke_image_pixel_by_pixel():
+    """The image karaoke is filled at pixel level and with decimals.
 
-    `_draw_karaoke` recibe los caracteres cantados con decimales. El borde
-    del relleno se interpola dentro del glifo en curso, así que un
-    instante ilumina un trozo de letra y no un salto de palabra entera:
-    es lo que hacía parecer que reconocía la velocidad de la canción.
+    `_draw_karaoke` receives the sung characters with decimals. The edge of
+    the fill is interpolated inside the glyph in progress, so a given instant
+    lights up a piece of a letter instead of jumping to a whole word: that
+    is what made it look like it recognised the speed of the song.
     """
     mod = image_module()
     if mod.Image is None:
-        check("el karaoke de imagen se puede medir (Pillow)", False, "sin Pillow")
+        check("the image karaoke can be measured (Pillow)", False, "without Pillow")
         return
 
-    texto = "cantando suave la linea"
-    cantado = (0, 200, 0)
-    pendiente = (0, 90, 0)
+    text = "cantando suave la linea"
+    sung = (0, 200, 0)
+    pending = (0, 90, 0)
 
-    def medir(amount):
-        imagen = mod.Image.new("RGBA", (1500, 90), (0, 0, 0, 0))
-        pincel = mod.ImageDraw.Draw(imagen)
+    def measure(amount):
+        image = mod.Image.new("RGBA", (1500, 90), (0, 0, 0, 0))
+        brush = mod.ImageDraw.Draw(image)
         renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
         renderer.fonts = {}
         renderer.font_files = {"prueba": mod.FALLBACK_FONT}
         renderer._draw_karaoke(
-            pincel, texto, 45, 20, cantado, pendiente, amount, "prueba"
+            brush, text, 45, 20, sung, pending, amount, "prueba"
         )
-        datos = pixeles(imagen)
-        return sum(1 for px in datos if px[0] == cantado[0] and px[1] == cantado[1])
+        data = pixels(image)
+        return sum(1 for px in data if px[0] == sung[0] and px[1] == sung[1])
 
-    def medir_pendiente(amount):
-        imagen = mod.Image.new("RGBA", (1500, 90), (0, 0, 0, 0))
-        pincel = mod.ImageDraw.Draw(imagen)
+    def measure_pending(amount):
+        image = mod.Image.new("RGBA", (1500, 90), (0, 0, 0, 0))
+        brush = mod.ImageDraw.Draw(image)
         renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
         renderer.fonts = {}
         renderer.font_files = {"prueba": mod.FALLBACK_FONT}
         renderer._draw_karaoke(
-            pincel, texto, 45, 20, cantado, pendiente, amount, "prueba"
+            brush, text, 45, 20, sung, pending, amount, "prueba"
         )
-        datos = pixeles(imagen)
-        # Solo la tinta visible: con el borde del relleno suavizado, el
-        # último glifo deja un resto de alfa 2/255 (invisible) en su borde
-        # antialiasado.
+        data = pixels(image)
+        # Only the visible ink: with the softened edge of the fill, the last
+        # glyph leaves a leftover alpha of 2/255 (invisible) on its
+        # antialiased border.
         return sum(
-            1 for px in datos if px[1] == pendiente[1] and px[3] >= 16
+            1 for px in data if px[1] == pending[1] and px[3] >= 16
         )
 
-    total = len(texto)
+    total = len(text)
     check(
-        "sin cantar nada no hay píxeles cantados",
-        medir(0.0) == 0,
-        repr(medir(0.0)),
+        "without singing there are no sung pixels",
+        measure(0.0) == 0,
+        repr(measure(0.0)),
     )
 
-    medios = medir(total / 2)
+    middle_value = measure(total / 2)
     check(
-        "a mitad de línea está cantada la mitad",
-        medir(0.0) < medios < medir(float(total)),
-        "medio=%s" % (medios,),
+        "at the middle of the line half is sung",
+        measure(0.0) < middle_value < measure(float(total)),
+        "middle=%s" % (middle_value,),
     )
     check(
-        "al final no queda nada pendiente",
-        medir_pendiente(float(total)) == 0,
-        repr(medir_pendiente(float(total))),
+        "at the end nothing is left pending",
+        measure_pending(float(total)) == 0,
+        repr(measure_pending(float(total))),
     )
 
-    # El relleno es más fino que un carácter: medio glifo ilumina un
-    # troco pequeño, no la letra siguiente entera.
-    salto_entero = medir(7.0) - medir(6.0)
-    salto_medio = medir(6.5) - medir(6.0)
+    # The fill is finer than one character: half a glyph lights up a small
+    # piece, not the whole next letter.
+    integer_jump = measure(7.0) - measure(6.0)
+    half_jump = measure(6.5) - measure(6.0)
     check(
-        "medio carácter ilumina menos que uno entero",
-        0 < salto_medio < salto_entero,
-        "medio=%s entero=%s" % (salto_medio, salto_entero),
+        "half a character lights less than a whole one",
+        0 < half_jump < integer_jump,
+        "half=%s whole=%s" % (half_jump, integer_jump),
     )
     check(
-        "el relleno sigue creciendo dentro del mismo carácter",
-        medir(6.25) >= medir(6.0) and medir(6.75) >= medir(6.5),
-        "%s %s" % (medir(6.25), medir(6.75)),
+        "the fill keeps growing inside the same character",
+        measure(6.25) >= measure(6.0) and measure(6.75) >= measure(6.5),
+        "%s %s" % (measure(6.25), measure(6.75)),
     )
 
 
-def check_karaoke_imagen_sigue_los_tiempos():
-    """El karaoke de imagen usa los tiempos por carácter, como el de texto.
+def check_karaoke_image_follows_the_times():
+    """The image karaoke uses per-character timings, like the text one.
 
-    Si el adaptador da tiempos por carácter, el relleno los respeta: con
-    caracteres de 0,2 s cada uno, a los 0,5 s van dos y medio. Antes se
-    repartía la duración de la línea entera, así que todas las palabras
-    se iluminaban al mismo ritmo y la línea perdía el compás.
+    If the adapter provides per-character timings, the fill respects them:
+    with characters of 0.2 s each, at 0.5 s two and a half are done.
+    Previously the duration of the whole line was spread evenly, so every
+    word lit up at the same rate and the line lost its beat.
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
-            imagen = image_module()
-            texto = "hola mundo feliz"
-            line = mod.LyricLine(0.0, 6.0, texto)
-            line.chars = [round(index * 0.2, 3) for index in range(len(texto))]
+            image = image_module()
+            text = "hola mundo feliz"
+            line = mod.LyricLine(0.0, 6.0, text)
+            line.chars = [round(index * 0.2, 3) for index in range(len(text))]
 
-            class Tema:
+            class FakeTheme:
                 background = (10, 10, 10)
                 foreground = (200, 200, 200)
                 past = (120, 120, 120)
 
-            class PincelFalso:
-                # ImageDraw no se usa: basta con lo que consulta el render.
+            class FakeBrush:
+                # ImageDraw is not used: what the render queries is enough.
                 im = types.SimpleNamespace(size=(1500, 900))
 
                 def textlength(self, text, font=None):
@@ -677,59 +677,59 @@ def check_karaoke_imagen_sigue_los_tiempos():
             app.state = "lyrics"
             app.lines = [line]
             app.track = mod.Track()
-            app.theme = Tema()
+            app.theme = FakeTheme()
             app.karaoke = True
             app.demo = False
             app.position = lambda: 0.5
             app.next_timed_start = lambda index: None
-            # Los métodos reales, enganchados al objeto de prueba: así la
-            # prueba comprueba el cálculo de verdad, no una copia.
+            # The real methods, hooked onto the test object: this way the
+            # test checks the real calculation, not a copy of it.
             app.scroll_state = types.MethodType(mod.LyricsCarousel.scroll_state, app)
             app._timed_lines = types.MethodType(mod.LyricsCarousel._timed_lines, app)
             app.karaoke_amount = types.MethodType(
                 mod.LyricsCarousel.karaoke_amount, app
             )
 
-            renderer = imagen.ImageRenderer.__new__(imagen.ImageRenderer)
+            renderer = image.ImageRenderer.__new__(image.ImageRenderer)
             renderer.app = app
             renderer.fonts = {}
-            renderer.font_files = {"prueba": imagen.FALLBACK_FONT}
-            renderer._measure_draw = PincelFalso()
-            vistas = []
-            renderer._draw_karaoke = lambda *args: vistas.append(args)
+            renderer.font_files = {"prueba": image.FALLBACK_FONT}
+            renderer._measure_draw = FakeBrush()
+            views = []
+            renderer._draw_karaoke = lambda *args: views.append(args)
 
             renderer._draw_lyrics(
-                PincelFalso(), 450.0, 20.0, 1.2, "prueba", (0, 200, 0), 0.5, 0, 900
+                FakeBrush(), 450.0, 20.0, 1.2, "prueba", (0, 200, 0), 0.5, 0, 900
             )
 
             check(
-                "el render de imagen dibuja el karaoke de la línea activa",
-                len(vistas) == 1,
-                "llamadas=%s" % (len(vistas),),
+                "the image render draws the karaoke of the active line",
+                len(views) == 1,
+                "calls=%s" % (len(views),),
             )
-            if len(vistas) == 1:
-                amount = vistas[0][6]
+            if len(views) == 1:
+                amount = views[0][6]
                 check(
-                    "el avance tiene decimales (relleno continuo)",
+                    "the advance has decimals (continuous fill)",
                     abs(amount - round(amount)) > 1e-6,
                     "amount=%r" % (amount,),
                 )
                 check(
-                    "el avance respeta los tiempos por carácter",
+                    "the advance respects the per-character timings",
                     abs(amount - 2.5) < 0.02,
                     "amount=%r" % (amount,),
                 )
 
 
-def check_transicion_real():
-    """ghost activa la transición suave; apagado, el cambio es instantáneo.
+def check_real_transition():
+    """ghost enables the smooth transition; when off, the change is instant.
 
-    Con `ghost` la duración es fija (~0.9 s) y se recorta al 80 % del hueco
-    hasta la línea siguiente. Sin `ghost` no hay animación: el carrusel
-    salta de una línea a la siguiente en el instante en que empieza.
+    With `ghost` the duration is fixed (~0.9 s) and is clipped to 80 % of the
+    gap up to the next line. Without `ghost` there is no animation: the
+    carousel jumps from one line to the next the moment it starts.
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             app = object.__new__(mod.LyricsCarousel)
             app.cfg = dict(mod.DEFAULTS)
@@ -740,38 +740,38 @@ def check_transicion_real():
                 mod.LyricLine(8.0, 0.0, "tres"),
             ]
 
-            # Empieza 0.9 s antes: a mitad de la transición, progreso 0.5.
+            # Starts 0.9 s early: halfway through the transition, progress 0.5.
             index, focus, progress = app.scroll_state(3.55)
             check(
-                "la transición suave dura lo previsto",
+                "the smooth transition lasts as expected",
                 index == 0 and focus == 1 and abs(progress - 0.5) < 1e-6,
                 "index=%s focus=%s progress=%.4f" % (index, focus, progress),
             )
             check(
-                "la curva empieza despacio",
+                "the curve starts slowly",
                 0.0 < app.scroll_state(3.325)[2] < 0.20,
                 "progress=%.4f" % app.scroll_state(3.325)[2],
             )
             check(
-                "la curva termina despacio",
+                "the curve ends slowly",
                 app.scroll_state(3.95)[2] > 0.95,
                 "progress=%.4f" % app.scroll_state(3.95)[2],
             )
 
-            # Si la siguiente línea llega antes de 0.9 s, la transición se
-            # recorta al 80 % del hueco para no solaparse con la siguiente.
+            # If the next line arrives before 0.9 s, the transition is
+            # clipped to 80 % of the gap so it does not overlap the next one.
             app.lines = [
                 mod.LyricLine(0.0, 0.0, "uno"),
                 mod.LyricLine(0.5, 0.0, "dos"),
             ]
             index, focus, progress = app.scroll_state(0.2)
             check(
-                "la transición se recorta si la letra va rápida",
+                "the transition is clipped if the lyrics go fast",
                 focus == 1 and 0.0 < progress < 0.20,
                 "focus=%s progress=%.4f" % (focus, progress),
             )
 
-            # Sin transición suave no hay progreso: el cambio es seco.
+            # Without the smooth transition there is no progress: the change is abrupt.
             app.lines = [
                 mod.LyricLine(0.0, 0.0, "uno"),
                 mod.LyricLine(4.0, 0.0, "dos"),
@@ -780,61 +780,64 @@ def check_transicion_real():
             app.cfg["ghost"] = False
             index, focus, progress = app.scroll_state(3.55)
             check(
-                "sin ghost el cambio es instantáneo",
+                "without ghost the change is instant",
                 index == 0 and focus == 0 and progress == 0.0,
                 "index=%s focus=%s progress=%.4f" % (index, focus, progress),
             )
             check(
-                "sin ghost la línea cambia justo en su tiempo",
+                "without ghost the line changes right on time",
                 app.scroll_state(4.0)[0] == 1,
                 "index=%s" % (app.scroll_state(4.0)[0],),
             )
 
 
-# --- escena de prueba del relevo ---------------------------------------
+# --- handover test scene ------------------------------------------------
 
-ESCENA_FONDO = (12, 12, 18)
-ESCENA_BLANCO = (240, 240, 245)
-ESCENA_PASADO = (110, 110, 120)
-ESCENA_ROJO = (220, 60, 60)
-ESCENA_SIZE = 20.0
-ESCENA_SCALE = 1.6
-
-
-class _TemaEscena:
-    background = ESCENA_FONDO
-    foreground = ESCENA_BLANCO
-    past = ESCENA_PASADO
+SCENE_BACKGROUND = (12, 12, 18)
+SCENE_WHITE = (240, 240, 245)
+SCENE_PAST = (110, 110, 120)
+SCENE_RED = (220, 60, 60)
+SCENE_SIZE = 20.0
+SCENE_SCALE = 1.6
 
 
-class _LineaEscena:
+class _SceneTheme:
+    background = SCENE_BACKGROUND
+    foreground = SCENE_WHITE
+    past = SCENE_PAST
+
+
+class _SceneLine:
     def __init__(self, text):
         self.text = text
         self.start = 0.0
         self.duration = 4.0
-        self.chars = []
+        # Valid per-character timings so progressive karaoke applies in
+        # intelligent (brain-on) mode, matching the lyrics plugin behavior for
+        # word-synced lines.
+        self.chars = [round(index * 0.2, 3) for index in range(len(text))] if text else []
 
 
-def render_relevo(
+def render_handover(
     mod,
     progress,
-    textos,
-    estado=None,
+    texts,
+    state_value=None,
     karaoke=False,
     direction="down",
-    cantidad=999.0,
+    amount=999.0,
 ):
-    """Dibuja el carrusel con las líneas dadas y devuelve la imagen.
+    """Draws the carousel with the given lines and returns the image.
 
-    `estado` es la tupla (índice, foco, progreso) que devuelve
-    `scroll_state`; por defecto la línea 1 es la principal y la 2 la que va
-    a tomar el puesto. `cantidad` son los caracteres cantados (con karaoke).
+    `state_value` is the (index, focus, progress) tuple returned by
+    `scroll_state`; by default line 1 is the main one and line 2 the one about
+    to take its place. `amount` is the number of sung characters (with karaoke).
     """
     class App:
         pass
 
     app = App()
-    app.theme = _TemaEscena()
+    app.theme = _SceneTheme()
     app.cfg = {
         "visible_above": 2,
         "visible_below": 2,
@@ -843,458 +846,458 @@ def render_relevo(
         "marker": False,
         "karaoke": karaoke,
     }
-    app.lines = [_LineaEscena(texto) for texto in textos]
+    app.lines = [_SceneLine(text) for text in texts]
     app.karaoke = karaoke
     app.next_timed_start = lambda indice: None
-    app.karaoke_amount = lambda *args: cantidad if karaoke else 0.0
-    app.scroll_state = lambda posicion: estado or (1, 2, progress)
+    app.karaoke_amount = lambda *args: amount if karaoke else 0.0
+    app.scroll_state = lambda scroll_position: state_value or (1, 2, progress)
     renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
     renderer.app = app
     renderer.fonts = {}
     renderer.font_files = {"prueba": mod.FALLBACK_FONT}
-    imagen = mod.Image.new("RGBA", (900, 800), (0, 0, 0, 0))
-    pincel = mod.ImageDraw.Draw(imagen)
-    renderer._measure_draw = pincel
+    image = mod.Image.new("RGBA", (900, 800), (0, 0, 0, 0))
+    brush = mod.ImageDraw.Draw(image)
+    renderer._measure_draw = brush
     renderer._draw_lyrics(
-        pincel,
+        brush,
         400.0,
-        ESCENA_SIZE,
-        ESCENA_SCALE,
+        SCENE_SIZE,
+        SCENE_SCALE,
         "prueba",
-        ESCENA_ROJO,
+        SCENE_RED,
         0.0,
         60.0,
         740.0,
     )
-    return imagen
+    return image
 
 
-def alto_texto(imagen):
-    """La altura del texto dibujado (0 si no hay nada)."""
-    caja = imagen.getbbox()
-    return 0 if caja is None else caja[3] - caja[1]
+def text_height(image):
+    """Height of the drawn text (0 if there is none)."""
+    box = image.getbbox()
+    return 0 if box is None else box[3] - box[1]
 
 
-def color_opaco(imagen):
-    """El RGB del glifo más opaco (el color con el que se pintó)."""
-    caja = imagen.getbbox()
-    if caja is None:
+def opaque_color(image):
+    """RGB of the most opaque glyph (the color it was painted with)."""
+    box = image.getbbox()
+    if box is None:
         return (0, 0, 0)
-    region = imagen.crop(caja)
-    colores = region.getcolors(maxcolors=200000) or []
-    if not colores:
+    region = image.crop(box)
+    colors = region.getcolors(maxcolors=200000) or []
+    if not colors:
         return (0, 0, 0)
-    cuenta, pixel = max(colores, key=lambda par: par[1][3])
+    cuenta, pixel = max(colors, key=lambda par: par[1][3])
     return pixel[:3]
 
 
-def distancia(uno, otro):
-    return sum((uno[i] - otro[i]) ** 2 for i in range(3)) ** 0.5
+def distance(one, other):
+    return sum((one[i] - other[i]) ** 2 for i in range(3)) ** 0.5
 
 
-def brillo(color):
-    """La luminancia perceptiva de un color (para ver si se oscurece)."""
+def glow(color):
+    """Perceived luminance of a color (to see whether it darkens)."""
     return 0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2]
 
 
-def check_transicion_visual_fluida():
-    """La transición ghost se ve: tamaño gradual y colores que cruzan.
+def check_smooth_visual_transition():
+    """The ghost transition is visible: gradual size and crossing colors.
 
-    Se mide el render de verdad (píxeles), no los cálculos intermedios:
-      * la línea que va a ser principal crece de 1.0 a `active_scale` de
-        forma continua (varios tamaños intermedios, no un salto);
-      * esa línea entra en blanco y termina en el color principal;
-      * la línea que deja de ser principal sale del color principal y
-        termina en el color de las líneas ya cantadas.
+    What is measured is the real render (pixels), not the intermediate calculations:
+      * the line that is about to become the main one grows from 1.0 to
+        `active_scale` continuously (several intermediate sizes, not a jump);
+      * that line enters in white and ends in the main color;
+      * the line that stops being the main one leaves in the main color and
+        ends in the color of the already sung lines.
     """
     mod = image_module()
     if mod.Image is None:
-        check("la transición visual se puede medir (Pillow)", False, "sin Pillow")
+        check("the visual transition can be measured (Pillow)", False, "without Pillow")
         return
 
-    FONDO = ESCENA_FONDO
-    BLANCO = ESCENA_BLANCO
-    PASADO = ESCENA_PASADO
-    ROJO = ESCENA_ROJO
-    SIZE = ESCENA_SIZE
-    SCALE = ESCENA_SCALE
+    BACKGROUND = SCENE_BACKGROUND
+    WHITE = SCENE_WHITE
+    PAST = SCENE_PAST
+    RED = SCENE_RED
+    SIZE = SCENE_SIZE
+    SCALE = SCENE_SCALE
 
-    def render(progress, textos, estado=None, karaoke=False, direction="down"):
-        """Dibuja el carrusel con una sola línea con texto y devuelve la imagen."""
-        return render_relevo(
+    def render(progress, texts, state_value=None, karaoke=False, direction="down"):
+        """Draws the carousel with a single line of text and returns the image."""
+        return render_handover(
             mod,
             progress,
-            textos,
-            estado=estado,
+            texts,
+            state_value=state_value,
             karaoke=karaoke,
             direction=direction,
         )
 
-    alto = alto_texto
+    height = text_height
 
-    entrante = ["", "", "ENTRANTE", "", ""]
-    saliente = ["", "SALIENTE", "", ""]
+    entering = ["", "", "ENTRANTE", "", ""]
+    leaving = ["", "SALIENTE", "", ""]
 
-    # -- tamaño: la entrante crece de 1.0 a `scale`, sin saltos.
-    altos = [alto(render(p, entrante)) for p in (0.25, 0.5, 0.75, 1.0)]
+    # -- size: the incoming line grows from 1.0 to `scale`, without jumps.
+    heights = [height(render(p, entering)) for p in (0.25, 0.5, 0.75, 1.0)]
     check(
-        "la línea entrante crece de forma continua",
-        len(set(altos)) == 4 and altos[0] < altos[1] < altos[2] < altos[3],
-        repr(altos),
+        "the incoming line grows continuously",
+        len(set(heights)) == 4 and heights[0] < heights[1] < heights[2] < heights[3],
+        repr(heights),
     )
     check(
-        "la línea entrante alcanza el tamaño principal",
-        altos[-1] > altos[0] * 1.25,
-        "altos=%r" % (altos,),
-    )
-
-    # -- tamaño: la saliente encoge de `scale` a 1.0 (no debe romperse).
-    altos_salida = [alto(render(p, saliente)) for p in (0.0, 0.25, 0.5, 0.75, 1.0)]
-    check(
-        "la línea saliente encoge de forma continua",
-        altos_salida[0] > altos_salida[1] > altos_salida[2] > altos_salida[3]
-        and altos_salida[4] <= altos_salida[3],
-        repr(altos_salida),
+        "the incoming line reaches the main size",
+        heights[-1] > heights[0] * 1.25,
+        "heights=%r" % (heights,),
     )
 
-    # -- color de la entrante: blanco -> color principal.
-    inicio = color_opaco(render(0.15, entrante))
+    # -- size: the outgoing line shrinks from `scale` to 1.0 (it must not break).
+    output_heights = [height(render(p, leaving)) for p in (0.0, 0.25, 0.5, 0.75, 1.0)]
     check(
-        "la línea entrante empieza en blanco",
-        distancia(inicio, BLANCO) < distancia(inicio, ROJO),
-        "color=%r" % (inicio,),
-    )
-    final = color_opaco(render(1.0, entrante))
-    check(
-        "la línea entrante termina en el color principal",
-        distancia(final, ROJO) < 12,
-        "color=%r" % (final,),
+        "the outgoing line shrinks continuously",
+        output_heights[0] > output_heights[1] > output_heights[2] > output_heights[3]
+        and output_heights[4] <= output_heights[3],
+        repr(output_heights),
     )
 
-    # -- color de la saliente: color principal -> color de las cantadas.
-    inicio_salida = color_opaco(render(0.0, saliente))
+    # -- color of the incoming line: white -> main color.
+    start_value = opaque_color(render(0.15, entering))
     check(
-        "la línea saliente empieza en el color principal",
-        distancia(inicio_salida, ROJO) < 12,
-        "color=%r" % (inicio_salida,),
+        "the incoming line starts in white",
+        distance(start_value, WHITE) < distance(start_value, RED),
+        "color=%r" % (start_value,),
     )
-    final_salida = color_opaco(render(1.0, saliente))
+    end_value = opaque_color(render(1.0, entering))
     check(
-        "la línea saliente termina en el color de las ya cantadas",
-        distancia(final_salida, PASADO) < 45
-        and distancia(final_salida, ROJO) > 60,
-        "color=%r" % (final_salida,),
-    )
-
-    # -- la entrante no parpadea: antes y al empezar la transición se ve igual.
-    antes = render(0.0, entrante, estado=(1, 1, 0.0))
-    check(
-        "la línea entrante no parpadea al empezar la transición",
-        alto(antes) > 0 and alto(render(0.0, entrante)) > 0,
-        "antes=%r despues=%r" % (alto(antes), alto(render(0.0, entrante))),
+        "the incoming line ends in the main colour",
+        distance(end_value, RED) < 12,
+        "color=%r" % (end_value,),
     )
 
-    # -- con karaoke (el modo por defecto) la saliente también cambia de color.
-    karaoke_inicio = color_opaco(render(0.0, saliente, karaoke=True))
-    karaoke_final = color_opaco(render(1.0, saliente, karaoke=True))
+    # -- color of the outgoing line: main color -> color of the sung lines.
+    output_start = opaque_color(render(0.0, leaving))
     check(
-        "con karaoke la saliente pasa del color principal al de las cantadas",
-        distancia(karaoke_inicio, ROJO) < distancia(karaoke_inicio, BLANCO)
-        and distancia(karaoke_final, PASADO) < 45
-        and distancia(karaoke_final, ROJO) > 60,
-        "inicio=%r final=%r" % (karaoke_inicio, karaoke_final),
+        "the outgoing line starts in the main colour",
+        distance(output_start, RED) < 12,
+        "color=%r" % (output_start,),
+    )
+    output_end = opaque_color(render(1.0, leaving))
+    check(
+        "the outgoing line ends in the colour of the already sung ones",
+        distance(output_end, PAST) < 45
+        and distance(output_end, RED) > 60,
+        "color=%r" % (output_end,),
     )
 
-    # -- en sentido "up" el relevo es el mismo, pero subiendo.
+    # -- the incoming line does not flicker: before and at the start of the transition it looks the same.
+    before = render(0.0, entering, state_value=(1, 1, 0.0))
+    check(
+        "the incoming line does not flicker when the transition starts",
+        height(before) > 0 and height(render(0.0, entering)) > 0,
+        "before=%r after=%r" % (height(before), height(render(0.0, entering))),
+    )
+
+    # -- with karaoke (the default mode) the outgoing line also changes color.
+    karaoke_start = opaque_color(render(0.0, leaving, karaoke=True))
+    karaoke_end = opaque_color(render(1.0, leaving, karaoke=True))
+    check(
+        "with karaoke the outgoing line goes from the main colour to the sung one",
+        distance(karaoke_start, RED) < distance(karaoke_start, WHITE)
+        and distance(karaoke_end, PAST) < 45
+        and distance(karaoke_end, RED) > 60,
+        "start=%r end=%r" % (karaoke_start, karaoke_end),
+    )
+
+    # -- in the "up" direction the handover is the same, but going up.
     for sentido in ("up",):
-        altos_up = [alto(render(p, entrante, direction=sentido)) for p in (0.25, 0.5, 0.75, 1.0)]
-        color_up = color_opaco(render(1.0, entrante, direction=sentido))
-        color_salida_up = color_opaco(render(1.0, saliente, direction=sentido))
+        heights_up = [height(render(p, entering, direction=sentido)) for p in (0.25, 0.5, 0.75, 1.0)]
+        up_color = opaque_color(render(1.0, entering, direction=sentido))
+        output_up_color = opaque_color(render(1.0, leaving, direction=sentido))
         check(
-            "en sentido up la entrante crece y acaba en el color principal",
-            altos_up[0] < altos_up[1] < altos_up[2] < altos_up[3]
-            and distancia(color_up, ROJO) < 12,
-            "altos=%r color=%r" % (altos_up, color_up),
+            "in up direction the incoming line grows and ends in the main colour",
+            heights_up[0] < heights_up[1] < heights_up[2] < heights_up[3]
+            and distance(up_color, RED) < 12,
+            "heights=%r color=%r" % (heights_up, up_color),
         )
         check(
-            "en sentido up la saliente acaba en el color de las cantadas",
-            distancia(color_salida_up, PASADO) < 45
-            and distancia(color_salida_up, ROJO) > 60,
-            "color=%r" % (color_salida_up,),
+            "in up direction the outgoing line ends in the colour of the sung ones",
+            distance(output_up_color, PAST) < 45
+            and distance(output_up_color, RED) > 60,
+            "color=%r" % (output_up_color,),
         )
 
 
-def check_entrada_karaoke_sin_salto():
-    """Con karaoke la entrante llega ya al tono apagado: el relevo no salta.
+def check_karaoke_entry_without_jump():
+    """With karaoke the incoming line already reaches the dim tone: the handover does not jump.
 
-    Sin karaoke la línea principal se dibuja en un solo color (el acento) y
-    el relevo no tiene salto. Con karaoke se dibuja en dos tonos: lo cantado
-    en el acento y lo que falta en un rojo apagado. La entrante llegaba al
-    acento, así que al volverse principal se oscurecía de golpe.
+    Without karaoke the main line is drawn in a single color (the accent) and the
+    handover has no jump. With karaoke it is drawn in two tones: the sung part in
+    the accent and what is missing in a dim red. The incoming line used to reach
+    the accent, so when it became the main one it darkened all of a sudden.
 
-    Con la oscuridad en la transición, la entrante baja del nivel que tienen
-    los renglones siguientes hasta ese tono apagado, y el relevo queda
-    continuo.
+    With the darkening in the transition, the incoming line drops from the level
+    the following lines have down to that dim tone, and the handover stays
+    continuous.
     """
     mod = image_module()
     if mod.Image is None:
-        check("el relevo con karaoke se puede medir (Pillow)", False, "sin Pillow")
+        check("the karaoke handover can be measured (Pillow)", False, "without Pillow")
         return
 
-    fondo = ESCENA_FONDO
-    rojo = ESCENA_ROJO
-    # El tono apagado de lo que aún no se ha cantado: el mismo 45 % del
-    # acento sobre el fondo que usa la ruta del karaoke.
-    apagado = tuple(
-        int(fondo[i] + (rojo[i] - fondo[i]) * 0.45) for i in range(3)
+    bg_color = SCENE_BACKGROUND
+    red = SCENE_RED
+    # The dim tone of what has not been sung yet: the same 45 % of the
+    # accent over the background that the karaoke path uses.
+    off_color = tuple(
+        int(bg_color[i] + (red[i] - bg_color[i]) * 0.45) for i in range(3)
     )
 
-    entrante = ["", "", "ENTRANTE", "", ""]
-    principal = ["", "CANTO", "", "", ""]
+    entering = ["", "", "ENTRANTE", "", ""]
+    primary_color = ["", "CANTO", "", "", ""]
 
-    # La entrante, al final de la transición, con el tono que tendrá el
-    # renglón principal mientras lo que falta no se ha cantado.
-    final = color_opaco(render_relevo(mod, 1.0, entrante, karaoke=True))
+    # The incoming line, at the end of the transition, with the tone the
+    # main line will have while what is missing has not been sung yet.
+    end_value = opaque_color(render_handover(mod, 1.0, entering, karaoke=True))
     check(
-        "con karaoke la entrante llega al tono apagado de lo pendiente",
-        distancia(final, apagado) < 12,
-        "color=%r esperado=%r" % (final, apagado),
+        "with karaoke the incoming line reaches the dim tone of what is pending",
+        distance(end_value, off_color) < 12,
+        "color=%r expected=%r" % (end_value, off_color),
     )
 
-    # Y es exactamente el mismo tono que tiene el renglón principal: al
-    # cambiar de uno a otro no hay salto de color.
-    tono_principal = color_opaco(
-        render_relevo(
+    # It is exactly the same tone the main line has: switching from one to
+    # the other produces no color jump.
+    primary_tone = opaque_color(
+        render_handover(
             mod,
             0.0,
-            principal,
-            estado=(1, 1, 0.0),
+            primary_color,
+            state_value=(1, 1, 0.0),
             karaoke=True,
-            cantidad=0.0,
+            amount=0.0,
         )
     )
     check(
-        "la entrante y el renglón principal tienen el mismo tono",
-        distancia(final, tono_principal) < 6,
-        "entrante=%r principal=%r" % (final, tono_principal),
+        "the incoming line and the main line have the same tone",
+        distance(end_value, primary_tone) < 6,
+        "incoming=%r main=%r" % (end_value, primary_tone),
     )
 
-    # La oscuridad es gradual: a mitad de camino la entrante ya está más
-    # cerca del tono apagado que sin karaoke.
-    mitad_karaoke = color_opaco(render_relevo(mod, 0.5, entrante, karaoke=True))
-    mitad_sin = color_opaco(render_relevo(mod, 0.5, entrante, karaoke=False))
+    # The darkening is gradual: halfway through, the incoming line is
+    # already closer to the dim tone than it is without karaoke.
+    karaoke_half = opaque_color(render_handover(mod, 0.5, entering, karaoke=True))
+    half_without = opaque_color(render_handover(mod, 0.5, entering, karaoke=False))
     check(
-        "con karaoke la entrante se oscurece poco a poco",
-        distancia(mitad_karaoke, apagado) < distancia(mitad_sin, apagado),
-        "con=%r sin=%r apagado=%r" % (mitad_karaoke, mitad_sin, apagado),
+        "with karaoke the incoming line darkens gradually",
+        distance(karaoke_half, off_color) < distance(half_without, off_color),
+        "with=%r without=%r off=%r" % (karaoke_half, half_without, off_color),
     )
 
-    # Y el oscurecimiento no se nota como un escalón: cada tramo se
-    # oscurece un poco más que el anterior.
-    tramos = [
-        color_opaco(render_relevo(mod, p, entrante, karaoke=True))
+    # And the darkening is not noticeable as a step: each segment is a
+    # little darker than the previous one.
+    segments = [
+        opaque_color(render_handover(mod, p, entering, karaoke=True))
         for p in (0.25, 0.5, 0.75, 1.0)
     ]
-    brillos = [brillo(color) for color in tramos]
+    glows = [glow(color) for color in segments]
     check(
-        "la entrante se oscurece de forma continua",
-        all(brillos[i] > brillos[i + 1] for i in range(len(brillos) - 1)),
-        "brillos=%r" % ([round(b, 1) for b in brillos],),
+        "the incoming line darkens continuously",
+        all(glows[i] > glows[i + 1] for i in range(len(glows) - 1)),
+        "glows=%r" % ([round(b, 1) for b in glows],),
     )
 
-    # Sin karaoke no cambia nada: la entrante sigue terminando en el acento.
-    final_sin = color_opaco(render_relevo(mod, 1.0, entrante, karaoke=False))
+    # Without karaoke nothing changes: the incoming line still ends in the accent.
+    end_without = opaque_color(render_handover(mod, 1.0, entering, karaoke=False))
     check(
-        "sin karaoke la entrante sigue terminando en el color principal",
-        distancia(final_sin, rojo) < 12,
-        "color=%r" % (final_sin,),
+        "without karaoke the incoming line still ends in the main colour",
+        distance(end_without, red) < 12,
+        "color=%r" % (end_without,),
     )
 
 
-def check_ritmo_de_frames():
-    """El bucle late a 60 fps de verdad: el plazo va desde el inicio del frame.
+def check_frame_rhythm():
+    """The loop really beats at 60 fps: the deadline runs from the frame start.
 
-    Dormir el intervalo entero DESPUÉS del trabajo hacía que el ciclo real
-    fuera `trabajo + intervalo`: 36 fps en vez de 60, y con eso el
-    carrusel se veía a tirones.
+    Sleeping the whole interval AFTER the work made the real cycle be
+    `work + interval`: 36 fps instead of 60, and with that the carousel
+    looked stuttery.
     """
     mod = script_module()
-    resto = mod.resto_para_siguiente_frame
-    intervalo = 1.0 / 60.0
+    remainder = mod.remainder_for_next_frame
+    interval = 1.0 / 60.0
 
     check(
-        "el plazo se cuenta desde el inicio del frame",
-        abs(resto(0.0, 0.008, intervalo) - (intervalo - 0.008)) < 1e-9,
-        repr(resto(0.0, 0.008, intervalo)),
+        "the deadline is counted from the frame start",
+        abs(remainder(0.0, 0.008, interval) - (interval - 0.008)) < 1e-9,
+        repr(remainder(0.0, 0.008, interval)),
     )
     check(
-        "un frame a tiempo duerme lo que falta",
-        abs(resto(0.0, 0.0, intervalo) - intervalo) < 1e-9,
-        repr(resto(0.0, 0.0, intervalo)),
+        "an on-time frame sleeps what is left",
+        abs(remainder(0.0, 0.0, interval) - interval) < 1e-9,
+        repr(remainder(0.0, 0.0, interval)),
     )
     check(
-        "un frame tardío no duerme",
-        resto(0.0, 0.05, intervalo) == 0.0,
-        repr(resto(0.0, 0.05, intervalo)),
+        "a late frame does not sleep",
+        remainder(0.0, 0.05, interval) == 0.0,
+        repr(remainder(0.0, 0.05, interval)),
     )
     check(
-        "el resto nunca es negativo",
-        resto(10.0, 20.0, intervalo) == 0.0,
-        repr(resto(10.0, 20.0, intervalo)),
+        "the remainder is never negative",
+        remainder(10.0, 20.0, interval) == 0.0,
+        repr(remainder(10.0, 20.0, interval)),
     )
     check(
-        "los fps reales se miden entre frames",
-        abs(mod.fps_real(180, 3.0) - 60.0) < 1e-9
-        and mod.fps_real(0, 1.0) == 0.0
-        and mod.fps_real(60, 0.0) == 0.0,
-        repr((mod.fps_real(180, 3.0), mod.fps_real(0, 1.0))),
+        "the real fps are measured between frames",
+        abs(mod.real_fps(180, 3.0) - 60.0) < 1e-9
+        and mod.real_fps(0, 1.0) == 0.0
+        and mod.real_fps(60, 0.0) == 0.0,
+        repr((mod.real_fps(180, 3.0), mod.real_fps(0, 1.0))),
     )
 
 
-def check_karaoke_sin_resplandor():
-    """El karaoke es el brillo de la letra, sin sombra difuminada alrededor.
+def check_karaoke_without_glow():
+    """The karaoke is the glow of the letters, with no blurred shadow around.
 
-    Antes la linea cantada se dibujaba dos veces: la nitida y una copia
-    difuminada (el halo). Ese halo era una sombra que ademas costaba 3,2 ms
-    por cuadro (el GaussianBlur) y hacia que el carrusel bajara de 60 fps.
+    Before, the sung line was drawn twice: the crisp one and a blurred copy
+    (the halo). That halo was a shadow that also cost 3.2 ms per frame (the
+    GaussianBlur) and made the carousel drop below 60 fps.
     """
     mod = image_module()
     if mod.Image is None:
-        check("el karaoke sin resplandor se puede medir (Pillow)", False, "sin Pillow")
+        check("the karaoke without glow can be measured (Pillow)", False, "without Pillow")
         return
 
-    texto = "cantando"
-    imagen = mod.Image.new("RGBA", (600, 90), (0, 0, 0, 0))
-    pincel = mod.ImageDraw.Draw(imagen)
+    text = "cantando"
+    image = mod.Image.new("RGBA", (600, 90), (0, 0, 0, 0))
+    brush = mod.ImageDraw.Draw(image)
     renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
     renderer.fonts = {}
     renderer.font_files = {"prueba": mod.FALLBACK_FONT}
     renderer._draw_karaoke(
-        pincel, texto, 45, 20, (0, 200, 0), (0, 90, 0), float(len(texto)), "prueba"
+        brush, text, 45, 20, (0, 200, 0), (0, 90, 0), float(len(text)), "prueba"
     )
 
-    # La letra se dibuja centrada: la caja va en la misma x.
-    fuente = renderer.font("prueba", 20)
-    x = (imagen.size[0] - pincel.textlength(texto, font=fuente)) / 2
-    caja = pincel.textbbox((x, 45), texto, font=fuente, anchor="lm")
-    # Fuera de la caja del texto (con 2 px de tolerancia por el antialiasing
-    # del propio glifo) no puede quedar ni un pixel: ahi vivia el halo.
-    fuera = 0
-    for indice, px in enumerate(pixeles(imagen)):
+    # The text is drawn centered: the box starts at the same x.
+    font = renderer.font("prueba", 20)
+    x = (image.size[0] - brush.textlength(text, font=font)) / 2
+    box = brush.textbbox((x, 45), text, font=font, anchor="lm")
+    # Outside the text box (with 2 px of tolerance for the antialiasing
+    # of the glyph itself) not a single pixel may remain: that is where the halo used to live.
+    outside = 0
+    for indice, px in enumerate(pixels(image)):
         if px[3] == 0:
             continue
-        px_x = indice % imagen.size[0]
-        px_y = indice // imagen.size[0]
+        px_x = indice % image.size[0]
+        px_y = indice // image.size[0]
         if (
-            px_x < caja[0] - 2
-            or px_x > caja[2] + 2
-            or px_y < caja[1] - 2
-            or px_y > caja[3] + 2
+            px_x < box[0] - 2
+            or px_x > box[2] + 2
+            or px_y < box[1] - 2
+            or px_y > box[3] + 2
         ):
-            fuera += 1
+            outside += 1
     check(
-        "el karaoke no deja sombra alrededor de la letra",
-        fuera == 0,
-        "pixeles fuera=%d" % fuera,
+        "the karaoke leaves no shadow around the lyrics",
+        outside == 0,
+        "pixels outside=%d" % outside,
     )
     check(
-        "la letra cantada sigue pintada",
-        sum(1 for px in pixeles(imagen) if px[1] == 200 and px[3] == 255) > 0,
+        "the sung lyrics stay painted",
+        sum(1 for px in pixels(image) if px[1] == 200 and px[3] == 255) > 0,
     )
 
 
-def check_tamano_fraccionario():
-    """El tamaño de la letra es continuo: no escalona en píxeles enteros.
+def check_fractional_size():
+    """The size of the letters is continuous: it does not step in whole pixels.
 
-    Con la caché por entero, el renglón que crece daba un salto de 1 px cada
-    pocos cuadros y se notaba como un escaloncito.
+    With the integer cache, the growing line jumped by 1 px every few frames
+    and that was noticeable as a small staircase.
     """
     mod = image_module()
     if mod.Image is None:
-        check("el tamaño fraccionario se puede medir (Pillow)", False, "sin Pillow")
+        check("the fractional size can be measured (Pillow)", False, "without Pillow")
         return
 
     renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
     renderer.fonts = {}
     renderer.font_files = {"prueba": mod.FALLBACK_FONT}
-    imagen = mod.Image.new("RGBA", (600, 90), (0, 0, 0, 0))
-    pincel = mod.ImageDraw.Draw(imagen)
+    image = mod.Image.new("RGBA", (600, 90), (0, 0, 0, 0))
+    brush = mod.ImageDraw.Draw(image)
 
-    def ancho(tam):
-        return pincel.textlength("Hola", font=renderer.font("prueba", tam))
+    def glyph_width(tam):
+        return brush.textlength("Hola", font=renderer.font("prueba", tam))
 
-    # 25,1 y 25,4 con la caché por entero caían en la misma fuente (25):
-    # la letra no podia crecer de forma continua.
-    a, b = ancho(25.1), ancho(25.4)
+    # 25.1 and 25.4 with the integer cache fell into the same font (25):
+    # the letters could not grow continuously.
+    a, b = glyph_width(25.1), glyph_width(25.4)
     check(
-        "el tamaño de la letra es continuo, no escalonado",
+        "the size of the letters is continuous, not stepped",
         abs(a - b) > 0.5,
-        "ancho=%.2f/%.2f" % (a, b),
+        "width=%.2f/%.2f" % (a, b),
     )
     check(
-        "la caché distingue tamaños distintos",
+        "the cache distinguishes different sizes",
         renderer.font("prueba", 25.1) is not renderer.font("prueba", 25.4),
     )
     check(
-        "la caché reutiliza el mismo tamaño",
+        "the cache reuses the same size",
         renderer.font("prueba", 25.1) is renderer.font("prueba", 25.12),
     )
 
 
-def check_curva_suave():
-    """La curva del relevo no tiene acceleration en los extremos.
+def check_smooth_curve():
+    """The handover curve has no acceleration at the extremes.
 
-    Con smoothstep la velocidad llegaba a cero pero la acceleration saltaba
-    al arrancar y al frenar: eso se notaba como un micro-tiron en el
-    carrusel. La smootherstop (6t5-15t4+10t3) deja la acceleration a cero
-    tambien en los extremos.
+    With smoothstep the velocity reached zero but the acceleration jumped
+    when starting and when braking: that showed up as a micro-stutter in the
+    carousel. The smootherstep (6t5-15t4+10t3) leaves the acceleration at
+    zero at the extremes as well.
     """
     mod = script_module()
-    curva = mod.ease_in_out
+    curve = mod.ease_in_out
     h = 1e-3
 
-    def segunda(t):
-        return (curva(t + h) - 2 * curva(t) + curva(t - h)) / (h * h)
+    def second(t):
+        return (curve(t + h) - 2 * curve(t) + curve(t - h)) / (h * h)
 
     check(
-        "la curva va de 0 a 1",
-        curva(0.0) == 0.0 and curva(1.0) == 1.0,
-        "inicio=%r fin=%r" % (curva(0.0), curva(1.0)),
+        "the curve goes from 0 to 1",
+        curve(0.0) == 0.0 and curve(1.0) == 1.0,
+        "start=%r end=%r" % (curve(0.0), curve(1.0)),
     )
     check(
-        "la curva no tiene aceleracion en los extremos",
-        abs(segunda(0.0)) < 0.05 and abs(segunda(1.0)) < 0.05,
-        "inicio=%.3f fin=%.3f" % (segunda(0.0), segunda(1.0)),
+        "the curve has no acceleration at the extremes",
+        abs(second(0.0)) < 0.05 and abs(second(1.0)) < 0.05,
+        "start=%.3f end=%.3f" % (second(0.0), second(1.0)),
     )
     check(
-        "la curva es monotona",
-        all(curva(i / 20.0) <= curva((i + 1) / 20.0) for i in range(20)),
+        "the curve is monotonic",
+        all(curve(i / 20.0) <= curve((i + 1) / 20.0) for i in range(20)),
     )
     check(
-        "la curva se queda dentro de rango",
-        all(0.0 <= curva(v / 40.0) <= 1.0 for v in range(-10, 51)),
+        "the curve stays within range",
+        all(0.0 <= curve(v / 40.0) <= 1.0 for v in range(-10, 51)),
     )
     check(
-        "la curva mantiene la mitad en el punto medio",
-        abs(curva(0.5) - 0.5) < 1e-9,
-        "media=%r" % (curva(0.5),),
+        "the curve keeps half at the midpoint",
+        abs(curve(0.5) - 0.5) < 1e-9,
+        "midpoint=%r" % (curve(0.5),),
     )
 
 
-def check_primera_ventana_fps():
-    """La primera ventana de estadísticas no dice 0 fps.
+def check_first_window_fps():
+    """The first statistics window does not report 0 fps.
 
-    El log mide los fps reales entre frames: la ventana empieza con el
-    primer cuadro dibujado. Si el inicio de la ventana se toma en el
-    momento de logar, la primera línea sale siempre con 0 fps y parece
-    que el plugin va a trompicones cuando va a 60.
+    The log measures the real fps between frames: the window starts with the
+    first frame drawn. If the start of the window is taken at the moment of
+    logging, the first line always comes out with 0 fps and it looks like
+    the plugin stutters when it actually runs at 60.
     """
     mod = script_module()
     app = mod.LyricsCarousel.__new__(mod.LyricsCarousel)
-    lineas = []
-    app.warn = lambda mensaje: lineas.append(mensaje)
-    # Un dibujo mínimo pero medible: si el reloj no avanzara, el contador
-    # de cuadros no se movería y el test fallaría por el motivo equivocado.
+    lyric_lines = []
+    app.warn = lambda message: lyric_lines.append(message)
+    # A minimal but measurable draw: if the clock did not advance, the frame
+    # counter would not move and the test would fail for the wrong reason.
     app.draw_image = lambda force=False: time.sleep(0.0002)
     app._draw_accum = 0
     app._draw_frames = 0
@@ -1302,287 +1305,287 @@ def check_primera_ventana_fps():
     for _ in range(180):
         app.draw()
 
-    numeros = []
-    if lineas:
-        numeros = re.findall(r"(\d+(?:\.\d+)?) fps reales", lineas[0])
+    numbers = []
+    if lyric_lines:
+        numbers = re.findall(r"(\d+(?:\.\d+)?) real fps", lyric_lines[0])
     check(
-        "la primera ventana de fps no sale en cero",
-        bool(numeros) and float(numeros[0]) > 0.0,
-        "linea=%r" % (lineas[:1],),
+        "the first fps window is not zero",
+        bool(numbers) and float(numbers[0]) > 0.0,
+        "line=%r" % (lyric_lines[:1],),
     )
 
 
-def check_karaoke_borde_suave():
-    """El borde del relleno se desvanece: no hay un tajo con lo que falta.
+def check_karaoke_smooth_edge():
+    """The edge of the fill fades out: there is no cut with what is missing.
 
-    La rampa de alfa del final del relleno tiene que ir en el sentido
-    correcto: el color cantado se apaga hacia el límite y se funde con lo
-    que todavía no se ha cantado. Con la rampa al revés el rojo terminaba en
-    seco (una pared vertical de luz) y el último carácter se quedaba a
-    medias.
+    The alpha ramp at the end of the fill has to go in the right direction:
+    the sung color fades towards the limit and blends with what has not been
+    sung yet. With the ramp reversed the red ended abruptly (a vertical wall
+    of light) and the last character was left half
+    lit.
     """
     mod = image_module()
     if mod.Image is None:
-        check("el borde del relleno se puede medir (Pillow)", False, "sin Pillow")
+        check("the edge of the fill can be measured (Pillow)", False, "without Pillow")
         return
 
-    FONDO = (31, 31, 31)
-    CANTADO = (229, 57, 53)
-    PENDIENTE = (120, 42, 40)
-    # El corte cae dentro de la cuarta M: así la rampa se aplica sobre la
-    # letra y no en un hueco entre palabras.
-    texto = "MMMMMMMM"
+    BACKGROUND = (31, 31, 31)
+    SUNG = (229, 57, 53)
+    PENDING = (120, 42, 40)
+    # The cut falls inside the fourth M: that way the ramp is applied over
+    # the letter and not in a gap between words.
+    text = "MMMMMMMM"
 
     renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
     renderer.fonts = {}
     renderer.font_files = {"prueba": mod.FALLBACK_FONT}
-    imagen = mod.Image.new("RGBA", (900, 120), FONDO + (255,))
-    pincel = mod.ImageDraw.Draw(imagen)
+    image = mod.Image.new("RGBA", (900, 120), BACKGROUND + (255,))
+    brush = mod.ImageDraw.Draw(image)
     renderer._draw_karaoke(
-        pincel, texto, 60, 40.0, CANTADO, PENDIENTE, 3.5, "prueba"
+        brush, text, 60, 40.0, SUNG, PENDING, 3.5, "prueba"
     )
 
-    # Por columna, cuánta más lejos del tono pendiente, más cantada está.
-    saturacion = {}
-    for indice, px in enumerate(pixeles(imagen)):
+    # Per column, the further from the pending tone, the more sung it is.
+    saturation = {}
+    for indice, px in enumerate(pixels(image)):
         if px[3] != 255:
             continue
         color = px[:3]
-        if color == FONDO:
+        if color == BACKGROUND:
             continue
-        valor = distancia(color, PENDIENTE) - distancia(color, CANTADO)
-        x = indice % imagen.size[0]
-        saturacion[x] = max(saturacion.get(x, 0), valor)
+        setting_value = distance(color, PENDING) - distance(color, SUNG)
+        x = indice % image.size[0]
+        saturation[x] = max(saturation.get(x, 0), setting_value)
 
-    cantadas = {x: v for x, v in saturacion.items() if v > 0}
+    sung_lines = {x: v for x, v in saturation.items() if v > 0}
     check(
-        "el relleno tiene zona cantada",
-        bool(cantadas),
-        "columnas=%d" % (len(cantadas),),
+        "the fill has a sung zone",
+        bool(sung_lines),
+        "columns=%d" % (len(sung_lines),),
     )
-    if cantadas:
-        primero = min(cantadas)
-        ultimo = max(cantadas)
+    if sung_lines:
+        first = min(sung_lines)
+        last = max(sung_lines)
         check(
-            "el borde del relleno se desvanece hacia el límite",
-            cantadas[ultimo] < cantadas[primero],
-            "primero=%r ultimo=%r" % (cantadas[primero], cantadas[ultimo]),
+            "the edge of the fill fades towards the limit",
+            sung_lines[last] < sung_lines[first],
+            "first=%r last=%r" % (sung_lines[first], sung_lines[last]),
         )
 
 
-def check_relevo_sin_salto_de_alfa():
-    """Al cambiar de línea principal no se pierde opacidad de golpe.
+def check_handover_without_alpha_jump():
+    """When the main line changes, opacity is not lost all of a sudden.
 
-    La ruta del karaoke pintaba el texto siempre opaco, mientras que la
-    ruta normal lo pinta con el alfa de la distancia al centro. En el
-    instante del relevo la línea saliente pasaba de opaca a semitransparente
-    de un cuadro a otro: un parpadeo en el sitio donde el cambio tiene que
-    ser invisible.
+    The karaoke path always painted the text opaque, while the normal path
+    paints it with the alpha of the distance to the center. At the moment of
+    the handover the outgoing line went from opaque to semi-transparent from
+    one frame to the next: a flicker exactly where the change has to be
+    invisible.
     """
     mod = image_module()
     if mod.Image is None:
-        check("el alfa del relevo se puede medir (Pillow)", False, "sin Pillow")
+        check("the handover alpha can be measured (Pillow)", False, "without Pillow")
         return
 
-    saliente = ["", "SALIENTE", "", "", ""]
-    # El último cuadro de la transición y el primero tras el cambio: la
-    # línea saliente está en el mismo sitio en los dos, solo cambia la ruta
-    # con la que se dibuja.
-    antes = render_relevo(
-        mod, 1.0, saliente, estado=(1, 2, 1.0), karaoke=True, cantidad=0.0
+    leaving = ["", "SALIENTE", "", "", ""]
+    # The last frame of the transition and the first one after the change:
+    # the outgoing line is in the same place in both, only the path it is
+    # drawn with changes.
+    before = render_handover(
+        mod, 1.0, leaving, state_value=(1, 2, 1.0), karaoke=True, amount=0.0
     )
-    despues = render_relevo(
-        mod, 0.0, saliente, estado=(2, 2, 0.0), karaoke=True, cantidad=0.0
+    after = render_handover(
+        mod, 0.0, leaving, state_value=(2, 2, 0.0), karaoke=True, amount=0.0
     )
 
-    def alfa_max(imagen):
-        return max((px[3] for px in pixeles(imagen)), default=0)
+    def max_alpha(image):
+        return max((px[3] for px in pixels(image)), default=0)
 
-    alfa_antes = alfa_max(antes)
-    alfa_despues = alfa_max(despues)
+    alpha_before = max_alpha(before)
+    alpha_after = max_alpha(after)
     check(
-        "la línea saliente no pierde opacidad en el relevo",
-        abs(alfa_antes - alfa_despues) <= 1,
-        "antes=%d despues=%d" % (alfa_antes, alfa_despues),
+        "the outgoing line does not lose opacity in the handover",
+        abs(alpha_before - alpha_after) <= 1,
+        "before=%d after=%d" % (alpha_before, alpha_after),
     )
 
 
-def check_relleno_nitro():
-    """La letra cantada es nítida: brillo de la letra, sin halo difuminado.
+def check_sung_text_is_crisp():
+    """The sung text is crisp: the glow of the letters, with no blurred halo.
 
-    Antes la línea cantada se dibujaba dos veces: la nítida y una copia
-    difuminada (el halo). Ese halo era una sombra además de caro (dos
-    GaussianBlur por cuadro, 3,2 ms) y hacía que el carrusel bajara de
-    60 fps. Lo que se conserva es el relleno con su borde suavizado.
+    Before, the sung line was drawn twice: the crisp one and a blurred copy
+    (the halo). That halo was a shadow and also expensive (two GaussianBlur
+    per frame, 3.2 ms) and made the carousel drop below 60 fps. What is kept
+    is the fill with its softened edge.
     """
     mod = image_module()
     if mod.Image is None:
-        check("el relleno se puede medir (Pillow)", False, "sin Pillow")
+        check("the fill can be measured (Pillow)", False, "without Pillow")
         return
 
-    texto = "cantando"
-    cantado = (0, 200, 0)
-    pendiente = (0, 90, 0)
-    imagen = mod.Image.new("RGBA", (400, 80), (0, 0, 0, 0))
-    pincel = mod.ImageDraw.Draw(imagen)
+    text = "cantando"
+    sung = (0, 200, 0)
+    pending = (0, 90, 0)
+    image = mod.Image.new("RGBA", (400, 80), (0, 0, 0, 0))
+    brush = mod.ImageDraw.Draw(image)
     renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
     renderer.fonts = {}
     renderer.font_files = {"prueba": mod.FALLBACK_FONT}
-    renderer._draw_karaoke(pincel, texto, 40, 20, cantado, pendiente, 4.0, "prueba")
+    renderer._draw_karaoke(brush, text, 40, 20, sung, pending, 4.0, "prueba")
 
-    # Lo que queda del resplandor lejos de la letra. El halo difuminado
-    # salia de la caja del texto; ahora no queda nada fuera de ella.
-    fuente = renderer.font("prueba", 20)
-    x = (imagen.size[0] - pincel.textlength(texto, font=fuente)) / 2
-    caja = pincel.textbbox((x, 40), texto, font=fuente, anchor="lm")
-    fuera_caja = 0
-    for indice, px in enumerate(pixeles(imagen)):
+    # What is left of the glow away from the text. The blurred halo used to
+    # spill outside the text box; now nothing remains outside it.
+    font = renderer.font("prueba", 20)
+    x = (image.size[0] - brush.textlength(text, font=font)) / 2
+    box = brush.textbbox((x, 40), text, font=font, anchor="lm")
+    outside_box = 0
+    for indice, px in enumerate(pixels(image)):
         if px[3] == 0:
             continue
-        px_x = indice % imagen.size[0]
-        px_y = indice // imagen.size[0]
+        px_x = indice % image.size[0]
+        px_y = indice // image.size[0]
         if (
-            px_x < caja[0] - 2
-            or px_x > caja[2] + 2
-            or px_y < caja[1] - 2
-            or px_y > caja[3] + 2
+            px_x < box[0] - 2
+            or px_x > box[2] + 2
+            or px_y < box[1] - 2
+            or px_y > box[3] + 2
         ):
-            fuera_caja += 1
+            outside_box += 1
     check(
-        "no queda halo difuminado lejos de la letra",
-        fuera_caja == 0,
-        "pixeles=%s" % (fuera_caja,),
+        "no blurred halo remains away from the lyrics",
+        outside_box == 0,
+        "pixels=%s" % (outside_box,),
     )
 
-    # Y mas alla del borde de lo cantado no hay luz de otro color: lo que
-    # queda es el borde del relleno (tonos entre cantado y pendiente), no
-    # una sombra derramada al lado.
-    ultimo = 0
-    for indice, px in enumerate(pixeles(imagen)):
-        if px[3] > 0 and px[:3] == cantado:
-            ultimo = max(ultimo, indice % imagen.size[0])
-    mas_alla = 0
-    for indice, px in enumerate(pixeles(imagen)):
-        x = indice % imagen.size[0]
-        if x <= ultimo or px[3] == 0:
+    # And beyond the edge of the sung part there is no light of another
+    # color: what remains is the edge of the fill (tones between sung and
+    # pending), not a shadow spilled to the side.
+    last = 0
+    for indice, px in enumerate(pixels(image)):
+        if px[3] > 0 and px[:3] == sung:
+            last = max(last, indice % image.size[0])
+    beyond = 0
+    for indice, px in enumerate(pixels(image)):
+        x = indice % image.size[0]
+        if x <= last or px[3] == 0:
             continue
-        rojo, verde, azul = px[:3]
+        red, green, blue = px[:3]
         if not (
-            pendiente[0] <= rojo <= cantado[0]
-            and pendiente[1] <= verde <= cantado[1]
-            and pendiente[2] <= azul <= cantado[2]
+            pending[0] <= red <= sung[0]
+            and pending[1] <= green <= sung[1]
+            and pending[2] <= blue <= sung[2]
         ):
-            mas_alla += 1
+            beyond += 1
     check(
-        "no hay luz derramada mas alla de lo cantado",
-        mas_alla == 0,
-        "pixeles=%s" % (mas_alla,),
+        "no light spills beyond what is sung",
+        beyond == 0,
+        "pixels=%s" % (beyond,),
     )
 
-    # El borde del relleno se desvanece: hay varios tonos intermedios entre
-    # lo cantado y lo que falta, no un salto de un color a otro.
-    intermedios = set()
-    for px in pixeles(imagen):
+    # The edge of the fill fades out: there are several intermediate tones
+    # between the sung and the missing, not a jump from one color to another.
+    mid_tones = set()
+    for px in pixels(image):
         if px[3] == 0:
             continue
-        rojo, verde, azul = px[:3]
-        if rojo == cantado[0] and verde == cantado[1] and azul == cantado[2]:
+        red, green, blue = px[:3]
+        if red == sung[0] and green == sung[1] and blue == sung[2]:
             continue
-        if rojo == pendiente[0] and verde == pendiente[1] and azul == pendiente[2]:
+        if red == pending[0] and green == pending[1] and blue == pending[2]:
             continue
-        intermedios.add((rojo, verde, azul))
+        mid_tones.add((red, green, blue))
     check(
-        "el borde del relleno se suaviza",
-        len(intermedios) >= 3,
-        "tonos=%s" % (len(intermedios),),
+        "the edge of the fill is smoothed",
+        len(mid_tones) >= 3,
+        "tones=%s" % (len(mid_tones),),
     )
 
-    # Los tonos intermedios son mezclas de lo cantado y lo que falta: si
-    # alguno se sale de ese rango, el resplandor esta sucio (el negro
-    # transparente de fuera se cuela en el color al difuminarlo).
-    fuera = [
+    # The intermediate tones are mixes of the sung and the missing: if any
+    # of them falls outside that range, the glow is dirty (the transparent
+    # black from outside seeps into the color when it is blurred).
+    outside = [
         color
-        for color in intermedios
+        for color in mid_tones
         if not (
-            pendiente[0] <= color[0] <= cantado[0]
-            and pendiente[1] <= color[1] <= cantado[1]
-            and pendiente[2] <= color[2] <= cantado[2]
+            pending[0] <= color[0] <= sung[0]
+            and pending[1] <= color[1] <= sung[1]
+            and pending[2] <= color[2] <= sung[2]
         )
     ]
     check(
-        "el relleno no ensucia los colores de la letra",
-        not fuera,
-        "colores=%s" % (sorted(fuera)[:5],),
+        "the fill does not dirty the colours of the lyrics",
+        not outside,
+        "colours=%s" % (sorted(outside)[:5],),
     )
 
 
 
 
-def check_recarga_por_senal():
-    """SIGUSR1 recarga la letra en la ventana abierta tras vaciar la caché."""
+def check_reload_by_signal():
+    """SIGUSR1 reloads the lyrics in the open window after clearing the cache."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             app = object.__new__(mod.LyricsCarousel)
             app.cfg = dict(mod.DEFAULTS)
             app.demo = False
             app.track = mod.Track("Tema", "Artista")
             app.reload_requested = False
-            llamadas = []
-            app.reload_lyrics = lambda force=False: llamadas.append(force)
+            calls = []
+            app.reload_lyrics = lambda force=False: calls.append(force)
 
             app._on_reload_signal(signal.SIGUSR1, None)
             check(
-                "la señal deja pedida la recarga",
+                "the signal leaves the reload pending",
                 app.reload_requested is True,
                 repr(app.reload_requested),
             )
             check(
-                "la recarga pedida se atiende una sola vez",
+                "the requested reload is handled only once",
                 app._consume_reload() is True
-                and llamadas == [True]
+                and calls == [True]
                 and app.reload_requested is False,
-                "llamadas=%s flag=%s" % (llamadas, app.reload_requested),
+                "calls=%s flag=%s" % (calls, app.reload_requested),
             )
             check(
-                "sin señal no se recarga nada",
-                app._consume_reload() is False and llamadas == [True],
-                "llamadas=%s" % (llamadas,),
+                "without a signal nothing is reloaded",
+                app._consume_reload() is False and calls == [True],
+                "calls=%s" % (calls,),
             )
 
-            # El PID de la ventana: el panel señaliza ese proceso y no busca
-            # por línea de comandos (SIGUSR1 mata por defecto).
+            # The PID of the window: the panel signals that process and does
+            # not search by command line (SIGUSR1 kills by default).
             app.reload_requested = False
             app.log = lambda message: None
             app._announce_pid()
-            ruta = mod.pid_path()
+            file_path = mod.pid_path()
             try:
-                with open(ruta, encoding="utf-8") as handle:
-                    escrito = handle.read().strip()
+                with open(file_path, encoding="utf-8") as handle:
+                    written = handle.read().strip()
             except OSError:
-                escrito = ""
+                written = ""
             check(
-                "la ventana deja escrito su PID",
-                escrito == str(os.getpid()),
-                "escrito=%r" % (escrito,),
+                "the window writes its PID",
+                written == str(os.getpid()),
+                "written=%r" % (written,),
             )
             app._forget_pid()
             check(
-                "al cerrarse la ventana borra su PID",
-                not os.path.exists(ruta),
-                ruta,
+                "when the window closes it removes its PID",
+                not os.path.exists(file_path),
+                file_path,
             )
 
 
-def check_tamano_terminal_real():
-    """update_size() respeta las celdas reales de la terminal.
+def check_real_terminal_size():
+    """update_size() respects the real cells of the terminal.
 
-    La ventana puede tener menos de 30x12 celdas (por ejemplo con una
-    fuente grande). Inventar ese minimo hace que cada fila se desborde y
-    la letra se parta en trozos.
+    The window may have fewer than 30x12 cells (for example with a large
+    font). Making up that minimum makes every row overflow and the text
+    break into pieces.
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             app = object.__new__(mod.LyricsCarousel)
             app.width = 0
@@ -1595,73 +1598,73 @@ def check_tamano_terminal_real():
                 app.update_size()
             finally:
                 mod.shutil.get_terminal_size = original
-            check("el ancho usa las celdas reales", app.width == 23, str(app.width))
-            check("el alto usa las celdas reales", app.height == 9, str(app.height))
+            check("the width uses the real cells", app.width == 23, str(app.width))
+            check("the height uses the real cells", app.height == 9, str(app.height))
 
 
-def check_rutas_estado():
-    """El directorio de estado respeta NOCTALIA_STATE_HOME y XDG_STATE_HOME."""
+def check_state_paths():
+    """The state directory respects NOCTALIA_STATE_HOME and XDG_STATE_HOME."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             helper = getattr(mod, "state_dir", None)
             if not callable(helper):
                 check(
-                    "el directorio de estado respeta XDG_STATE_HOME",
+                    "the state directory respects XDG_STATE_HOME",
                     False,
-                    "no hay helper state_dir",
+                    "no state_dir helper",
                 )
                 check(
-                    "el directorio de estado respeta NOCTALIA_STATE_HOME",
+                    "the state directory respects NOCTALIA_STATE_HOME",
                     False,
-                    "no hay helper state_dir",
+                    "no state_dir helper",
                 )
                 return
-            anterior = dict(os.environ)
+            previous = dict(os.environ)
             try:
-                # LYRICS_CAROUSEL_STATE manda sobre todo lo demas: sin
-                # quitarla, estas comprobaciones mirarian el estado de la
-                # caja de arena y no el que piden.
+                # LYRICS_CAROUSEL_STATE takes precedence over everything else:
+                # without removing it, these checks would look at the state of
+                # the sandbox instead of the one they ask for.
                 os.environ.pop("LYRICS_CAROUSEL_STATE", None)
                 os.environ.pop("NOCTALIA_STATE_HOME", None)
                 os.environ["XDG_STATE_HOME"] = "/tmp/xdg-state-prueba"
                 check(
-                    "el directorio de estado respeta XDG_STATE_HOME",
+                    "the state directory respects XDG_STATE_HOME",
                     helper() == "/tmp/xdg-state-prueba/noctalia",
                     helper(),
                 )
                 os.environ["NOCTALIA_STATE_HOME"] = "/tmp/noctalia-state-prueba"
                 check(
-                    "el directorio de estado respeta NOCTALIA_STATE_HOME",
+                    "the state directory respects NOCTALIA_STATE_HOME",
                     helper() == "/tmp/noctalia-state-prueba/noctalia",
                     helper(),
                 )
                 os.environ.pop("NOCTALIA_STATE_HOME", None)
                 os.environ.pop("XDG_STATE_HOME", None)
-                esperado = os.path.expanduser("~/.local/state/noctalia")
+                expected = os.path.expanduser("~/.local/state/noctalia")
                 check(
-                    "el directorio de estado usa el de Noctalia por defecto",
-                    helper() == esperado,
+                    "the state directory uses the Noctalia one by default",
+                    helper() == expected,
                     helper(),
                 )
             finally:
                 os.environ.clear()
-                os.environ.update(anterior)
+                os.environ.update(previous)
 
 
-def check_sin_modo_texto():
-    """La configuracion y el codigo ya no tienen modo texto.
+def check_without_text_mode():
+    """The configuration and the code no longer have a text mode.
 
-    Dejar claves muertas en DEFAULTS hace que el panel o un IPC puedan
-    escribir valores que la ventana ignora: si el modo texto volviera a
-    colarse, el usuario veria controles que no hacen nada.
+    Leaving dead keys in DEFAULTS lets the panel or an IPC write values the
+    window ignores: if the text mode were to sneak back in, the user would
+    see controls that do nothing.
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             for key in ("render_mode", "equalizer", "animation_ms", "language"):
                 check(
-                    "el script no tiene el ajuste %s" % key,
+                    "the script does not have the setting %s" % key,
                     key not in mod.DEFAULTS,
                     repr(sorted(mod.DEFAULTS)),
                 )
@@ -1670,27 +1673,27 @@ def check_sin_modo_texto():
                 "_footer", "_hints", "_idle_block", "_line_color",
             ):
                 check(
-                    "el script no conserva %s" % name,
+                    "the script does not keep %s" % name,
                     not hasattr(mod.LyricsCarousel, name),
                     name,
                 )
             check(
-                "no quedan helpers de ancho de terminal",
+                "no terminal width helpers are left",
                 not hasattr(mod, "cell_width") and not hasattr(mod, "truncate"),
                 "cell_width/truncate",
             )
 
 
-def check_limites_ajustes():
-    """Los limites del script son los del manifiesto."""
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-limites-") as temporal:
-        with env_temporal(
+def check_settings_limits():
+    """The limits of the script are the ones of the manifest."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-limites-") as temporary:
+        with temporary_env(
             {
-                "XDG_CACHE_HOME": os.path.join(temporal, "cache"),
+                "XDG_CACHE_HOME": os.path.join(temporary, "cache"),
             }
-        ), estado_temporal(temporal) as destino:
-            os.makedirs(os.path.join(destino, "plugins", "data"), exist_ok=True)
-            with open(os.path.join(destino, "settings.toml"), "w", encoding="utf-8") as handle:
+        ), temporary_state(temporary) as destination:
+            os.makedirs(os.path.join(destination, "plugins", "data"), exist_ok=True)
+            with open(os.path.join(destination, "settings.toml"), "w", encoding="utf-8") as handle:
                 handle.write(
                     '[plugin_settings."faminec/lyrics-carousel"]\n'
                     "width = 100\n"
@@ -1699,22 +1702,40 @@ def check_limites_ajustes():
                 )
             mod = script_module()
             cfg = mod.load_settings()
-        check("el ancho se limita como el manifiesto", cfg["width"] == 400, str(cfg["width"]))
-        check("el alto se limita como el manifiesto", cfg["height"] == 200, str(cfg["height"]))
+        check("the width is limited like the manifest", cfg["width"] == 400, str(cfg["width"]))
+        check("the height is limited like the manifest", cfg["height"] == 200, str(cfg["height"]))
         check(
-            "el desfase se limita como el manifiesto",
+            "the offset is limited like the manifest",
             cfg["offset_ms"] == 3000,
             str(cfg["offset_ms"]),
         )
 
 
-def check_readme():
-    """El README documenta lo que el manifiesto declara.
+def check_normalize_text():
+    """Text normalization keeps lyrics renderable across fonts."""
+    mod = script_module()
+    cases = [
+        ("make up\uff08make up\uff09", "make up(make up)"),
+        ("\uff3btag\uff3d", "[tag]"),
+        ("\uff5bkey\uff5d", "{key}"),
+        ("a\u3000b", "a b"),
+    ]
+    for source, expected in cases:
+        out = mod.normalize_text(source)
+        check(
+            "normalize_text maps fullwidth punctuation: %r" % (source,),
+            out == expected,
+            repr(out),
+        )
 
-    La tienda exige que el README mencione cada dependencia del manifiesto
-    con su nombre exacto, que documente cada entrada (widget, panel) con su
-    id y que liste los comandos IPC. Si el manifiesto cambia y el README no,
-    el plugin se rechaza en la revision de la tienda; aqui se avisa antes.
+
+def check_readme():
+    """The README documents what the manifest declares.
+
+    The store requires the README to mention every dependency of the manifest
+    with its exact name, to document every entry (widget, panel) with its id
+    and to list the IPC commands. If the manifest changes and the README does
+    not, the plugin is rejected in the store review; here it is warned about.
     """
     manifest_path = os.path.join(PLUGIN_DIR, "plugin.toml")
     readme_path = os.path.join(PLUGIN_DIR, "README.md")
@@ -1724,84 +1745,84 @@ def check_readme():
         with open(manifest_path, "rb") as handle:
             manifest = tomllib.load(handle)
     except Exception as error:  # noqa: BLE001
-        check("el manifiesto se puede leer", False, repr(error)[:120])
+        check("the manifest can be read", False, repr(error)[:120])
         return
     try:
         with open(readme_path, encoding="utf-8") as handle:
             readme = handle.read()
     except OSError as error:
-        check("el README se puede leer", False, repr(error)[:120])
+        check("the README can be read", False, repr(error)[:120])
         return
 
     plugin_id = manifest.get("id", "")
-    check("el README cita el id del plugin", f"`{plugin_id}`" in readme, plugin_id)
+    check("the README cites the plugin id", f"`{plugin_id}`" in readme, plugin_id)
 
-    # Cada dependencia del manifiesto, con su nombre exacto.
-    dependencias = manifest.get("dependencies") or []
-    for dependencia in dependencias:
+    # Every dependency of the manifest, with its exact name.
+    dependencies = manifest.get("dependencies") or []
+    for dependencia in dependencies:
         check(
-            f"el README menciona la dependencia `{dependencia}`",
+            f"the README mentions the dependency `{dependencia}`",
             f"`{dependencia}`" in readme,
             dependencia,
         )
 
-    # Cada entrada (widget, panel) con su id.
-    entradas = []
-    for clave in ("widget", "panel", "service", "launcher_provider"):
-        for entrada in manifest.get(clave) or []:
-            entradas.append((clave, entrada.get("id", "")))
-    for clave, entrada_id in entradas:
+    # Every entry (widget, panel) with its id.
+    entries = []
+    for setting_key in ("widget", "panel", "service", "launcher_provider"):
+        for entry in manifest.get(setting_key) or []:
+            entries.append((setting_key, entry.get("id", "")))
+    for setting_key, entry_id in entries:
         check(
-            f"el README documenta la entrada {clave} `{entrada_id}`",
-            f"`{entrada_id}`" in readme,
-            entrada_id,
+            f"the README documents the entry {setting_key} `{entry_id}`",
+            f"`{entry_id}`" in readme,
+            entry_id,
         )
 
-    # El comando IPC del panel, exacto.
-    for clave, entrada_id in entradas:
-        if clave != "panel":
+    # The IPC command of the panel, verbatim.
+    for setting_key, entry_id in entries:
+        if setting_key != "panel":
             continue
-        comando = f"noctalia msg panel-toggle {plugin_id}:{entrada_id}"
-        check(f"el README trae el comando IPC del panel", comando in readme, comando)
+        command = f"noctalia msg panel-toggle {plugin_id}:{entry_id}"
+        check(f"the README has the panel IPC command", command in readme, command)
 
-    # Los eventos IPC que el panel y el widget atienden tienen que estar
-    # documentados: la plantilla de la tienda los pide cuando el plugin
-    # hace algo mas que abrir el panel.
-    eventos = set()
-    entradas_por_id = {}
-    for clave, entrada_id in entradas:
-        entradas_por_id[entrada_id] = entrada
-    for entrada_id, entrada in entradas_por_id.items():
-        entrada_path = os.path.join(PLUGIN_DIR, entrada.get("entry", entrada_id + ".luau"))
+    # The IPC events handled by the panel and the widget have to be
+    # documented: the store template asks for them when the plugin does
+    # something more than opening the panel.
+    events = set()
+    entries_by_id = {}
+    for setting_key, entry_id in entries:
+        entries_by_id[entry_id] = entry
+    for entry_id, entry in entries_by_id.items():
+        entry_path = os.path.join(PLUGIN_DIR, entry.get("entry", entry_id + ".luau"))
         try:
-            with open(entrada_path, encoding="utf-8") as handle:
-                fuente = handle.read()
+            with open(entry_path, encoding="utf-8") as handle:
+                font = handle.read()
         except OSError:
             continue
-        for nombre in ("launch", "toggle", "set", "refresh"):
-            if f'event == "{nombre}"' in fuente:
-                eventos.add(nombre)
-    for evento in sorted(eventos):
-        comandos = [
-            f"noctalia msg plugin {plugin_id}:{entrada_id} all {evento}"
-            for entrada_id in entradas_por_id
+        for name in ("launch", "toggle", "set", "refresh"):
+            if f'event == "{name}"' in font:
+                events.add(name)
+    for event in sorted(events):
+        commands = [
+            f"noctalia msg plugin {plugin_id}:{entry_id} all {event}"
+            for entry_id in entries_by_id
         ]
         check(
-            f"el README documenta el evento IPC `{evento}`",
-            any(comando in readme for comando in comandos),
-            evento,
+            f"the README documents the IPC event `{event}`",
+            any(command in readme for command in commands),
+            event,
         )
 
 
-def check_titulo_vacio_no_rebusca():
-    """Un tema sin titulo (solo artista) no relanza la busqueda en bucle.
+def check_empty_title_does_not_search_again():
+    """A track without a title (artist only) does not restart the search in a loop.
 
-    La guarda de _apply_track comparaba la clave y ademas exigia que el tema
-    nuevo tuviera titulo. Con un tema sin titulo la condicion nunca se
-    cumplia y cada sondeo volvia a pedir la letra.
+    The guard in _apply_track compared the key and also required the new
+    track to have a title. With a track without a title the condition was
+    never met and every poll asked for the lyrics again.
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             app = object.__new__(mod.LyricsCarousel)
             app.args = types.SimpleNamespace(force=False)
@@ -1813,36 +1834,36 @@ def check_titulo_vacio_no_rebusca():
             app.synced = False
             app.last_fetch = 0.0
             app.log = lambda message: None
-            arranques = []
+            start_calls = []
 
-            class FetcherFalso:
+            class FakeFetcher:
                 def start(self, track, force=False):
-                    arranques.append(track.key)
+                    start_calls.append(track.key)
 
-            app.fetcher = FetcherFalso()
-            tema = mod.Track("", "Artista", "Album", 100.0)
+            app.fetcher = FakeFetcher()
+            song = mod.Track("", "Artista", "Album", 100.0)
             for _ in range(5):
-                app._apply_track(tema)
+                app._apply_track(song)
             check(
-                "un tema sin título no relanza la búsqueda",
-                len(arranques) == 1,
-                "búsquedas=%d" % len(arranques),
+                "a track without title does not restart the search",
+                len(start_calls) == 1,
+                "lookups=%d" % len(start_calls),
             )
 
 
-def check_timeout_adaptador():
-    """El adaptador lento (4 s) no se corta antes de responder.
+def check_adapter_timeout():
+    """The slow adapter (4 s) is not cut off before it answers.
 
-    El plazo de 3 s mataba a NetEase y QQ Music, que a veces tardan mas:
-    la letra se perdia aunque el adaptador fuera a devolverla.
+    The 3 s deadline killed NetEase and QQ Music, which sometimes take longer:
+    the lyrics were lost even though the adapter was about to return them.
     """
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-adapter-") as temporal:
-        cache = os.path.join(temporal, "cache")
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-adapter-") as temporary:
+        cache = os.path.join(temporary, "cache")
         os.makedirs(cache, exist_ok=True)
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             os.makedirs(mod.CACHE_DIR, exist_ok=True)
-            script = os.path.join(temporal, "lyric_sources.py")
+            script = os.path.join(temporary, "lyric_sources.py")
             with open(script, "w", encoding="utf-8") as handle:
                 handle.write(
                     "import json, time\n"
@@ -1861,16 +1882,16 @@ def check_timeout_adaptador():
             finally:
                 mod.find_lyric_adapter = original
             check(
-                "el adaptador lento no se corta",
+                "the slow adapter is not cut off",
                 len(lines) == 1,
-                "líneas=%d fuente=%s" % (len(lines), source),
+                "lines=%d source=%s" % (len(lines), source),
             )
 
 
-def check_tiempos_reales_no_se_pisan():
-    """estimate_times rellena las lineas sin tiempo, no las que ya lo tienen."""
+def check_real_times_do_not_overlap():
+    """estimate_times fills in the lines without a time, not the ones that already have it."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             lines = [
                 mod.LyricLine(-1.0, 0.0, "a"),
@@ -1880,16 +1901,16 @@ def check_tiempos_reales_no_se_pisan():
             ]
             mod.estimate_times(lines, 200.0)
             check(
-                "estimate_times respeta los tiempos reales",
+                "estimate_times respects the real timings",
                 abs(lines[3].start - 42.0) < 0.01,
                 "start=%.3f" % lines[3].start,
             )
 
 
-def check_lineas_ordenadas():
-    """El resaltado ignora las lineas sin tiempo al buscar por posicion."""
+def check_lines_are_sorted():
+    """The highlight ignores the lines without a time when searching by position."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             app = object.__new__(mod.LyricsCarousel)
             app.cfg = dict(mod.DEFAULTS)
@@ -1901,14 +1922,14 @@ def check_lineas_ordenadas():
             ]
             index, _, _ = app.scroll_state(15.0)
             check(
-                "el resaltado ignora las líneas sin tiempo",
+                "the highlight ignores the lines without time",
                 app.lines[index].text == "suena",
-                "línea resaltada=%r" % (app.lines[index].text,),
+                "highlighted line=%r" % (app.lines[index].text,),
             )
 
 
-def _app_de_config(mod):
-    """Instancia minima para probar _reload_config sin abrir la ventana."""
+def _config_app(mod):
+    """Minimal instance to test _reload_config without opening the window."""
     app = object.__new__(mod.LyricsCarousel)
     app.args = types.SimpleNamespace(
         direction=None,
@@ -1933,10 +1954,10 @@ def _app_de_config(mod):
     return app
 
 
-def check_cache_una_sola_vez():
-    """Solo el proveedor que gana escribe la cache (no todos)."""
+def check_only_the_winner_writes_the_cache():
+    """Only the winning provider writes the cache (not all of them)."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             mod.load_lyrics_settings = lambda: {
                 "sources": ["lrclib", "netease"],
@@ -1946,73 +1967,73 @@ def check_cache_una_sola_vez():
             mod.load_cache = lambda track: None
             mod.missing_recent = lambda track: False
             mod.SEARCH_TIMEOUT = 5.0
-            guardados = []
-            mod.save_cache = lambda *args: guardados.append(args)
+            saved_values = []
+            mod.save_cache = lambda *args: saved_values.append(args)
 
             def lrclib(track, log):
                 return [mod.LyricLine(1.0, 0.0, "gana")], None
 
-            def adaptador(source, track, settings, log):
+            def adapter(source, track, settings, log):
                 if source == "netease":
                     time.sleep(0.4)
                     return [mod.LyricLine(2.0, 0.0, "pierde")], None
                 return [], None
 
             mod.fetch_lrclib = lrclib
-            mod.run_adapter = adaptador
+            mod.run_adapter = adapter
             mod.fetch_lyrics(mod.Track("cancion", "artista", duration=100.0), True, lambda m: None)
-            # El hilo perdedor sigue vivo un momento: la cache solo puede
-            # haberse escrito una vez, con el ganador.
+            # The losing thread stays alive for a moment: the cache can only
+            # have been written once, with the winner.
             time.sleep(0.6)
             check(
-                "solo el proveedor ganador escribe la caché",
-                len(guardados) == 1,
-                "escrituras=%d" % len(guardados),
+                "only the winning provider writes the cache",
+                len(saved_values) == 1,
+                "writes=%d" % len(saved_values),
             )
 
 
-def check_tiempos_por_palabra():
-    """Una letra solo cuenta como karaoke real si trae tiempos por carácter.
+def check_times_per_word():
+    """A lyric only counts as real karaoke if it brings per-character timings.
 
-    Los proveedores de nivel de línea (LRCLIB casi siempre) dan un tiempo
-    por línea: el karaoke reparte la duración a partes iguales y no sigue
-    la voz. Los de nivel de palabra traen un tiempo por carácter, que es
-    lo que hace que el relleno parezca reconocer la canción.
+    Line-level providers (LRCLIB almost always) give one time per line: the
+    karaoke spreads the duration evenly and does not follow the voice.
+    Word-level ones bring a time per character, which is what makes the
+    fill look like it recognizes the song.
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
-            con_tiempos = mod.LyricLine(0.0, 2.0, "hola")
-            con_tiempos.chars = [0.0, 0.1, 0.2, 0.3]
-            sin_tiempos = mod.LyricLine(2.0, 2.0, "mundo")
-            otra = mod.LyricLine(4.0, 2.0, "otra")
+            with_timings = mod.LyricLine(0.0, 2.0, "hola")
+            with_timings.chars = [0.0, 0.1, 0.2, 0.3]
+            without_timings = mod.LyricLine(2.0, 2.0, "mundo")
+            another = mod.LyricLine(4.0, 2.0, "otra")
             check(
-                "la mitad de las líneas con tiempos ya cuenta como palabra",
-                mod.lines_have_chars([con_tiempos, sin_tiempos]),
-                "no se detectaron los tiempos",
+                "half of the lines with timings already counts as word level",
+                mod.lines_have_chars([with_timings, without_timings]),
+                "the timings were not detected",
             )
             check(
-                "una sola línea con tiempos entre varias no basta",
-                not mod.lines_have_chars([con_tiempos, sin_tiempos, otra]),
-                "se coló una letra de nivel de línea",
+                "a single line with timings among several is not enough",
+                not mod.lines_have_chars([with_timings, without_timings, another]),
+                "a line-level lyric slipped in",
             )
             check(
-                "una letra vacía no tiene tiempos por palabra",
+                "empty lyrics have no word timings",
                 not mod.lines_have_chars([]),
-                "una lista vacía no puede contar",
+                "an empty list cannot count",
             )
 
 
-def check_fetch_prefiere_palabra():
-    """La primera letra se publica; la de palabra la mejora y va a la caché.
+def check_fetch_prefers_the_word_timing():
+    """The first lyric is published; the word-level one improves it and goes to the cache.
 
-    LRCLIB suele responder antes, pero con tiempos por línea. NetEase
-    puede traer tiempos por palabra. Quedarse con el primero dejaba la
-    caché sin `chars` para siempre y el karaoke repartía la línea a
-    partes iguales.
+    LRCLIB usually answers first, but with line-level timings. NetEase may
+    bring word-level timings. Keeping the first one left the cache without
+    `chars` forever and the karaoke spread the whole line evenly instead of
+    following the voice.
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             mod.load_lyrics_settings = lambda: {
                 "sources": ["lrclib", "netease"],
@@ -2023,63 +2044,63 @@ def check_fetch_prefiere_palabra():
             mod.missing_recent = lambda track: False
             mod.SEARCH_TIMEOUT = 5.0
             mod.WORD_GRACE = 1.5
-            guardados = []
-            mod.save_cache = lambda *args: guardados.append(args)
+            saved_values = []
+            mod.save_cache = lambda *args: saved_values.append(args)
 
-            def linea(texto, con_chars=False):
-                line = mod.LyricLine(1.0, 2.0, texto)
-                if con_chars:
-                    line.chars = [1.0 + index * 0.1 for index in range(len(texto))]
+            def lyric_line(text, with_chars=False):
+                line = mod.LyricLine(1.0, 2.0, text)
+                if with_chars:
+                    line.chars = [1.0 + index * 0.1 for index in range(len(text))]
                 return line
 
             def lrclib(track, log):
-                return [linea("letra por linea")], None
+                return [lyric_line("letra por linea")], None
 
-            def adaptador(source, track, settings, log):
+            def adapter(source, track, settings, log):
                 time.sleep(0.35)
-                return [linea("letra por palabra", True)], None
+                return [lyric_line("letra por palabra", True)], None
 
             mod.fetch_lrclib = lrclib
-            mod.run_adapter = adaptador
-            actualizaciones = []
+            mod.run_adapter = adapter
+            updates = []
             lines, source, synced = mod.fetch_lyrics(
                 mod.Track("cancion", "artista", duration=100.0),
                 True,
                 lambda message: None,
-                on_update=lambda *args: actualizaciones.append(args),
+                on_update=lambda *args: updates.append(args),
             )
             check(
-                "el resultado final trae tiempos por palabra",
+                "the final result has word timings",
                 mod.lines_have_chars(lines),
                 "source=%s" % (source,),
             )
             check(
-                "gana el proveedor con tiempos por palabra",
+                "the provider with word timings wins",
                 source == "netease",
                 "source=%s" % (source,),
             )
             check(
-                "la primera letra se publica sin esperar",
-                bool(actualizaciones) and actualizaciones[0][1] == "lrclib",
-                str([item[1] for item in actualizaciones]),
+                "the first lyrics are published without waiting",
+                bool(updates) and updates[0][1] == "lrclib",
+                str([item[1] for item in updates]),
             )
             check(
-                "la mejora se publica cuando llega",
-                len(actualizaciones) >= 2
-                and mod.lines_have_chars(actualizaciones[-1][0]),
-                str([item[1] for item in actualizaciones]),
+                "the improvement is published when it arrives",
+                len(updates) >= 2
+                and mod.lines_have_chars(updates[-1][0]),
+                str([item[1] for item in updates]),
             )
             check(
-                "la caché se queda con la versión por palabra",
-                bool(guardados) and mod.lines_have_chars(guardados[-1][1]),
-                "escrituras=%d" % len(guardados),
+                "the cache keeps the word-level version",
+                bool(saved_values) and mod.lines_have_chars(saved_values[-1][1]),
+                "writes=%d" % len(saved_values),
             )
 
 
-def check_fetch_palabra_no_espera():
-    """Si la primera letra ya trae tiempos por palabra, no se espera a nadie."""
+def check_word_fetch_does_not_wait():
+    """If the first lyric already brings word-level timings, nobody is waited for."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             mod.load_lyrics_settings = lambda: {
                 "sources": ["lrclib", "netease"],
@@ -2092,47 +2113,47 @@ def check_fetch_palabra_no_espera():
             mod.WORD_GRACE = 3.0
             mod.save_cache = lambda *args: None
 
-            texto = "letra por palabra"
-            line = mod.LyricLine(1.0, 2.0, texto)
-            line.chars = [1.0 + index * 0.1 for index in range(len(texto))]
+            text = "letra por palabra"
+            line = mod.LyricLine(1.0, 2.0, text)
+            line.chars = [1.0 + index * 0.1 for index in range(len(text))]
 
             def lrclib(track, log):
-                return [mod.LyricLine(1.0, 2.0, texto, line.chars)], None
+                return [mod.LyricLine(1.0, 2.0, text, line.chars)], None
 
-            def adaptador(source, track, settings, log):
+            def adapter(source, track, settings, log):
                 time.sleep(2.0)
                 return [mod.LyricLine(5.0, 2.0, "tarde")], None
 
             mod.fetch_lrclib = lrclib
-            mod.run_adapter = adaptador
-            inicio = time.monotonic()
+            mod.run_adapter = adapter
+            start_value = time.monotonic()
             lines, source, synced = mod.fetch_lyrics(
                 mod.Track("cancion", "artista", duration=100.0),
                 True,
                 lambda message: None,
             )
-            transcurrido = time.monotonic() - inicio
+            elapsed = time.monotonic() - start_value
             check(
-                "con tiempos por palabra no se espera al proveedor lento",
-                transcurrido < 1.0,
-                "tardó %.2f s" % transcurrido,
+                "with word timings the slow provider is not waited for",
+                elapsed < 1.0,
+                "took %.2f s" % elapsed,
             )
             check(
-                "la letra con tiempos por palabra gana",
+                "the lyrics with word timings win",
                 source == "lrclib" and mod.lines_have_chars(lines),
                 "source=%s" % (source,),
             )
 
 
-def check_letra_sin_acentos():
-    """Una letra latina sin tildes ni ñ no puede pisar a la que sí las tiene.
+def check_lyrics_without_accents():
+    """A latin lyric without accents or tildes cannot override the one that has them.
 
-    NetEase devuelve a veces la letra de Frijolero como «algn», «petrleo»,
-    «pases» o «Quin». Esa versión trae tiempos por carácter y por eso ganaba
-    a la de LRCLIB, que está bien escrita. El carrusel debe quedarse con la
-    que tiene los acentos, llegue antes o después.
+    NetEase sometimes returns the Frijolero lyric as "algn", "petrleo",
+    "pases" or "Quin". That version brings per-character timings and that is
+    why it used to win over the LRCLIB one, which is properly written. The
+    carousel must keep the one with the accents, whether it arrives first or later.
     """
-    rota = [
+    broken = [
         "Yo ya estoy hasta la madre",
         "De que me pongan sombrero",
         "Escucha entonces cuando digo",
@@ -2146,7 +2167,7 @@ def check_letra_sin_acentos():
         "Quin se queda con la feria",
         "El nino juega en el patio",
     ]
-    buena = [
+    good = [
         "Yo ya estoy hasta la madre",
         "De que me pongan sombrero",
         "Escucha entonces cuando digo",
@@ -2160,14 +2181,14 @@ def check_letra_sin_acentos():
         "Quién se queda con la feria",
         "El niño juega en el patio",
     ]
-    ingles = (
+    english = (
         "We drove across the desert looking for a place to rest and found "
         "nothing but sand and sky and silence everywhere we turned until "
         "morning came"
     )
 
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             mod.load_lyrics_settings = lambda: {
                 "sources": ["lrclib", "netease"],
@@ -2180,117 +2201,117 @@ def check_letra_sin_acentos():
             mod.SEARCH_TIMEOUT = 3.0
             mod.WORD_GRACE = 2.0
 
-            def lineas(textos, con_chars=False):
-                salida = []
-                for indice, texto in enumerate(textos):
-                    line = mod.LyricLine(1.0 + indice * 4.0, 3.0, texto)
-                    if con_chars:
+            def lyric_lines(texts, with_chars=False):
+                output = []
+                for indice, text in enumerate(texts):
+                    line = mod.LyricLine(1.0 + indice * 4.0, 3.0, text)
+                    if with_chars:
                         line.chars = [
-                            1.0 + indice * 4.0 + paso * 0.05
-                            for paso in range(len(texto))
+                            1.0 + indice * 4.0 + time_step * 0.05
+                            for time_step in range(len(text))
                         ]
-                    salida.append(line)
-                return salida
+                    output.append(line)
+                return output
 
-            def buscar(letra_lrclib, letra_adaptador, espera_lrclib=0.0, espera_adaptador=0.0):
+            def fake_fetch(lrclib_lyrics, adapter_lyrics, lrclib_wait=0.0, adapter_wait=0.0):
                 def fetch(track, log):
-                    time.sleep(espera_lrclib)
-                    return letra_lrclib, None
+                    time.sleep(lrclib_wait)
+                    return lrclib_lyrics, None
 
-                def adaptador(source, track, settings, log):
-                    time.sleep(espera_adaptador)
-                    return letra_adaptador, None
+                def adapter(source, track, settings, log):
+                    time.sleep(adapter_wait)
+                    return adapter_lyrics, None
 
                 mod.fetch_lrclib = fetch
-                mod.run_adapter = adaptador
+                mod.run_adapter = adapter
                 return mod.fetch_lyrics(
                     mod.Track("Frijolero", "Molotov", duration=208.0),
                     True,
                     lambda message: None,
                 )
 
-            detector = getattr(mod, "texto_sin_acentos", None)
-            check("existe el detector de letras sin acentos", callable(detector))
+            detector = getattr(mod, "text_without_accents", None)
+            check("the detector of lyrics without accents exists", callable(detector))
             if detector is not None:
                 check(
-                    "la letra rota se detecta sin acentos",
-                    detector(lineas(rota)),
-                    "no se detectó",
+                    "the broken lyrics are detected as missing accents",
+                    detector(lyric_lines(broken)),
+                    "not detected",
                 )
                 check(
-                    "la letra corregida no se marca",
-                    not detector(lineas(buena)),
-                    "se marcó la letra buena",
+                    "the corrected lyrics are not flagged",
+                    not detector(lyric_lines(good)),
+                    "the good lyrics were flagged",
                 )
                 check(
-                    "una letra inglesa sin acentos no se marca",
-                    not detector(lineas([ingles])),
-                    "se marcó el inglés",
+                    "English lyrics without accents are not flagged",
+                    not detector(lyric_lines([english])),
+                    "the English was flagged",
                 )
 
-            # A) La completa llega primero y la rota por palabra después.
-            lines, source, _ = buscar(
-                lineas(buena), lineas(rota, True), espera_adaptador=0.2
+            # A) The complete one arrives first and the broken word-level one later.
+            lines, source, _ = fake_fetch(
+                lyric_lines(good), lyric_lines(broken, True), adapter_wait=0.2
             )
-            texto = " ".join(line.text for line in lines or [])
+            text = " ".join(line.text for line in lines or [])
             check(
-                "la letra completa gana a la rota por palabra",
-                "algún" in texto and "petróleo" in texto and source == "lrclib",
-                "source=%s texto=%r" % (source, texto[:60]),
+                "the complete lyrics win over the broken word-level ones",
+                "algún" in text and "petróleo" in text and source == "lrclib",
+                "source=%s text=%r" % (source, text[:60]),
             )
 
-            # B) La rota por palabra llega primero y la completa después.
-            lines, source, _ = buscar(
-                lineas(buena), lineas(rota, True), espera_lrclib=0.2
+            # B) The broken word-level one arrives first and the complete one later.
+            lines, source, _ = fake_fetch(
+                lyric_lines(good), lyric_lines(broken, True), lrclib_wait=0.2
             )
-            texto = " ".join(line.text for line in lines or [])
+            text = " ".join(line.text for line in lines or [])
             check(
-                "la letra completa sustituye a la rota por palabra",
-                "algún" in texto and "petróleo" in texto and source == "lrclib",
-                "source=%s texto=%r" % (source, texto[:60]),
+                "the complete lyrics replace the broken word-level ones",
+                "algún" in text and "petróleo" in text and source == "lrclib",
+                "source=%s text=%r" % (source, text[:60]),
             )
 
-            # C) Sin alternativa, la única letra disponible se muestra igual.
-            lines, source, _ = buscar(lineas(rota, True), [])
-            texto = " ".join(line.text for line in lines or [])
+            # C) With no alternative, the only available lyric is shown anyway.
+            lines, source, _ = fake_fetch(lyric_lines(broken, True), [])
+            text = " ".join(line.text for line in lines or [])
             check(
-                "sin alternativa, la letra rota se muestra igual",
-                bool(lines) and "algn" in texto,
-                "source=%s texto=%r" % (source, texto[:60]),
+                "with no alternative the broken lyrics are shown anyway",
+                bool(lines) and "algn" in text,
+                "source=%s text=%r" % (source, text[:60]),
             )
 
-            # D) Una mejora en segundo plano tampoco puede degradar la letra
-            #    buena que ya se está mostrando.
+            # D) A background improvement cannot degrade the good lyric that
+            #    is already being shown.
             app = object.__new__(mod.LyricsCarousel)
             app.track = mod.Track("Frijolero", "Molotov", duration=208.0)
-            actual = lineas(buena)
-            app.lines = actual
+            current = lyric_lines(good)
+            app.lines = current
             app.source = "lrclib"
             app.synced = True
             app.state = "lyrics"
             app._snap_scroll = lambda: None
             mod.mark_word_checked = lambda track: None
-            aplicar = getattr(app, "_apply_fetched", None)
-            if aplicar is None:
+            apply = getattr(app, "_apply_fetched", None)
+            if apply is None:
                 check(
-                    "la letra rota no sustituye a la buena ya mostrada",
+                    "the broken lyrics do not replace the good ones already shown",
                     False,
-                    "falta _apply_fetched",
+                    "_apply_fetched is missing",
                 )
             else:
                 check(
-                    "la letra rota no sustituye a la buena ya mostrada",
-                    aplicar(lineas(rota, True), "netease", True) is False
+                    "the broken lyrics do not replace the good ones already shown",
+                    apply(lyric_lines(broken, True), "netease", True) is False
                     and app.source == "lrclib"
-                    and app.lines is actual,
+                    and app.lines is current,
                     "source=%s" % (app.source,),
                 )
 
 
-def check_mejora_no_pisa_cache():
-    """Una búsqueda de mejora sin tiempos por palabra no reescribe la caché."""
+def check_improvement_does_not_overwrite_the_cache():
+    """An improvement search without word-level timings does not rewrite the cache."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             mod.load_lyrics_settings = lambda: {
                 "sources": ["lrclib"],
@@ -2307,8 +2328,8 @@ def check_mejora_no_pisa_cache():
                 None,
             )
             mod.run_adapter = lambda source, track, settings, log: ([], None)
-            guardados = []
-            mod.save_cache = lambda *args: guardados.append(args)
+            saved_values = []
+            mod.save_cache = lambda *args: saved_values.append(args)
             mod.fetch_lyrics(
                 mod.Track("cancion", "artista", duration=100.0),
                 True,
@@ -2316,16 +2337,16 @@ def check_mejora_no_pisa_cache():
                 upgrade=True,
             )
             check(
-                "una mejora sin tiempos no pisa la caché existente",
-                not guardados,
-                "escrituras=%d" % len(guardados),
+                "an improvement without timings does not overwrite the existing cache",
+                not saved_values,
+                "writes=%d" % len(saved_values),
             )
 
 
-def check_cache_se_mejora_sola():
-    """Una caché de nivel de línea se mejora en segundo plano al mostrarse."""
+def check_cache_is_upgraded_in_the_background():
+    """A line-level cache is improved in the background when it is shown."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             line = mod.LyricLine(1.0, 2.0, "letra por linea")
             original_cache = mod.load_cache
@@ -2333,53 +2354,53 @@ def check_cache_se_mejora_sola():
             mod.load_cache = lambda track: ([line], "lrclib", True)
             mod.word_checked_recent = lambda track: False
 
-            class FetcherFalso:
+            class FakeFetcher:
                 def __init__(self):
-                    self.arranques = []
+                    self.start_calls = []
 
                 def start(self, track, force=False, upgrade=False):
-                    self.arranques.append((force, upgrade))
+                    self.start_calls.append((force, upgrade))
 
                 def take(self):
                     return None
 
             try:
-                app = _app_de_config(mod)
+                app = _config_app(mod)
                 app.track = mod.Track("cancion", "artista", duration=100.0)
                 app.lines = []
                 app.source = ""
                 app.synced = False
                 app.state = "idle"
                 app.last_fetch = 0.0
-                app.fetcher = FetcherFalso()
+                app.fetcher = FakeFetcher()
                 app.reload_lyrics()
                 check(
-                    "la letra cacheada se muestra al instante",
+                    "the cached lyrics are shown instantly",
                     app.state == "lyrics" and app.lines == [line],
-                    "estado=%s líneas=%d" % (app.state, len(app.lines)),
+                    "state=%s lines=%d" % (app.state, len(app.lines)),
                 )
                 check(
-                    "la caché de línea se mejora en segundo plano",
-                    app.fetcher.arranques == [(True, True)],
-                    repr(app.fetcher.arranques),
+                    "the line-level cache is improved in the background",
+                    app.fetcher.start_calls == [(True, True)],
+                    repr(app.fetcher.start_calls),
                 )
 
-                # Si ya se comprobó hace poco, no se repite la búsqueda en
-                # cada arranque de la canción.
+                # If it was already checked recently, the search is not
+                # repeated on every start of the song.
                 mod.word_checked_recent = lambda track: True
-                app = _app_de_config(mod)
+                app = _config_app(mod)
                 app.track = mod.Track("cancion", "artista", duration=100.0)
                 app.lines = []
                 app.source = ""
                 app.synced = False
                 app.state = "idle"
                 app.last_fetch = 0.0
-                app.fetcher = FetcherFalso()
+                app.fetcher = FakeFetcher()
                 app.reload_lyrics()
                 check(
-                    "una comprobación reciente no repite la búsqueda",
-                    app.fetcher.arranques == [],
-                    repr(app.fetcher.arranques),
+                    "a recent check does not repeat the search",
+                    app.fetcher.start_calls == [],
+                    repr(app.fetcher.start_calls),
                 )
             finally:
                 mod.load_cache = original_cache
@@ -2389,46 +2410,46 @@ def check_cache_se_mejora_sola():
                     mod.word_checked_recent = original_recent
 
 
-def check_resultado_no_pisa_letra_igual():
-    """Un resultado de la misma calidad no vuelve a colocar el carrusel."""
+def check_result_does_not_overwrite_the_same_lyrics():
+    """A result of the same quality does not place the carousel again."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             original_mark = getattr(mod, "mark_word_checked", None)
             mod.mark_word_checked = lambda track: None
             try:
                 app = object.__new__(mod.LyricsCarousel)
                 app.track = mod.Track("cancion", "artista", duration=100.0)
-                actual = mod.LyricLine(1.0, 2.0, "letra por linea")
-                app.lines = [actual]
+                current = mod.LyricLine(1.0, 2.0, "letra por linea")
+                app.lines = [current]
                 app.source = "lrclib"
                 app.synced = True
                 app.state = "lyrics"
                 app._snap_scroll = lambda: None
-                aplicar = getattr(app, "_apply_fetched", None)
-                if aplicar is None:
-                    check("aplicar un resultado no pisa la letra actual", False, "falta _apply_fetched")
+                apply = getattr(app, "_apply_fetched", None)
+                if apply is None:
+                    check("applying a result does not overwrite the current lyrics", False, "_apply_fetched is missing")
                     return
-                otra = mod.LyricLine(1.0, 2.0, "otra letra por linea")
+                another = mod.LyricLine(1.0, 2.0, "otra letra por linea")
                 check(
-                    "una letra de la misma calidad no se vuelve a aplicar",
-                    aplicar([otra], "netease", True) is False
+                    "lyrics of the same quality are not applied again",
+                    apply([another], "netease", True) is False
                     and app.source == "lrclib"
-                    and app.lines == [actual],
+                    and app.lines == [current],
                     "source=%s" % (app.source,),
                 )
-                palabra = mod.LyricLine(1.0, 2.0, "letra por palabra")
-                palabra.chars = [1.0 + index * 0.1 for index in range(len(palabra.text))]
+                word = mod.LyricLine(1.0, 2.0, "letra por palabra")
+                word.chars = [1.0 + index * 0.1 for index in range(len(word.text))]
                 check(
-                    "una letra con tiempos por palabra sí reemplaza",
-                    aplicar([palabra], "netease", True) is True
+                    "lyrics with word timings do replace",
+                    apply([word], "netease", True) is True
                     and app.source == "netease",
                     "source=%s" % (app.source,),
                 )
                 check(
-                    "una búsqueda vacía no borra la letra actual",
-                    aplicar([], "", False) is False and bool(app.lines),
-                    "líneas=%d" % len(app.lines),
+                    "an empty search does not clear the current lyrics",
+                    apply([], "", False) is False and bool(app.lines),
+                    "lines=%d" % len(app.lines),
                 )
             finally:
                 if original_mark is None:
@@ -2437,60 +2458,60 @@ def check_resultado_no_pisa_letra_igual():
                     mod.mark_word_checked = original_mark
 
 
-def check_lrc_mejorado_a_caracteres():
-    """Un LRC con marcas <mm:ss.xx> se convierte en tiempos por carácter.
+def check_enhanced_lrc_to_characters():
+    """An LRC with <mm:ss.xx> marks is converted into per-character timings.
 
-    Es el formato que trae la letra sincronizada palabra a palabra en
-    algunos proveedores: sin esto se descartaban las marcas y el karaoke
-    repartía la línea entera a partes iguales.
+    This is the format that brings the lyrics synchronized word by word in
+    some providers: without this the marks were discarded and the karaoke
+    spread the whole line evenly.
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             lines = mod.parse_lrc(
                 "[00:10.00]<00:10.00>Hola <00:10.50>mundo\n"
                 "[00:12.00]siguiente"
             )
             line = lines[0] if lines else None
-            texto = line.text if line else ""
+            text = line.text if line else ""
             chars = line.chars if line else []
             check(
-                "el LRC mejorado conserva el texto sin las marcas",
-                texto == "Hola mundo",
-                repr(texto),
+                "the enhanced LRC keeps the text without the marks",
+                text == "Hola mundo",
+                repr(text),
             )
             check(
-                "el LRC mejorado da un tiempo por carácter",
+                "the enhanced LRC gives one time per character",
                 len(chars) == len("Hola mundo"),
                 repr(chars),
             )
             check(
-                "el primer carácter entra en la marca de la línea",
+                "the first character goes into the line mark",
                 bool(chars) and abs(chars[0] - 10.0) < 0.01,
                 repr(chars[:2]),
             )
             check(
-                "la segunda palabra entra en su propia marca",
+                "the second word goes into its own mark",
                 len(chars) > 5 and abs(chars[5] - 10.5) < 0.01,
                 repr(chars[4:7]),
             )
             check(
-                "los tiempos por carácter no retroceden",
+                "the per-character timings do not go backwards",
                 all(
-                    antes <= despues + 1e-6
-                    for antes, despues in zip(chars, chars[1:])
+                    before <= after + 1e-6
+                    for before, after in zip(chars, chars[1:])
                 ),
                 repr(chars),
             )
 
 
-def check_lrclib_prefiere_letra_mejorada():
-    """Entre dos candidatos iguales gana el que trae tiempos por palabra."""
+def check_lrclib_prefers_the_enhanced_lyrics():
+    """Between two equal candidates, the one with word-level timings wins."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             original = mod._http_json
-            candidatos = [
+            candidates = [
                 {
                     "trackName": "cancion",
                     "artistName": "artista",
@@ -2504,7 +2525,7 @@ def check_lrclib_prefiere_letra_mejorada():
                     "syncedLyrics": "[00:01.00]<00:01.00>hola <00:01.50>mundo",
                 },
             ]
-            mod._http_json = lambda *args, **kwargs: candidatos
+            mod._http_json = lambda *args, **kwargs: candidates
             try:
                 lines, error = mod.fetch_lrclib(
                     mod.Track("cancion", "artista", duration=100.0),
@@ -2513,39 +2534,98 @@ def check_lrclib_prefiere_letra_mejorada():
             finally:
                 mod._http_json = original
             check(
-                "se prefiere la letra con tiempos por palabra",
+                "the lyrics with word timings are preferred",
                 mod.lines_have_chars(lines),
                 "error=%r" % (error,),
             )
 
 
 def check_lyrics_settings_state_dir():
-    """La configuracion de Lyrics se lee del estado de Noctalia real."""
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-estado-") as temporal:
-        with estado_temporal(temporal) as estado:
-            with open(os.path.join(estado, "settings.toml"), "w", encoding="utf-8") as handle:
+    """The Lyrics configuration is read from the real Noctalia state."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-estado-") as temporary:
+        with temporary_state(temporary) as state_value:
+            with open(os.path.join(state_value, "settings.toml"), "w", encoding="utf-8") as handle:
                 handle.write(
                     '[plugin_settings."h465855hgg/lyrics"]\n'
                     'lyrics_sources = ["lrclib"]\n'
                 )
             mod = script_module()
-            ajustes = mod.load_lyrics_settings()
+            settings_file = mod.load_lyrics_settings()
         check(
-            "las fuentes de letra se leen del estado de Noctalia",
-            ajustes.get("sources") == ["lrclib"],
-            str(ajustes.get("sources")),
+            "the lyrics sources are read from the Noctalia state",
+            settings_file.get("sources") == ["lrclib"],
+            str(settings_file.get("sources")),
         )
 
 
-def check_karaoke_usa_tiempos_reales():
-    """El karaoke usa el siguiente tiempo real, no el de la siguiente linea.
+def check_helper_accepts_karaoke_brain():
+    """The helper knows the `karaoke_brain` key.
 
-    Las lineas sin marca de tiempo valen -1: si el relleno del karaoke
-    toma "la siguiente de la lista", la linea activa se queda sin final
-    (o se acorta de golpe) y el resaltado se descuadra.
+    The brain button writes the setting with `set-setting.py override`. If
+    the helper does not know the key it rejects it ("unknown key"), the
+    write never happens and the button does nothing at all.
+    """
+    base = tempfile.mkdtemp(prefix="lyrics-carousel-selftest-")
+    try:
+        with temporary_state(base):
+            result = subprocess.run(
+                [sys.executable, HELPER, "override", "karaoke_brain", "false", "bool"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            check(
+                "the helper accepts the karaoke_brain key",
+                result.returncode == 0,
+                (result.stderr or result.stdout or "").strip()[:120],
+            )
+            overrides = os.path.join(
+                os.environ["LYRICS_CAROUSEL_OVERRIDES"]
+            )
+            stored = {}
+            try:
+                with open(overrides, encoding="utf-8") as handle:
+                    stored = json.load(handle)
+            except (OSError, ValueError):
+                stored = {}
+            check(
+                "the helper stores the brain as off",
+                stored.get("karaoke_brain") is False,
+                repr(stored.get("karaoke_brain")),
+            )
+            mod = script_module()
+            cfg = mod.load_settings()
+            check(
+                "the script reads the brain as off",
+                cfg.get("karaoke_brain") is False,
+                repr(cfg.get("karaoke_brain")),
+            )
+            # And the other way round: the value has to be able to go back on.
+            result = subprocess.run(
+                [sys.executable, HELPER, "override", "karaoke_brain", "true", "bool"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            check(
+                "the helper stores the brain as on",
+                result.returncode == 0
+                and mod.load_settings().get("karaoke_brain") is True,
+                (result.stderr or result.stdout or "").strip()[:120],
+            )
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def check_karaoke_uses_real_times():
+    """The karaoke uses the next real time, not the one of the next line.
+
+    Lines without a time mark are -1: if the karaoke fill takes "the next
+    one in the list", the active line is left without an end (or is cut
+    short all of a sudden) and the highlight goes out of sync.
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             app = object.__new__(mod.LyricsCarousel)
             app.lines = [
@@ -2553,30 +2633,140 @@ def check_karaoke_usa_tiempos_reales():
                 mod.LyricLine(-1, 0, "sin tiempo"),
                 mod.LyricLine(20.0, 0, "tercera"),
             ]
-            siguiente = getattr(app, "next_timed_start", None)
-            ok = siguiente is not None and siguiente(0) == 20.0
-            check("el karaoke usa el siguiente tiempo real", ok, str(siguiente))
-            if siguiente is not None:
+            next_timed_start_fn = getattr(app, "next_timed_start", None)
+            ok = next_timed_start_fn is not None and next_timed_start_fn(0) == 20.0
+            check("the karaoke uses the next real time", ok, str(next_timed_start_fn))
+            if next_timed_start_fn is not None:
                 check(
-                    "la ultima linea no tiene tiempo siguiente",
-                    siguiente(2) is None,
-                    str(siguiente(2)),
+                    "the last line has no next time",
+                    next_timed_start_fn(2) is None,
+                    str(next_timed_start_fn(2)),
                 )
 
 
-def check_estimate_times_no_adelanta_las_sin_tiempo():
-    """Las líneas sin tiempo no se colocan delante de las reales.
+def check_brain_intelligent_per_line_karaoke():
+    """Brain active => intelligent per-line karaoke like the lyrics plugin.
 
-    Una letra con LRC a medias (unas líneas con tiempo y otras sin él) no
-    puede repartir los tiempos al azar: si la línea sin tiempo está al
-    final de la lista, no puede empezar a sonar en el segundo 6 y dejarse
-    la parte con tiempos reales sin resaltar.
+    With brain on, only lines with usable word timings get progressive
+    per-character karaoke; lines without them are highlighted at once (line
+    mode, no progressive glow sweep). With brain off, karaoke glow uses the
+    classic "boring" progressive behavior for all lines.
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            image = image_module()
+
+            class FakeTheme:
+                background = (10, 10, 10)
+                foreground = (200, 200, 200)
+                past = (120, 120, 120)
+                faint = (80, 80, 80)
+                bright = (220, 220, 220)
+
+                def accent_color(self, cfg):
+                    return (0, 200, 0)
+
+            class FakeBrush:
+                im = types.SimpleNamespace(size=(1500, 900))
+
+                def textlength(self, text, font=None):
+                    return len(text) * 12.0
+
+            def render_line(line, brain_on, pos=0.5):
+                app = types.SimpleNamespace()
+                app.cfg = {
+                    "karaoke": True,
+                    "marker": False,
+                    "ghost": False,
+                    "direction": "down",
+                    "spacing": 3,
+                    "visible_above": 2,
+                    "visible_below": 2,
+                    "header": False,
+                    "footer": False,
+                    "hints": False,
+                }
+                app.state = "lyrics"
+                app.lines = [line]
+                app.track = mod.Track()
+                app.theme = FakeTheme()
+                app.karaoke = True
+                app.karaoke_brain = brain_on
+                app.demo = False
+                app.position = lambda: pos
+                app.next_timed_start = lambda index: None
+                app.scroll_state = types.MethodType(mod.LyricsCarousel.scroll_state, app)
+                app._timed_lines = types.MethodType(mod.LyricsCarousel._timed_lines, app)
+                app.karaoke_amount = types.MethodType(mod.LyricsCarousel.karaoke_amount, app)
+                app.tr = lambda key, **kw: key
+
+                renderer = image.ImageRenderer.__new__(image.ImageRenderer)
+                renderer.app = app
+                renderer.fonts = {}
+                renderer.font_files = {"prueba": image.FALLBACK_FONT}
+                renderer._measure_draw = FakeBrush()
+                views = []
+                renderer._draw_karaoke = lambda *args: views.append(args)
+                renderer.fit_text = lambda text, limit, size, family: text
+                renderer._draw_centered = lambda *args, **kwargs: None
+                renderer._draw_marker = lambda *args, **kwargs: None
+                renderer._draw_lyrics(FakeBrush(), 450.0, 20.0, 1.2, "prueba", (0, 200, 0), pos, 0, 900)
+                return views
+
+            # Word-synced line (valid per-char timings)
+            synced = mod.LyricLine(0.0, 6.0, "hola mundo feliz")
+            synced.chars = [round(i * 0.2, 3) for i in range(len(synced.text))]
+
+            # Line without usable word timings
+            unsynced = mod.LyricLine(0.0, 6.0, "hola mundo feliz")
+            unsynced.chars = []
+
+            views = render_line(synced, brain_on=True, pos=0.5)
+            check("brain on: word-synced line uses progressive karaoke", len(views) == 1, "calls=%s" % len(views))
+            if views:
+                amount = views[0][6]
+                check(
+                    "brain on: word-synced line amount is progressive",
+                    0.0 < amount < len(synced.text),
+                    "amount=%r" % (amount,),
+                )
+
+            views = render_line(unsynced, brain_on=True, pos=0.5)
+            check(
+                "brain on: line without word timing has no progressive karaoke fill",
+                len(views) == 0 or (len(views) == 1 and views[0][6] >= len(unsynced.text) - 0.01),
+                "calls=%s amount=%r" % (len(views), views[0][6] if views else None),
+            )
+
+            views = render_line(synced, brain_on=False, pos=0.5)
+            check(
+                "brain off: classic progressive karaoke even with word timings",
+                len(views) == 1 and 0.0 < views[0][6] < len(synced.text),
+                "calls=%s amount=%r" % (len(views), views[0][6] if views else None),
+            )
+
+            views = render_line(unsynced, brain_on=False, pos=1.5)
+            check(
+                "brain off: classic progressive karaoke even without word timings",
+                len(views) == 1 and 0.0 < views[0][6] < len(unsynced.text),
+                "calls=%s amount=%r" % (len(views), views[0][6] if views else None),
+            )
+
+
+def check_estimated_times_do_not_advance_untimed_lines():
+    """The lines without a time are not placed before the real ones.
+
+    A lyric with a half-done LRC (some lines with a time and others without)
+    cannot spread the times at random: if the line without a time is at the
+    end of the list, it cannot start playing at second 6 and leave the part
+    with real times unhighlighted.
+    """
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
 
-            # Caso del revisor: la línea sin tiempo va al final.
+            # Reviewer case: the line without a time goes last.
             lines = [
                 mod.LyricLine(30.0, 0, "con tiempo"),
                 mod.LyricLine(60.0, 0, "con tiempo"),
@@ -2584,17 +2774,17 @@ def check_estimate_times_no_adelanta_las_sin_tiempo():
             ]
             mod.estimate_times(lines, 200.0)
             check(
-                "la línea sin tiempo no adelanta a las reales",
+                "the line without time does not overtake the real ones",
                 lines[2].start > lines[1].start,
                 str([line.start for line in lines]),
             )
             check(
-                "los tiempos reales no se mueven",
+                "the real timings do not move",
                 abs(lines[0].start - 30.0) < 0.01 and abs(lines[1].start - 60.0) < 0.01,
                 str([line.start for line in lines]),
             )
 
-            # Una línea sin tiempo en medio queda entre sus vecinas.
+            # A line without a time in the middle stays between its neighbours.
             lines = [
                 mod.LyricLine(10.0, 0, "primera"),
                 mod.LyricLine(-1, 0, "sin tiempo"),
@@ -2602,14 +2792,14 @@ def check_estimate_times_no_adelanta_las_sin_tiempo():
             ]
             mod.estimate_times(lines, 200.0)
             check(
-                "la línea sin tiempo queda entre las reales",
+                "the line without time stays between the real ones",
                 lines[0].start < lines[1].start < lines[2].start,
                 str([line.start for line in lines]),
             )
 
-            # Caso límite: varias líneas sin tiempo antes de una real muy
-            # temprana. No pueden acabar todas en el segundo 0 (ni
-            # desordenarse): tienen que repartirse sin salirse del origen.
+            # Edge case: several lines without a time before a very early
+            # real one. They cannot all end at second 0 (nor get out of
+            # order): they have to spread out without leaving the origin.
             lines = [
                 mod.LyricLine(-1, 0, "a"),
                 mod.LyricLine(-1, 0, "b"),
@@ -2617,54 +2807,54 @@ def check_estimate_times_no_adelanta_las_sin_tiempo():
                 mod.LyricLine(2.0, 0, "real"),
             ]
             mod.estimate_times(lines, 200.0)
-            inicios = [line.start for line in lines]
+            starts = [line.start for line in lines]
             check(
-                "las líneas sin tiempo se reparten sin solaparse",
-                inicios[0] < inicios[1] < inicios[2] < inicios[3],
-                str(inicios),
+                "the lines without time spread out without overlapping",
+                starts[0] < starts[1] < starts[2] < starts[3],
+                str(starts),
             )
             check(
-                "las líneas sin tiempo quedan antes de la real",
-                inicios[0] >= 0.0 and inicios[2] < 2.0,
-                str(inicios),
+                "the lines without time stay before the real one",
+                starts[0] >= 0.0 and starts[2] < 2.0,
+                str(starts),
             )
 
 
-def check_estimate_times_dentro_de_la_cancion():
-    """Las líneas sin tiempo se quedan dentro de la canción.
+def check_estimated_times_stay_inside_the_song():
+    """The lines without a time stay inside the song.
 
-    El hueco entre líneas no se deriva de la duración: con una canción de
-    200 s, una línea sin tiempo al final acababa en el segundo 226 (fuera
-    de la canción, así que nunca se resaltaba). Y si la lista de líneas
-    viene desordenada, la estimación tiene que caer después de la línea
-    anterior (no en un hueco calculado con una duración que no le
-    correspondía).
+    The gap between lines is not derived from the duration: with a 200 s
+    song, a line without a time at the end used to end at second 226
+    (outside the song, so it was never highlighted). And if the list of
+    lines comes out of order, the estimate has to fall after the previous
+    line (not in a gap computed with a duration that did not correspond to
+    it).
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
 
-            # Una línea sin tiempo al final: se queda a cuatro segundos de
-            # la última real, dentro de la canción.
+            # A line without a time at the end: it stays four seconds after
+            # the last real one, inside the song.
             lines = [
                 mod.LyricLine(30.0, 0, "con tiempo"),
                 mod.LyricLine(-1, 0, "sin tiempo"),
             ]
             mod.estimate_times(lines, 200.0)
             check(
-                "la línea sin tiempo del final no se sale de la canción",
+                "the line without time at the end does not leave the song",
                 30.0 < lines[1].start < 200.0,
                 str([line.start for line in lines]),
             )
             check(
-                "la línea sin tiempo del final va justo detrás de la real",
+                "the line without time at the end goes right after the real one",
                 lines[1].start <= 30.0 + 4.0,
                 str([line.start for line in lines]),
             )
 
-            # Lista desordenada: la estimación cae después de la línea
-            # anterior (la siguiente real viene antes en el tiempo, así que
-            # el hueco intermedio no sirve).
+            # Shuffled list: the estimate falls after the previous line (the
+            # next real one comes earlier in time, so the intermediate gap
+            # is useless).
             lines = [
                 mod.LyricLine(30.0, 0, "con tiempo"),
                 mod.LyricLine(-1, 0, "sin tiempo"),
@@ -2672,13 +2862,13 @@ def check_estimate_times_dentro_de_la_cancion():
             ]
             mod.estimate_times(lines, 200.0)
             check(
-                "con la lista desordenada la estimación va detrás de la anterior",
+                "with a shuffled list the estimate goes after the previous one",
                 30.0 < lines[1].start < 200.0,
                 str([line.start for line in lines]),
             )
 
-            # Varias líneas sin tiempo al final: todas dentro de la
-            # canción y sin solaparse.
+            # Several lines without a time at the end: all of them inside the
+            # song and without overlapping.
             lines = [
                 mod.LyricLine(180.0, 0, "con tiempo"),
                 mod.LyricLine(-1, 0, "a"),
@@ -2688,36 +2878,36 @@ def check_estimate_times_dentro_de_la_cancion():
                 mod.LyricLine(-1, 0, "e"),
             ]
             mod.estimate_times(lines, 200.0)
-            inicios = [line.start for line in lines]
+            starts = [line.start for line in lines]
             check(
-                "las líneas sin tiempo del final no se salen de la canción",
-                all(inicio < 200.0 for inicio in inicios[1:]),
-                str(inicios),
+                "the lines without time at the end do not leave the song",
+                all(start_value < 200.0 for start_value in starts[1:]),
+                str(starts),
             )
             check(
-                "las líneas sin tiempo del final se reparten en orden",
-                inicios[1] < inicios[2] < inicios[3] < inicios[4] < inicios[5],
-                str(inicios),
+                "the lines without time at the end spread out in order",
+                starts[1] < starts[2] < starts[3] < starts[4] < starts[5],
+                str(starts),
             )
 
-            # La última línea real puede caer justo al final (o más allá):
-            # las estimadas no pueden acabar en el segundo 104 de una
-            # canción de 100 s.
+            # The last real line may fall right at the end (or beyond): the
+            # estimated ones cannot end at second 104 of a
+            # 100 s song.
             lines = [
                 mod.LyricLine(100.0, 0, "con tiempo"),
                 mod.LyricLine(-1, 0, "sin tiempo"),
                 mod.LyricLine(-1, 0, "sin tiempo 2"),
             ]
             mod.estimate_times(lines, 100.0)
-            inicios = [line.start for line in lines]
+            starts = [line.start for line in lines]
             check(
-                "las estimadas tras una real al final no se salen de la canción",
-                all(0.0 <= inicio <= 100.0 for inicio in inicios[1:]),
-                str(inicios),
+                "the estimated ones after a real one at the end do not leave the song",
+                all(0.0 <= start_value <= 100.0 for start_value in starts[1:]),
+                str(starts),
             )
 
-            # Entre dos reales, la siguiente puede estar más allá del final
-            # de la canción: el hueco se recorta a la duración.
+            # Between two real ones, the next may be beyond the end of the
+            # song: the gap is clipped to the duration.
             lines = [
                 mod.LyricLine(10.0, 0, "con tiempo"),
                 mod.LyricLine(-1, 0, "sin tiempo"),
@@ -2725,30 +2915,30 @@ def check_estimate_times_dentro_de_la_cancion():
             ]
             mod.estimate_times(lines, 100.0)
             check(
-                "una estimada entre dos reales no se sale de la canción",
+                "an estimated one between two real ones does not leave the song",
                 0.0 <= lines[1].start <= 100.0,
                 str([line.start for line in lines]),
             )
 
-            # La primera real en el segundo 0 no deja hueco delante: las
-            # estimadas se quedan en el origen, no saltan detrás de ella.
+            # The first real line at second 0 leaves no gap before it: the
+            # estimated ones stay at the origin, they do not jump past it.
             lines = [
                 mod.LyricLine(-1, 0, "sin tiempo"),
                 mod.LyricLine(-1, 0, "sin tiempo 2"),
                 mod.LyricLine(0.0, 0, "con tiempo"),
             ]
             mod.estimate_times(lines, 100.0)
-            inicios = [line.start for line in lines]
+            starts = [line.start for line in lines]
             check(
-                "sin hueco antes de la primera real las estimadas no se adelantan",
-                inicios[0] <= inicios[2] and inicios[1] <= inicios[2] and inicios[0] <= inicios[1],
-                str(inicios),
+                "with no gap before the first real one the estimated ones do not jump ahead",
+                starts[0] <= starts[2] and starts[1] <= starts[2] and starts[0] <= starts[1],
+                str(starts),
             )
 
-            # Dos líneas reales con el MISMO tiempo no dejan hueco: la
-            # estimada no puede colocarse detrás de la siguiente, porque
-            # el resaltado volvería hacia atrás (la línea que va después
-            # en la lista ya se habría cantado).
+            # Two real lines with the SAME time leave no gap: the estimated
+            # one cannot be placed after the next, because the highlight
+            # would go backwards (the line that comes later in the list
+            # would already have been sung).
             lines = [
                 mod.LyricLine(10.0, 0, "primera"),
                 mod.LyricLine(-1, 0, "sin tiempo"),
@@ -2756,47 +2946,47 @@ def check_estimate_times_dentro_de_la_cancion():
             ]
             mod.estimate_times(lines, 200.0)
             check(
-                "sin hueco entre dos reales del mismo tiempo la estimada no va detrás",
+                "with no gap between two real ones with the same time the estimated one does not go after",
                 lines[1].start <= lines[2].start,
                 str([line.start for line in lines]),
             )
 
-            # Sin ninguna ancla también manda la duración: una canción
-            # corta no puede dejar líneas en el segundo 13.
+            # Without any anchor the duration also rules: a short song
+            # cannot leave lines at second 13.
             lines = [mod.LyricLine(-1, 0, "línea %d" % indice) for indice in range(10)]
             mod.estimate_times(lines, 10.0)
-            inicios = [line.start for line in lines]
+            starts = [line.start for line in lines]
             check(
-                "sin anclas las estimadas caben en una canción corta",
-                all(0.0 <= inicio <= 10.0 for inicio in inicios),
-                str(inicios),
+                "without anchors the estimated ones fit in a short song",
+                all(0.0 <= start_value <= 10.0 for start_value in starts),
+                str(starts),
             )
 
 
-def check_geometria_se_recorta_a_la_pantalla():
-    """La geometría de la ventana la aplica el panel, no el script.
+def check_geometry_is_clipped_to_the_screen():
+    """The window geometry is applied by the panel, not by the script.
 
-    El panel recorta el ancho y el alto al monitor y usa la API de
-    Noctalia (que sí funciona). El script intentaba hacer lo mismo con
-    `hyprctl dispatch` y una cuenta propia: la cuenta usaba el monitor
-    completo (no el area utilizable) y el resize se descartaba en
-    silencio, así que la ventana acababa fuera de la pantalla.
+    The panel clips the width and the height to the monitor and uses the
+    Noctalia API (which does work). The script used to try to do the same
+    with `hyprctl dispatch` and its own arithmetic: that arithmetic used the
+    whole monitor (not the usable area) and the resize was silently
+    discarded, so the window ended up off screen.
     """
     mod = script_module()
     check(
-        "el script no redimensiona la ventana por su cuenta",
+        "the script does not resize the window on its own",
         not hasattr(mod, "apply_geometry"),
-        "apply_geometry sigue en el script",
+        "apply_geometry is still in the script",
     )
 
 
-def check_tamano_de_la_ventana_por_hyprctl():
-    """El tamaño de la ventana se lee de Hyprland, en píxeles.
+def check_window_size_via_hyprctl():
+    """The window size is read from Hyprland, in pixels.
 
-    El ajuste width/height es el tamaño de la ventana en píxeles (lo que el
-    panel usa al crearla). La celda del terminal es otra medida: antes el
-    script guardaba las celdas (96x30) y la ventana se creaba de 96x30
-    píxeles, es decir, diminuta.
+    The width/height setting is the window size in pixels (what the panel
+    uses when creating it). The terminal cell is another measure: before,
+    the script stored the cells (96x30) and the window was created with
+    96x30 pixels, that is, tiny.
     """
     mod = script_module()
     original = mod.subprocess.run
@@ -2810,7 +3000,7 @@ def check_tamano_de_la_ventana_por_hyprctl():
             stderr="",
         )
         check(
-            "el tamaño de la ventana se lee de Hyprland",
+            "the window size is read from Hyprland",
             mod.window_size_px() == (1300, 900),
             str(mod.window_size_px()),
         )
@@ -2818,7 +3008,7 @@ def check_tamano_de_la_ventana_por_hyprctl():
             returncode=0, stdout="[]", stderr=""
         )
         check(
-            "sin ventana del carrusel no hay tamaño",
+            "without the carousel window there is no size",
             mod.window_size_px() is None,
             str(mod.window_size_px()),
         )
@@ -2827,24 +3017,24 @@ def check_tamano_de_la_ventana_por_hyprctl():
 
 
 def check_redimensionado_manual_se_guarda():
-    """El tamaño que elige el usuario a mano se guarda en píxeles.
+    """The size the user picks by hand is stored in pixels.
 
-    Redimensionar la ventana con el ratón no pasa por el panel, así que el
-    script lo guarda. Va a la capa de overrides (no al settings.toml):
-    escribir el settings.toml hace que Noctalia recargue la configuración
-    y cierre el panel que estuviera abierto.
+    Resizing the window with the mouse does not go through the panel, so the
+    script stores it. It goes to the overrides layer (not to settings.toml):
+    writing settings.toml makes Noctalia reload the configuration and close
+    the panel that was open.
     """
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             app = object.__new__(mod.LyricsCarousel)
             app.demo = False
             app.args = types.SimpleNamespace(debug=False)
             app.cfg = dict(mod.DEFAULTS)
             app._last_size_check = 0.0
-            guardados = []
+            saved_values = []
             app._save_override = (
-                lambda key, value, kind="string", persist=True: guardados.append(
+                lambda key, value, kind="string", persist=True: saved_values.append(
                     (key, value, kind, persist)
                 )
             )
@@ -2853,112 +3043,112 @@ def check_redimensionado_manual_se_guarda():
                 mod.window_size_px = lambda: (1300, 900)
                 app.check_manual_resize()
                 check(
-                    "el ancho redimensionado se guarda",
-                    any(k == "width" and v == 1300 for k, v, _, _ in guardados),
-                    str(guardados),
+                    "the resized width is saved",
+                    any(k == "width" and v == 1300 for k, v, _, _ in saved_values),
+                    str(saved_values),
                 )
                 check(
-                    "el alto redimensionado se guarda",
-                    any(k == "height" and v == 900 for k, v, _, _ in guardados),
-                    str(guardados),
+                    "the resized height is saved",
+                    any(k == "height" and v == 900 for k, v, _, _ in saved_values),
+                    str(saved_values),
                 )
                 check(
-                    "el tamaño se guarda en la capa de overrides",
-                    bool(guardados) and all(persist is False for _, _, _, persist in guardados),
-                    str(guardados),
+                    "the size is saved in the overrides layer",
+                    bool(saved_values) and all(persist is False for _, _, _, persist in saved_values),
+                    str(saved_values),
                 )
 
-                # El tamaño que ya está en los ajustes no se vuelve a guardar.
-                guardados.clear()
+                # The size already in the settings is not stored again.
+                saved_values.clear()
                 app.cfg["width"] = 1300
                 app.cfg["height"] = 900
                 app._last_size_check = 0.0
                 app.check_manual_resize()
                 check(
-                    "un tamaño que ya está guardado no se repite",
-                    not guardados,
-                    str(guardados),
+                    "a size that is already saved is not repeated",
+                    not saved_values,
+                    str(saved_values),
                 )
 
-                # Una ventana diminuta (por ejemplo a medio arrastrar) no vale.
-                guardados.clear()
+                # A tiny window (for example halfway through a drag) is no good.
+                saved_values.clear()
                 mod.window_size_px = lambda: (55, 15)
                 app._last_size_check = 0.0
                 app.check_manual_resize()
                 check(
-                    "una ventana diminuta no se guarda",
-                    not guardados,
-                    str(guardados),
+                    "a tiny window is not saved",
+                    not saved_values,
+                    str(saved_values),
                 )
             finally:
                 mod.window_size_px = original
 
 
-def check_lrc_horas():
-    """Un LRC con horas ([01:02:03]) no se descarta."""
+def check_lrc_hours():
+    """An LRC with hours ([01:02:03]) is not discarded."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             lines = mod.parse_lrc("[01:02:03]hola")
             check(
-                "un LRC con horas se interpreta",
+                "an LRC with hours is parsed",
                 len(lines) == 1 and abs(lines[0].start - 3723.0) < 0.01,
                 str([line.start for line in lines]),
             )
 
 
-def check_lrc_minutos():
-    """Un LRC con mas de 99 minutos ([100:00]) no se descarta."""
+def check_lrc_minutes():
+    """An LRC with more than 99 minutes ([100:00]) is not discarded."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             lines = mod.parse_lrc("[100:00]hola")
             check(
-                "un LRC con tres digitos de minutos se interpreta",
+                "an LRC with three-digit minutes is parsed",
                 len(lines) == 1 and abs(lines[0].start - 6000.0) < 0.01,
                 str([line.start for line in lines]),
             )
 
 
-def check_lrc_decimales():
-    """Un LRC con cuatro o seis decimales no se descarta."""
+def check_lrc_decimals():
+    """An LRC with four or six decimals is not discarded."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             lines = mod.parse_lrc("[00:12.1234]hola")
             check(
-                "un LRC con cuatro decimales se interpreta",
+                "an LRC with four decimals is parsed",
                 len(lines) == 1 and abs(lines[0].start - 12.1234) < 0.001,
                 str([line.start for line in lines]),
             )
-            # Seis decimales: el tiempo se guarda con milisegundos (lo que
-            # necesita el karaoke), pero la linea no se descarta.
+            # Six decimals: the time is stored with milliseconds (what the
+            # karaoke needs), but the line is not discarded.
             lines = mod.parse_lrc("[00:12.123456]hola")
             check(
-                "un LRC con seis decimales se interpreta",
+                "an LRC with six decimals is parsed",
                 len(lines) == 1 and abs(lines[0].start - 12.123) < 0.001,
                 str([line.start for line in lines]),
             )
 
 
-def check_texto_entre_angulos():
-    """Las etiquetas mejoradas no se comen el texto normal entre < >."""
+def check_text_between_angle_brackets():
+    """The enhanced tags do not eat the normal text between < >."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             lines = mod.parse_lrc("[00:01.00]I <3 you > me")
-            texto = lines[0].text if lines else ""
+            text = lines[0].text if lines else ""
             check(
-                "el texto con < y > se conserva",
-                "<3" in texto,
-                repr(texto),
+                "the text with < and > is preserved",
+                "<3" in text,
+                repr(text),
             )
 
 
-def check_cache_no_objeto():
-    """Un cache con un JSON que no es un objeto no lanza."""
+def check_cache_json_is_not_an_object():
+    """A cache with a JSON that is not an object does not raise."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             mod.CACHE_DIR = cache
             track = mod.Track("cancion", "artista", duration=100.0)
@@ -2966,49 +3156,49 @@ def check_cache_no_objeto():
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write("[]")
             try:
-                resultado = mod.load_cache(track)
+                outcome = mod.load_cache(track)
             except Exception as error:  # noqa: BLE001
-                resultado = error
+                outcome = error
             check(
-                "un cache que no es un objeto no lanza",
-                resultado is None,
-                repr(resultado)[:120],
+                "a cache that is not an object does not throw",
+                outcome is None,
+                repr(outcome)[:120],
             )
 
 
-def check_espacio_no_rompe():
-    """Si playerctl falla, la tecla de pausa no mata la ventana."""
+def check_pause_key_survives_playerctl_failure():
+    """If playerctl fails, the pause key does not kill the window."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             app = object.__new__(mod.LyricsCarousel)
             app.track = mod.Track("cancion", "artista", player="mpv")
             app._player = None
             original = mod.subprocess.run
 
-            def falla(*args, **kwargs):
-                raise OSError("no hay playerctl")
+            def fail(*args, **kwargs):
+                raise OSError("no playerctl")
 
-            mod.subprocess.run = falla
+            mod.subprocess.run = fail
             try:
-                resultado = app.handle_key(" ")
+                outcome = app.handle_key(" ")
             except Exception as error:  # noqa: BLE001
-                resultado = error
+                outcome = error
             finally:
                 mod.subprocess.run = original
             check(
-                "un playerctl que falla no mata la ventana",
-                resultado is True,
-                repr(resultado)[:120],
+                "a failing playerctl does not kill the window",
+                outcome is True,
+                repr(outcome)[:120],
             )
 
 
-def check_atajo_no_se_pierde():
-    """Pulsar 'd' no se revierte si la config aun tiene el valor viejo."""
+def check_shortcut_is_not_reverted():
+    """Pressing 'd' is not reverted if the config still has the old value."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
-        with env_temporal({"XDG_CACHE_HOME": cache}):
+        with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
-            app = _app_de_config(mod)
+            app = _config_app(mod)
             app._save_override = lambda key, value, kind="string": app.pending_overrides.__setitem__(
                 key, value
             )
@@ -3020,19 +3210,19 @@ def check_atajo_no_se_pierde():
             finally:
                 mod.load_settings = original
             check(
-                "el atajo 'd' no se pierde en la recarga",
+                "the 'd' shortcut is not lost on reload",
                 app.cfg.get("direction") == "up"
                 and app.direction == -1,
                 "direction=%s cfg=%s" % (app.direction, app.cfg.get("direction")),
             )
 
 
-def check_panel_cubre_manifiesto():
-    """Cada ajuste del manifiesto se puede cambiar desde el panel.
+def check_panel_covers_the_manifest():
+    """Every setting of the manifest can be changed from the panel.
 
-    La pagina de ajustes de Noctalia y el panel tienen que ofrecer lo mismo:
-    un ajuste que solo exista en la pagina de ajustes hace que el usuario
-    crea que el panel esta completo cuando no lo esta.
+    The Noctalia settings page and the panel have to offer the same thing:
+    a setting that only exists in the settings page makes the user think
+    the panel is complete when it is not.
     """
     try:
         import tomllib
@@ -3040,26 +3230,26 @@ def check_panel_cubre_manifiesto():
         with open(os.path.join(PLUGIN_DIR, "plugin.toml"), "rb") as handle:
             manifest = tomllib.load(handle)
     except Exception as error:  # noqa: BLE001
-        check("el manifiesto se puede leer para el panel", False, repr(error)[:120])
+        check("the manifest can be read for the panel", False, repr(error)[:120])
         return
     try:
         with open(os.path.join(PLUGIN_DIR, "panel.luau"), encoding="utf-8") as handle:
             panel = handle.read()
     except OSError as error:
-        check("el panel se puede leer", False, repr(error)[:120])
+        check("the panel can be read", False, repr(error)[:120])
         return
     for setting in manifest.get("setting", []):
         key = setting.get("key", "")
-        # El icono de la barra se configura en esta pagina y no en el panel:
-        # pertenece al widget de la barra, no a la ventana de letras. Es la
-        # unica clave que se permite fuera del panel.
+        # The bar icon is configured on this page and not in the panel: it
+        # belongs to the bar widget, not to the lyrics window. It is the only
+        # key allowed outside the panel.
         if key == "glyph":
             continue
-        # El panel puede tocar el ajuste de tres formas: escribirlo
-        # directamente (setSetting), a traves de una fila de interruptor
-        # (toggleRow) o con un control cuya clave es el propio ajuste
-        # (key = "...").
-        expuesto = (
+        # The panel can touch the setting in three ways: writing it
+        # directly (setSetting), through a toggle row
+        # (toggleRow) or with a control whose key is the setting
+        # itself (key = "...").
+        exposed = (
             f'setSetting("{key}"' in panel
             or f'toggleRow("{key}"' in panel
             or f'key = "{key}"' in panel
@@ -3070,23 +3260,23 @@ def check_panel_cubre_manifiesto():
             or f'sliderRow("{key}"' in panel
             or f'inputRow("{key}"' in panel
         )
-        check(f"el panel expone `{key}`", expuesto, key)
+        check(f"the panel exposes `{key}`", exposed, key)
 
 
-def check_hints_centrados():
-    """La fila de atajos queda centrada en la ventana de imagen.
+def check_centered_hints():
+    """The shortcuts row ends up centered in the image window.
 
-    Antes empezaba en el margen izquierdo y el sobrante se acumulaba a la
-    derecha: parecía descuadrada. Ahora se dibuja con el mismo centrado que
-    el resto de textos.
+    Before it started at the left margin and the leftover accumulated on
+    the right: it looked misaligned. Now it is drawn with the same centering
+    as the rest of the texts.
     """
     mod = image_module()
     if mod.Image is None:
-        check("los hints se pueden medir (Pillow)", False, "sin Pillow")
+        check("the hints can be measured (Pillow)", False, "without Pillow")
         return
 
-    imagen = mod.Image.new("RGBA", (1000, 200), (0, 0, 0, 0))
-    pincel = mod.ImageDraw.Draw(imagen)
+    image = mod.Image.new("RGBA", (1000, 200), (0, 0, 0, 0))
+    brush = mod.ImageDraw.Draw(image)
     app = types.SimpleNamespace(
         texts={"hints": ["pulsa [q] para salir"]},
         theme=types.SimpleNamespace(
@@ -3100,17 +3290,17 @@ def check_hints_centrados():
     renderer.app = app
     renderer.fonts = {}
     renderer.font_files = {"prueba": mod.FALLBACK_FONT}
-    renderer._measure_draw = pincel
-    renderer._draw_hints(pincel, 20.0, "prueba")
+    renderer._measure_draw = brush
+    renderer._draw_hints(brush, 20.0, "prueba")
 
-    caja = imagen.getbbox()
-    check("los atajos se dibujan", caja is not None, repr(caja))
-    if caja is not None:
-        centro = (caja[0] + caja[2]) / 2.0
+    box = image.getbbox()
+    check("the shortcuts are drawn", box is not None, repr(box))
+    if box is not None:
+        center_x = (box[0] + box[2]) / 2.0
         check(
-            "los atajos quedan centrados",
-            abs(centro - 500.0) <= 2.0,
-            "centro=%.1f bbox=%s" % (centro, caja),
+            "the shortcuts end up centered",
+            abs(center_x - 500.0) <= 2.0,
+            "center=%.1f bbox=%s" % (center_x, box),
         )
 
 
@@ -3126,17 +3316,17 @@ def check_translate_lyrics_false_default():
     )
 
 
-def check_reparto_de_ajustes():
-    """El manifiesto no duplica lo que ya se cambia en el panel.
+def check_settings_are_split():
+    """The manifest does not duplicate what is already changed in the panel.
 
-    El usuario no considera necesarias las opciones de la configuracion de
-    Noctalia que ya estan en el panel, asi que el manifiesto solo declara lo
-    que el panel no ofrece. Si alguien vuelve a anadir una clave que el panel
-    ya controla, la pagina de ajustes y el panel vuelven a ofrecer lo mismo
-    con dos limites distintos.
+    The user does not consider the Noctalia configuration options that are
+    already in the panel necessary, so the manifest only declares what the
+    panel does not offer. If someone adds a key back that the panel already
+    controls, the settings page and the panel end up offering the same
+    thing with two different limits.
 
-    La excepcion es `glyph`: es el icono del widget de la barra, que se
-    configura en esta pagina y no en la ventana de letras.
+    The exception is `glyph`: it is the icon of the bar widget, which is
+    configured on this page and not in the lyrics window.
     """
     try:
         import tomllib
@@ -3144,137 +3334,137 @@ def check_reparto_de_ajustes():
         with open(os.path.join(PLUGIN_DIR, "plugin.toml"), "rb") as handle:
             manifest = tomllib.load(handle)
     except Exception as error:  # noqa: BLE001
-        check("el manifiesto se puede leer para el reparto", False, repr(error)[:120])
+        check("the manifest can be read for the split", False, repr(error)[:120])
         return
-    declaradas = {
+    declared = {
         setting.get("key", "")
         for setting in manifest.get("setting", [])
         if setting.get("key")
     }
-    solo_en_ajustes = {"glyph"}
+    only_in_settings = {"glyph"}
 
-    # Lo que el panel controla: es la lista de claves de lib/settings.luau
-    # (DEFAULTS), no un texto suelto, para que la prueba no se quede vieja.
+    # What the panel controls: it is the list of keys of lib/settings.luau
+    # (DEFAULTS), not loose text, so that the test does not go stale.
     lib = os.path.join(PLUGIN_DIR, "lib", "settings.luau")
-    del_panel = set()
+    from_panel = set()
     try:
         with open(lib, encoding="utf-8") as handle:
-            texto = handle.read()
+            text = handle.read()
     except OSError as error:
-        check("la lista de claves se puede leer", False, repr(error)[:120])
+        check("the list of keys can be read", False, repr(error)[:120])
         return
-    bloque = re.search(r"local DEFAULTS = \{(.*?)\n\}", texto, re.S)
-    if bloque:
-        for encontrado in re.finditer(r"^\s{2}(\w+)\s*=", bloque.group(1), re.M):
-            del_panel.add(encontrado.group(1))
-    check("la lista de claves del panel se puede leer", bool(del_panel))
+    block = re.search(r"local DEFAULTS = \{(.*?)\n\}", text, re.S)
+    if block:
+        for found in re.finditer(r"^\s{2}(\w+)\s*=", block.group(1), re.M):
+            from_panel.add(found.group(1))
+    check("the list of panel keys can be read", bool(from_panel))
 
-    duplicados = sorted((declaradas - solo_en_ajustes) & del_panel)
+    duplicates = sorted((declared - only_in_settings) & from_panel)
     check(
-        "el manifiesto no repite los ajustes del panel",
-        not duplicados,
-        "duplicados=%s" % (duplicados,),
+        "the manifest does not repeat the panel settings",
+        not duplicates,
+        "duplicates=%s" % (duplicates,),
     )
     check(
-        "el manifiesto solo deja lo que no esta en el panel",
-        declaradas <= solo_en_ajustes,
-        "declaradas=%s" % (sorted(declaradas),),
+        "the manifest only leaves what is not in the panel",
+        declared <= only_in_settings,
+        "declared=%s" % (sorted(declared),),
     )
     check(
-        "el icono de la barra sigue en el manifiesto",
-        "glyph" in declaradas,
-        str(sorted(declaradas)),
+        "the bar icon is still in the manifest",
+        "glyph" in declared,
+        str(sorted(declared)),
     )
 
 
 def check_panel_attached():
-    """El panel se abre pegado al widget, no en el centro de la pantalla."""
+    """The panel opens attached to the widget, not in the center of the screen."""
     try:
         import tomllib
 
         with open(os.path.join(PLUGIN_DIR, "plugin.toml"), "rb") as handle:
             manifest = tomllib.load(handle)
     except Exception as error:  # noqa: BLE001
-        check("el manifiesto se puede leer para la colocacion", False, repr(error)[:120])
+        check("the manifest can be read for the placement", False, repr(error)[:120])
         return
     panel = (manifest.get("panel") or [{}])[0]
     check(
-        "el panel se abre attached",
+        "the panel opens attached",
         panel.get("placement") == "attached",
         str(panel.get("placement")),
     )
     check(
-        "el panel se abre junto al widget",
+        "the panel opens next to the widget",
         panel.get("open_near_click") is True,
         str(panel.get("open_near_click")),
     )
 
 
-def check_salida_al_cerrar():
-    """El script sale cuando la salida se cierra (la terminal se cierra).
+def check_output_on_close():
+    """The script exits when the output is closed (the terminal is closed).
 
-    Se ejecuta con la salida hacia una tuberia cuyo extremo de lectura
-    esta cerrado: las escrituras fallan y el script tiene que salir, en
-    vez de quedarse dibujando en el vacio. Con un pty no valia: el
-    SIGHUP del kernel lo interceptaba el propio script y salia con
-    codigo 0 sin pasar por su deteccion.
+    It is run with the output pointing to a pipe whose read end is closed:
+    the writes fail and the script has to exit, instead of staying there
+    drawing into the void. With a pty it did not work: the kernel SIGHUP
+    was intercepted by the script itself and it exited with code 0 without
+    going through its own detection.
     """
-    temporal = tempfile.mkdtemp(prefix="lyrics-carousel-cierre-")
-    overrides = os.path.join(temporal, "overrides.json")
-    # El script escribe su diagnóstico en la caché: sin aislar
-    # XDG_CACHE_HOME el autotest deja un debug.log en la caché real.
-    entorno = entorno_de_prueba(temporal)
-    entorno["LYRICS_CAROUSEL_OVERRIDES"] = overrides
-    lectura, escritura = os.pipe()
-    os.close(lectura)  # el que lee se cierra: escribir falla
-    proceso = subprocess.Popen(
+    temporary = tempfile.mkdtemp(prefix="lyrics-carousel-cierre-")
+    overrides = os.path.join(temporary, "overrides.json")
+    # The script writes its diagnostics into the cache: without isolating
+    # XDG_CACHE_HOME the self-test leaves a debug.log in the real cache.
+    environment = test_environment(temporary)
+    environment["LYRICS_CAROUSEL_OVERRIDES"] = overrides
+    read_end, escritura = os.pipe()
+    os.close(read_end)  # the reading end is closed: writing fails
+    process = subprocess.Popen(
         [sys.executable, os.path.join(HERE, "lyrics-carousel"), "--demo"],
         stdout=escritura,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
-        env=entorno,
+        env=environment,
     )
     os.close(escritura)
-    codigo = None
+    code = None
     try:
-        codigo = proceso.wait(timeout=30)
+        code = process.wait(timeout=30)
     except subprocess.TimeoutExpired:
-        proceso.kill()
-        proceso.wait(timeout=10)
-    # 0: salida normal. 120: Python avisa de que no pudo vaciar la salida
-    # al terminar (normal si estaba cerrada). Lo que no vale es que se
-    # quede colgado (sin codigo) o muera por una senal (codigo negativo).
+        process.kill()
+        process.wait(timeout=10)
+    # 0: normal exit. 120: Python warns that it could not flush the output
+    # on exit (normal if it was closed). What is not acceptable is hanging
+    # (no code) or dying from a signal (negative code).
     check(
-        "el script sale al cerrar la salida",
-        codigo is not None and codigo >= 0,
-        "código %s" % codigo,
+        "the script exits when the output is closed",
+        code is not None and code >= 0,
+        "exit code %s" % code,
     )
-    shutil.rmtree(temporal, ignore_errors=True)
+    shutil.rmtree(temporary, ignore_errors=True)
 
 
-def entorno_de_prueba(base: str) -> dict:
-    """Entorno aislado: ninguna variable puede apuntar al estado real.
+def test_environment(base: str) -> dict:
+    """Isolated environment: no variable can point to the real state.
 
-    paths.state_dir() prioriza LYRICS_CAROUSEL_STATE y NOCTALIA_STATE_HOME
-    por encima de XDG_STATE_HOME, y paths.overrides_path() prioriza
-    LYRICS_CAROUSEL_OVERRIDES: aislar solo HOME (o solo XDG_STATE_HOME) no
-    basta. Con cualquiera de esas variables definidas (lo habitual en un
-    escritorio) el volcado escribe en los ajustes de verdad y borra la
-    capa de overrides del usuario.
+    paths.state_dir() prioritizes LYRICS_CAROUSEL_STATE and NOCTALIA_STATE_HOME
+    over XDG_STATE_HOME, and paths.overrides_path() prioritizes
+    LYRICS_CAROUSEL_OVERRIDES: isolating only HOME (or only XDG_STATE_HOME)
+    is not enough. With any of those variables defined (the usual case on a
+    desktop) the dump writes to the real settings and wipes the user's
+    overrides layer.
 
-    Todas las pruebas que lanzan el script o el helper usan esta funcion:
-    el aislamiento tiene que estar en un unico sitio, o se olvida en
-    alguna.
+    Every test that launches the script or the helper uses this function:
+    the isolation has to live in a single place, or it gets forgotten
+    somewhere.
     """
     env = dict(os.environ)
-    estado = os.path.join(base, ".local", "state")
+    state_value = os.path.join(base, ".local", "state")
     env["HOME"] = base
-    env["XDG_STATE_HOME"] = estado
-    env["NOCTALIA_STATE_HOME"] = estado
+    env["XDG_STATE_HOME"] = state_value
+    env["NOCTALIA_STATE_HOME"] = state_value
     env["XDG_CACHE_HOME"] = os.path.join(base, ".cache")
-    env["LYRICS_CAROUSEL_STATE"] = os.path.join(estado, "noctalia")
+    env["LYRICS_CAROUSEL_STATE"] = os.path.join(state_value, "noctalia")
     env["LYRICS_CAROUSEL_OVERRIDES"] = os.path.join(
-        estado,
+        state_value,
         "noctalia",
         "plugins",
         "data",
@@ -3282,24 +3472,24 @@ def entorno_de_prueba(base: str) -> dict:
         "lyrics-carousel",
         "overrides.json",
     )
-    # Los subprocesos importan paths/graphics/image_renderer: sin esto
-    # dejarian bin/__pycache__/*.pyc en el plugin.
+    # The subprocesses import paths/graphics/image_renderer: without this
+    # they would leave bin/__pycache__/*.pyc in the plugin.
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env.pop("COLUMNS", None)
     env.pop("LINES", None)
     return env
 
 
-def probar_helper_volcado(fake_home: str) -> dict:
-    """Ejecuta el helper con un override y su volcado al settings.toml.
+def test_helper_dump(fake_home: str) -> dict:
+    """Runs the helper with an override and its dump into settings.toml.
 
-    Se separa en su propia funcion para que las pruebas puedan repetirla
-    con un entorno distinto (por ejemplo, con XDG_STATE_HOME apuntando al
-    estado "real") y comprobar que no lo tocan.
+    It is split into its own function so that the tests can repeat it with
+    a different environment (for example, with XDG_STATE_HOME pointing to
+    the "real" state) and check that they do not touch it.
 
-    Devuelve un diccionario con lo ocurrido.
+    Returns a dictionary with what happened.
     """
-    resultado = {
+    outcome = {
         "crea_directorio": False,
         "vuelca": False,
         "detalle": "",
@@ -3311,8 +3501,8 @@ def probar_helper_volcado(fake_home: str) -> dict:
     fake_settings = os.path.join(fake_state, "settings.toml")
     with open(fake_settings, "w", encoding="utf-8") as handle:
         handle.write("")
-    env = entorno_de_prueba(fake_home)
-    resultado["env"] = env
+    env = test_environment(fake_home)
+    outcome["env"] = env
     try:
         result = subprocess.run(
             [sys.executable, HELPER, "override", "marker", "true", "bool"],
@@ -3325,12 +3515,12 @@ def probar_helper_volcado(fake_home: str) -> dict:
             fake_home,
             ".local/state/noctalia/plugins/data/faminec/lyrics-carousel",
         )
-        resultado["crea_directorio"] = result.returncode == 0 and os.path.isdir(fake_dir)
-        resultado["detalle"] = result.stderr.strip()[:120]
-        # El volcado se intenta siempre: si el helper no ha podido
-        # escribir, el merge tambien fallara y se vera igual. Asi la
-        # prueba reproduce el caso dangerous: con el estado real en
-        # XDG_STATE_HOME, el volcado happens ahi y no en el temporal.
+        outcome["crea_directorio"] = result.returncode == 0 and os.path.isdir(fake_dir)
+        outcome["detalle"] = result.stderr.strip()[:120]
+        # The dump is always attempted: if the helper could not write, the
+        # merge will fail too and it will be noticed anyway. This way the
+        # test reproduces the dangerous case: with the real state in
+        # XDG_STATE_HOME, the dump happens there and not in the temporary one.
         merge = subprocess.run(
             [sys.executable, HELPER, "merge"],
             capture_output=True,
@@ -3339,163 +3529,163 @@ def probar_helper_volcado(fake_home: str) -> dict:
             env=env,
         )
         with open(fake_settings, encoding="utf-8") as handle:
-            resultado["settings"] = handle.read()
-        resultado["vuelca"] = merge.returncode == 0 and "marker = true" in resultado["settings"]
-        resultado["detalle"] = merge.stderr.strip()[:120]
+            outcome["settings"] = handle.read()
+        outcome["vuelca"] = merge.returncode == 0 and "marker = true" in outcome["settings"]
+        outcome["detalle"] = merge.stderr.strip()[:120]
     except (OSError, subprocess.SubprocessError) as error:
-        resultado["detalle"] = repr(error)[:120]
-    return resultado
+        outcome["detalle"] = repr(error)[:120]
+    return outcome
 
 
-def check_estado_real_intocable():
-    """El autotest no puede escribir en el estado real del usuario.
+def check_real_state_is_untouched():
+    """The self-test cannot write to the real state of the user.
 
-    paths.state_dir() prioriza LYRICS_CAROUSEL_STATE y NOCTALIA_STATE_HOME
-    por encima de XDG_STATE_HOME, y paths.overrides_path() prioriza
-    LYRICS_CAROUSEL_OVERRIDES. Con cualquiera de esas variables definidas
-    (lo habitual en un escritorio) el volcado escribe en los ajustes de
-    verdad y borra la capa de overrides del usuario.
+    paths.state_dir() prioritizes LYRICS_CAROUSEL_STATE and NOCTALIA_STATE_HOME
+    over XDG_STATE_HOME, and paths.overrides_path() prioritizes
+    LYRICS_CAROUSEL_OVERRIDES. With any of those variables defined (the
+    usual case on a desktop) the dump writes to the real settings and wipes
+    the user's overrides layer.
 
-    La prueba demuestra las dos mitades: sin aislamiento el volcado SI
-    llega a la trampa (si no, comprobar que no llega no probaria nada), y
-    con el aislamiento la trampa queda intacta.
+    The test proves both halves: without isolation the dump DOES reach the
+    trap (otherwise checking that it does not reach it would prove
+    nothing), and with the isolation the trap is left intact.
     """
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-estado-") as temporal:
-        trampa = os.path.join(temporal, "estado-real")
-        datos = os.path.join(
-            trampa, "noctalia", "plugins", "data", "faminec", "lyrics-carousel"
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-estado-") as temporary:
+        trap = os.path.join(temporary, "estado-real")
+        data = os.path.join(
+            trap, "noctalia", "plugins", "data", "faminec", "lyrics-carousel"
         )
-        os.makedirs(datos, exist_ok=True)
-        settings = os.path.join(trampa, "noctalia", "settings.toml")
-        overrides = os.path.join(datos, "overrides.json")
-        contenido = '[plugin_settings."faminec/lyrics-carousel"]\nfont_size = 22\n'
+        os.makedirs(data, exist_ok=True)
+        settings = os.path.join(trap, "noctalia", "settings.toml")
+        overrides = os.path.join(data, "overrides.json")
+        content = '[plugin_settings."faminec/lyrics-carousel"]\nfont_size = 22\n'
 
-        def preparar_trampa():
+        def prepare_trap():
             with open(settings, "w", encoding="utf-8") as handle:
-                handle.write(contenido)
+                handle.write(content)
             with open(overrides, "w", encoding="utf-8") as handle:
                 json.dump({"font_size": 22}, handle)
 
-        preparar_trampa()
+        prepare_trap()
 
-        # 1) El entorno del usuario: el estado de verdad esta en las
-        #    variables que prioriza paths.py. Sin aislamiento, el volcado
-        #    llega ahi (y borra la capa de overrides).
-        hostil = dict(os.environ)
-        hostil["NOCTALIA_STATE_HOME"] = trampa
-        hostil["XDG_STATE_HOME"] = trampa
-        hostil["LYRICS_CAROUSEL_STATE"] = os.path.join(trampa, "noctalia")
-        hostil["LYRICS_CAROUSEL_OVERRIDES"] = overrides
+        # 1) The user environment: the real state lives in the variables
+        #    that paths.py prioritizes. Without isolation, the dump reaches
+        #    there (and wipes the overrides layer).
+        hostile = dict(os.environ)
+        hostile["NOCTALIA_STATE_HOME"] = trap
+        hostile["XDG_STATE_HOME"] = trap
+        hostile["LYRICS_CAROUSEL_STATE"] = os.path.join(trap, "noctalia")
+        hostile["LYRICS_CAROUSEL_OVERRIDES"] = overrides
         subprocess.run(
             [sys.executable, HELPER, "override", "font_size", "30", "int"],
             capture_output=True,
             text=True,
             timeout=15,
-            env=hostil,
+            env=hostile,
         )
         with open(overrides, encoding="utf-8") as handle:
-            override_alcanzado = json.load(handle)
+            override_reached = json.load(handle)
         check(
-            "sin aislamiento el volcado llega a la capa de overrides",
-            override_alcanzado.get("font_size") == 30,
-            str(override_alcanzado),
+            "without isolation the dump reaches the overrides layer",
+            override_reached.get("font_size") == 30,
+            str(override_reached),
         )
         subprocess.run(
             [sys.executable, HELPER, "merge"],
             capture_output=True,
             text=True,
             timeout=15,
-            env=hostil,
+            env=hostile,
         )
         with open(settings, encoding="utf-8") as handle:
-            alcanzado = handle.read()
+            reached = handle.read()
         check(
-            "sin aislamiento el volcado llega al settings.toml",
-            "font_size = 30" in alcanzado,
-            alcanzado[:100],
+            "without isolation the dump reaches settings.toml",
+            "font_size = 30" in reached,
+            reached[:100],
         )
 
-        # 2) Con el aislamiento, la trampa queda como estaba y el volcado
-        #    va al temporal.
-        preparar_trampa()
+        # 2) With the isolation, the trap is left as it was and the dump
+        #    goes to the temporary one.
+        prepare_trap()
         with tempfile.TemporaryDirectory() as temporal2:
-            resultado = probar_helper_volcado(temporal2)
-        check("el volcado va al temporal", resultado["vuelca"], resultado["detalle"])
+            outcome = test_helper_dump(temporal2)
+        check("the dump goes to the temporary one", outcome["vuelca"], outcome["detalle"])
         with open(settings, encoding="utf-8") as handle:
-            despues = handle.read()
+            after = handle.read()
         check(
-            "el autotest no toca el settings.toml real",
-            despues == contenido,
-            despues[:100],
+            "the self-test does not touch the real settings.toml",
+            after == content,
+            after[:100],
         )
         with open(overrides, encoding="utf-8") as handle:
-            overrides_despues = json.load(handle)
+            overrides_after = json.load(handle)
         check(
-            "el autotest no toca la capa de overrides real",
-            overrides_despues.get("font_size") == 22,
-            str(overrides_despues),
+            "the self-test does not touch the real overrides layer",
+            overrides_after.get("font_size") == 22,
+            str(overrides_after),
         )
 
 
-def check_limites_del_panel_y_el_script():
-    """El panel y el script recortan con los mismos rangos.
+def check_limits_of_panel_and_script():
+    """The panel and the script clip with the same ranges.
 
-    El manifiesto solo declara el icono de la barra, asi que los rangos ya no
-    viven en plugin.toml: los aplica el panel antes de escribir
-    (lib/settings.luau) y el script al leerlos. Si divergieran, el panel
-    dejaria guardar un valor que la ventana despues descarta, y el usuario
-    veria un numero que no se aplica.
+    The manifest only declares the bar icon, so the ranges no longer live
+    in plugin.toml: the panel applies them before writing (lib/settings.luau)
+    and the script applies them when reading them. If they diverged, the
+    panel would let a value be stored that the window later discards, and
+    the user would see a number that is not applied.
     """
     lib = os.path.join(os.path.dirname(HERE), "lib", "settings.luau")
-    copia = {}
+    copy = {}
     try:
         with open(lib, encoding="utf-8") as handle:
-            texto = handle.read()
+            text = handle.read()
     except OSError as error:
-        check("el panel declara limites", False, repr(error)[:120])
+        check("the panel declares limits", False, repr(error)[:120])
         return
-    bloque = re.search(r"local LIMITS = \{(.*?)\n\}", texto, re.S)
-    if bloque:
-        for linea in bloque.group(1).splitlines():
-            encontrado = re.match(
+    block = re.search(r"local LIMITS = \{(.*?)\n\}", text, re.S)
+    if block:
+        for lyric_line in block.group(1).splitlines():
+            found = re.match(
                 r"\s*(\w+)\s*=\s*\{\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\}",
-                linea,
+                lyric_line,
             )
-            if encontrado:
-                copia[encontrado.group(1)] = (
-                    float(encontrado.group(2)),
-                    float(encontrado.group(3)),
+            if found:
+                copy[found.group(1)] = (
+                    float(found.group(2)),
+                    float(found.group(3)),
                 )
-    check("el panel declara limites", bool(copia), str(sorted(copia))[:120])
-    if not copia:
+    check("the panel declares limits", bool(copy), str(sorted(copy))[:120])
+    if not copy:
         return
 
-    # La copia del script: los recortes de load_settings.
+    # The copy of the script: the clips of load_settings.
     try:
         with open(os.path.join(HERE, "lyrics-carousel"), encoding="utf-8") as handle:
-            guion = handle.read()
+            script_source = handle.read()
     except OSError as error:
-        check("el script se puede leer", False, repr(error)[:120])
+        check("the script can be read", False, repr(error)[:120])
         return
-    recortes = {}
-    for encontrado in re.finditer(
+    crops = {}
+    for found in re.finditer(
         r'cfg\["(\w+)"\]\s*=\s*max\(\s*(-?[\d.]+)\s*,\s*min\(\s*(-?[\d.]+)\s*,',
-        guion,
+        script_source,
     ):
-        recortes[encontrado.group(1)] = (
-            float(encontrado.group(2)),
-            float(encontrado.group(3)),
+        crops[found.group(1)] = (
+            float(found.group(2)),
+            float(found.group(3)),
         )
     check(
-        "el script recorta con los rangos del panel",
-        recortes == copia,
-        f"script={sorted(recortes.items())} panel={sorted(copia.items())}",
+        "the script clips with the panel ranges",
+        crops == copy,
+        f"script={sorted(crops.items())} panel={sorted(copy.items())}",
     )
 
-    # El helper ya no recorta rangos: el manifiesto no los declara. Lo que
-    # conserva es el formato (patrones) y la escritura atomica. Comprobar que
-    # NO recorta es tan importante como lo contrario: si alguien vuelve a
-    # poner limites en el manifiesto, el helper perderia valores en silencio.
+    # The helper no longer clips ranges: the manifest does not declare them.
+    # What it keeps is the format (patterns) and the atomic write. Checking
+    # that it does NOT clip is as important as the opposite: if someone puts
+    # the limits back in the manifest, the helper would silently lose values.
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("set_setting_sin_tomllib", HELPER)
@@ -3503,17 +3693,17 @@ def check_limites_del_panel_y_el_script():
     try:
         spec.loader.exec_module(helper)
     except Exception as error:  # noqa: BLE001
-        check("el helper se puede cargar", False, repr(error)[:120])
+        check("the helper can be loaded", False, repr(error)[:120])
         return
     check(
-        "el helper tiene fallback para leer los limites",
-        hasattr(helper, "manifest_limits_sin_tomllib"),
+        "the helper has a fallback to read the limits",
+        hasattr(helper, "manifest_limits_without_tomllib"),
     )
-    if not hasattr(helper, "manifest_limits_sin_tomllib"):
+    if not hasattr(helper, "manifest_limits_without_tomllib"):
         return
 
-    # El fallback sin tomllib sigue leyendo lo que haya en el manifiesto: se
-    # prueba con un manifiesto de mentira porque el real ya no declara rangos.
+    # The fallback without tomllib keeps reading whatever the manifest has:
+    # it is tested with a fake manifest because the real one declares no ranges.
     with tempfile.NamedTemporaryFile(
         "w", suffix=".toml", delete=False, encoding="utf-8"
     ) as handle:
@@ -3527,27 +3717,27 @@ def check_limites_del_panel_y_el_script():
             "min = 1\n"
             "max = 2\n"
         )
-        manifiesto_simple = handle.name
+        simple_manifest = handle.name
     try:
         if helper.tomllib is not None:
-            with open(manifiesto_simple, "rb") as handle:
-                datos = helper.tomllib.load(handle)
-            con_tomllib = {
+            with open(simple_manifest, "rb") as handle:
+                data = helper.tomllib.load(handle)
+            with_tomllib = {
                 campo["key"]: (campo.get("min"), campo.get("max"))
-                for campo in datos.get("setting", [])
+                for campo in data.get("setting", [])
                 if campo.get("min") is not None or campo.get("max") is not None
             }
             check(
-                "sin tomllib se leen los mismos limites",
-                helper.manifest_limits_sin_tomllib(manifiesto_simple) == con_tomllib,
-                f"regex={sorted(helper.manifest_limits_sin_tomllib(manifiesto_simple).items())}"
-                f" tomllib={sorted(con_tomllib.items())}",
+                "without tomllib the same limits are read",
+                helper.manifest_limits_without_tomllib(simple_manifest) == with_tomllib,
+                f"regex={sorted(helper.manifest_limits_without_tomllib(simple_manifest).items())}"
+                f" tomllib={sorted(with_tomllib.items())}",
             )
 
-        # El fallback no puede depender de que el manifiesto use solo el
-        # formato mas simple: cualquier bloque que no sea [[setting]] debe
-        # cortar el ajuste anterior, y los valores pueden ir entre comillas
-        # simples, con signo + o en notacion cientifica.
+        # The fallback cannot rely on the manifest using only the simplest
+        # format: any block that is not [[setting]] must cut the previous
+        # setting, and the values may be in single quotes, with a + sign or
+        # in scientific notation.
         with tempfile.NamedTemporaryFile(
             "w", suffix=".toml", delete=False, encoding="utf-8"
         ) as handle:
@@ -3566,78 +3756,78 @@ def check_limites_del_panel_y_el_script():
                 "min = 1.0\n"
                 "max = 2.5\n"
             )
-            manifiesto_raro = handle.name
+            odd_manifest = handle.name
         try:
-            limites_raros = helper.manifest_limits_sin_tomllib(manifiesto_raro)
+            odd_limits = helper.manifest_limits_without_tomllib(odd_manifest)
         finally:
-            os.unlink(manifiesto_raro)
+            os.unlink(odd_manifest)
         check(
-            "el fallback corta en cualquier bloque y acepta otros formatos",
-            limites_raros == {"font_size": (6, 100), "active_scale": (1, 2.5)},
-            str(limites_raros),
+            "the fallback cuts on any block and accepts other formats",
+            odd_limits == {"font_size": (6, 100), "active_scale": (1, 2.5)},
+            str(odd_limits),
         )
 
-        # Y el recorte del helper funciona si el manifiesto los trae de verdad.
+        # And the clipping of the helper works if the manifest really brings them.
         original = helper._MANIFEST_LIMITS
         try:
             helper._MANIFEST_LIMITS = {"font_size": (6, 96)}
             check(
-                "con limites en el manifiesto el helper recorta",
+                "with limits in the manifest the helper clips",
                 helper.clamp_value("font_size", 9999) == 96,
                 str(helper.clamp_value("font_size", 9999)),
             )
         finally:
             helper._MANIFEST_LIMITS = original
     finally:
-        os.unlink(manifiesto_simple)
+        os.unlink(simple_manifest)
 
-    # Lo que de verdad protege al usuario: un valor fuera de rango que
-    # llegue al settings.toml (un IPC, el fichero editado a mano) se recorta
-    # al leerlo.
-    def cargar(valores: dict) -> dict:
-        with tempfile.TemporaryDirectory(prefix="lyrics-carousel-limites-") as temporal:
-            with env_temporal(
+    # What really protects the user: an out-of-range value that
+    # reaches settings.toml (an IPC, the file edited by hand) is clipped
+    # when it is read.
+    def load_config(values: dict) -> dict:
+        with tempfile.TemporaryDirectory(prefix="lyrics-carousel-limites-") as temporary:
+            with temporary_env(
                 {
-                    "XDG_CACHE_HOME": os.path.join(temporal, "cache"),
+                    "XDG_CACHE_HOME": os.path.join(temporary, "cache"),
                 }
-            ), estado_temporal(temporal) as destino:
+            ), temporary_state(temporary) as destination:
                 with open(
-                    os.path.join(destino, "settings.toml"), "w", encoding="utf-8"
+                    os.path.join(destination, "settings.toml"), "w", encoding="utf-8"
                 ) as handle:
                     handle.write('[plugin_settings."faminec/lyrics-carousel"]\n')
-                    for clave, valor in valores.items():
-                        handle.write(f"{clave} = {valor}\n")
+                    for setting_key, setting_value in values.items():
+                        handle.write(f"{setting_key} = {setting_value}\n")
                 mod = script_module()
                 return mod.load_settings()
 
     for etiqueta, elegir in (
-        ("arriba", lambda bajo, alto: alto),
-        ("abajo", lambda bajo, alto: bajo),
+        ("arriba", lambda low, height: height),
+        ("abajo", lambda low, height: low),
     ):
-        valores = {}
-        for clave, (bajo, alto) in copia.items():
-            valores[clave] = elegir(bajo, alto) + (1000 if etiqueta == "arriba" else -1000)
-        cfg = cargar(valores)
-        for clave, (bajo, alto) in copia.items():
-            esperado = alto if etiqueta == "arriba" else bajo
-            obtenido = cfg.get(clave)
+        values = {}
+        for setting_key, (low, height) in copy.items():
+            values[setting_key] = elegir(low, height) + (1000 if etiqueta == "arriba" else -1000)
+        cfg = load_config(values)
+        for setting_key, (low, height) in copy.items():
+            expected = height if etiqueta == "arriba" else low
+            obtained = cfg.get(setting_key)
             check(
-                f"el script recorta {clave} por {etiqueta}",
-                obtenido is not None and abs(float(obtenido) - float(esperado)) < 0.001,
-                str(obtenido),
+                f"the script clips {setting_key} by {etiqueta}",
+                obtained is not None and abs(float(obtained) - float(expected)) < 0.001,
+                str(obtained),
             )
 
 
-def check_formatos_del_helper():
-    """El helper valida el formato, no solo los rangos.
+def check_helper_formats():
+    """The helper validates the format, not only the ranges.
 
-    El panel y el IPC del widget aplican los patrones de lib/settings.luau
-    (glifo, color, familia). El helper es otra via de escritura: si no
-    validara, cualquier llamada podria dejar un icono inexistente o un
-    color invalido en los ajustes. Un valor rechazado no se guarda ni en
-    los overrides ni en el settings.toml.
+    The panel and the widget IPC apply the patterns of lib/settings.luau
+    (glyph, color, family). The helper is another write path: if it did not
+    validate, any call could leave a non-existent icon or an invalid color
+    in the settings. A rejected value is stored neither in the overrides nor
+    in settings.toml.
     """
-    casos = (
+    cases = (
         ("glyph", "headphones", "string", True),
         ("glyph", "music_note", "string", False),
         ("glyph", "Music!", "string", False),
@@ -3648,23 +3838,23 @@ def check_formatos_del_helper():
         ("font_family", "", "string", False),
         ("font_family", "Iosevka\nMono", "string", False),
     )
-    for clave, valor, tipo, valido in casos:
-        with tempfile.TemporaryDirectory(prefix="lyrics-carousel-formatos-") as temporal:
-            env = entorno_de_prueba(temporal)
-            estado = os.path.join(temporal, ".local", "state", "noctalia")
-            os.makedirs(estado, exist_ok=True)
-            ajustes_path = os.path.join(estado, "settings.toml")
-            with open(ajustes_path, "w", encoding="utf-8") as handle:
+    for setting_key, setting_value, tipo, valido in cases:
+        with tempfile.TemporaryDirectory(prefix="lyrics-carousel-formatos-") as temporary:
+            env = test_environment(temporary)
+            state_value = os.path.join(temporary, ".local", "state", "noctalia")
+            os.makedirs(state_value, exist_ok=True)
+            settings_path = os.path.join(state_value, "settings.toml")
+            with open(settings_path, "w", encoding="utf-8") as handle:
                 handle.write("")
-            proceso = subprocess.run(
-                [sys.executable, HELPER, "persist", clave, valor, tipo],
+            process = subprocess.run(
+                [sys.executable, HELPER, "persist", setting_key, setting_value, tipo],
                 capture_output=True,
                 text=True,
                 timeout=15,
                 env=env,
             )
             overrides_path = os.path.join(
-                estado,
+                state_value,
                 "plugins",
                 "data",
                 "faminec",
@@ -3676,91 +3866,91 @@ def check_formatos_del_helper():
                     overrides = json.load(handle)
             except (OSError, ValueError):
                 overrides = {}
-            ajustes = leer_ajustes(ajustes_path)
+            settings_file = read_settings(settings_path)
             if valido:
                 check(
-                    f"el helper guarda {clave}={valor!r}",
-                    proceso.returncode == 0
-                    and ajustes.get(clave) == valor,
-                    f"código={proceso.returncode} ajustes={ajustes.get(clave)!r}",
+                    f"the helper saves {setting_key}={setting_value!r}",
+                    process.returncode == 0
+                    and settings_file.get(setting_key) == setting_value,
+                    f"code={process.returncode} settings={settings_file.get(setting_key)!r}",
                 )
             else:
                 check(
-                    f"el helper rechaza {clave}={valor!r}",
-                    proceso.returncode != 0
-                    and clave not in overrides
-                    and clave not in ajustes,
-                    f"código={proceso.returncode} overrides={overrides!r} ajustes={ajustes.get(clave)!r}",
+                    f"the helper rejects {setting_key}={setting_value!r}",
+                    process.returncode != 0
+                    and setting_key not in overrides
+                    and setting_key not in settings_file,
+                    f"code={process.returncode} overrides={overrides!r} settings={settings_file.get(setting_key)!r}",
                 )
 
 
-def check_helper_acepta_las_claves_nuevas():
-    """El helper conoce todas las claves que el panel y el script usan.
+def check_helper_accepts_the_new_keys():
+    """The helper knows every key the panel and the script use.
 
-    El helper es otra via de escritura (la del panel y la de los atajos de
-    la ventana). Si le falta una clave en su lista, responde "clave
-    desconocida" y el ajuste se pierde en silencio: el interruptor del
-    visualizador no se guardaba por eso.
+    The helper is another write path (the one of the panel and the one of
+    the window shortcuts). If a key is missing from its list, it answers
+    that the key is unknown and the setting is silently lost: that is why
+    the visualizer switch was not being saved.
     """
-    casos = (
+    cases = (
         ("visualizer", "false", "bool", False),
         ("translate_lyrics", "true", "bool", True),
         ("visualizer_position", "left", "string", "left"),
         ("visualizer_position", "arriba", "string", None),
         ("visualizer_coverage", "40", "int", 40),
     )
-    for clave, valor, tipo, esperado in casos:
-        with tempfile.TemporaryDirectory(prefix="lyrics-carousel-claves-") as temporal:
-            env = entorno_de_prueba(temporal)
-            estado = os.path.join(temporal, ".local", "state", "noctalia")
-            os.makedirs(estado, exist_ok=True)
-            ajustes_path = os.path.join(estado, "settings.toml")
-            with open(ajustes_path, "w", encoding="utf-8") as handle:
+    for setting_key, setting_value, tipo, expected in cases:
+        with tempfile.TemporaryDirectory(prefix="lyrics-carousel-claves-") as temporary:
+            env = test_environment(temporary)
+            state_value = os.path.join(temporary, ".local", "state", "noctalia")
+            os.makedirs(state_value, exist_ok=True)
+            settings_path = os.path.join(state_value, "settings.toml")
+            with open(settings_path, "w", encoding="utf-8") as handle:
                 handle.write("")
-            proceso = subprocess.run(
-                [sys.executable, HELPER, "persist", clave, valor, tipo],
+            process = subprocess.run(
+                [sys.executable, HELPER, "persist", setting_key, setting_value, tipo],
                 capture_output=True,
                 text=True,
                 timeout=15,
                 env=env,
             )
-            ajustes = leer_ajustes(ajustes_path)
-            if esperado is None:
+            settings_file = read_settings(settings_path)
+            if expected is None:
                 check(
-                    f"el helper rechaza {clave}={valor!r}",
-                    proceso.returncode != 0 and clave not in ajustes,
-                    f"código={proceso.returncode} ajustes={ajustes.get(clave)!r}",
+                    f"the helper rejects {setting_key}={setting_value!r}",
+                    process.returncode != 0 and setting_key not in settings_file,
+                    f"code={process.returncode} settings={settings_file.get(setting_key)!r}",
                 )
             else:
                 check(
-                    f"el helper guarda {clave}={valor!r}",
-                    proceso.returncode == 0 and ajustes.get(clave) == esperado,
-                    f"código={proceso.returncode} ajustes={ajustes.get(clave)!r}",
+                    f"the helper saves {setting_key}={setting_value!r}",
+                    process.returncode == 0 and settings_file.get(setting_key) == expected,
+                    f"code={process.returncode} settings={settings_file.get(setting_key)!r}",
                 )
 
 
 def main(argv):
     verbose = "--verbose" in argv
 
-    # Caja de arena para todo el autotest.
+    # Sandbox for the whole self-test.
     #
-    # Las variables que puede tener el usuario para apuntar al estado de
-    # Noctalia (NOCTALIA_STATE_HOME, XDG_STATE_HOME, LYRICS_CAROUSEL_STATE
-    # y LYRICS_CAROUSEL_OVERRIDES) se sustituyen por rutas temporales
-    # antes de hacer nada. Asi ninguna prueba, ni las que lanzan el script
-    # como subproceso, puede escribir en los ajustes de verdad: con
-    # LYRICS_CAROUSEL_STATE definida (que es lo que hace paths.py
-    # funcionar) el volcado del helper llegaba al estado real.
-    caja = tempfile.mkdtemp(prefix="lyrics-carousel-autotest-")
-    estado_caja = os.path.join(caja, ".local", "state")
-    os.makedirs(os.path.join(estado_caja, "noctalia"), exist_ok=True)
-    os.environ["HOME"] = caja
-    os.environ["XDG_STATE_HOME"] = estado_caja
-    os.environ["NOCTALIA_STATE_HOME"] = estado_caja
-    os.environ["XDG_CACHE_HOME"] = os.path.join(caja, ".cache")
-    os.environ["LYRICS_CAROUSEL_STATE"] = os.path.join(estado_caja, "noctalia")
+    # The variables the user may have to point at the Noctalia state
+    # (NOCTALIA_STATE_HOME, XDG_STATE_HOME, LYRICS_CAROUSEL_STATE and
+    # LYRICS_CAROUSEL_OVERRIDES) are replaced with temporary paths before
+    # anything is done. That way no test, not even the ones that launch the
+    # script as a subprocess, can write to the real settings: with
+    # LYRICS_CAROUSEL_STATE defined (which is what makes paths.py work) the
+    # dump of the helper reached the real state.
+    box = tempfile.mkdtemp(prefix="lyrics-carousel-autotest-")
+    box_state = os.path.join(box, ".local", "state")
+    os.makedirs(os.path.join(box_state, "noctalia"), exist_ok=True)
+    os.environ["HOME"] = box
+    os.environ["XDG_STATE_HOME"] = box_state
+    os.environ["NOCTALIA_STATE_HOME"] = box_state
+    os.environ["XDG_CACHE_HOME"] = os.path.join(box, ".cache")
+    os.environ["LYRICS_CAROUSEL_STATE"] = os.path.join(box_state, "noctalia")
     os.environ["LYRICS_CAROUSEL_OVERRIDES"] = os.path.join(
-        estado_caja,
+        box_state,
         "noctalia",
         "plugins",
         "data",
@@ -3769,162 +3959,165 @@ def main(argv):
         "overrides.json",
     )
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
-    # Bytecode que ya hubiera (de una ejecucion anterior): al final solo
-    # se avisa de los .pyc nuevos, que son los que deja este autotest.
+    # Bytecode that may already be there (from a previous run): at the end
+    # only the new .pyc files are reported, the ones this self-test leaves.
     cache_plugin = os.path.join(HERE, "__pycache__")
-    bytecode_antes = (
+    bytecode_before = (
         set(os.listdir(cache_plugin)) if os.path.isdir(cache_plugin) else set()
     )
 
-    # 1) el helper tiene que estar al lado del script (ruta real, no la del
-    #    enlace simbólico por el que se puede lanzar).
-    check("helper presente", os.path.isfile(HELPER), HELPER)
-    check("helper ejecutable", os.access(HELPER, os.X_OK))
+    # 1) the helper has to be next to the script (real path, not the one of
+    #    the symlink it can be launched through).
+    check("helper present", os.path.isfile(HELPER), HELPER)
+    check("helper executable", os.access(HELPER, os.X_OK))
 
-    # 2) el directorio de datos se puede crear y escribir. Se hace en un
-    #    temporal: el autotest no puede crear ni escribir en el directorio
-    #    de datos real del usuario.
-    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-datos-") as temporal:
-        datos_prueba = os.path.join(temporal, "datos")
+    # 2) the data directory can be created and written to. It is done in a
+    #    temporary one: the self-test cannot create or write in the real data
+    #    directory of the user.
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-datos-") as temporary:
+        test_data = os.path.join(temporary, "datos")
         try:
-            os.makedirs(datos_prueba, exist_ok=True)
-            created = os.path.isdir(datos_prueba)
+            os.makedirs(test_data, exist_ok=True)
+            created = os.path.isdir(test_data)
         except OSError as error:
             created = False
-            check("directorio de datos", False, str(error))
+            check("data directory", False, str(error))
         if created:
-            check("directorio de datos", True, datos_prueba)
+            check("data directory", True, test_data)
 
-            # 3) el directorio de datos se puede usar (escribir y leer).
-            probe = os.path.join(datos_prueba, "selftest.json")
+            # 3) the data directory can be used (write and read).
+            probe = os.path.join(test_data, "selftest.json")
             try:
                 with open(probe, "w", encoding="utf-8") as handle:
                     json.dump({"selftest": True}, handle)
                 with open(probe, encoding="utf-8") as handle:
                     data = json.load(handle)
                 os.remove(probe)
-                check("escritura de overrides", data.get("selftest") is True)
+                check("overrides write", data.get("selftest") is True)
             except (OSError, ValueError) as error:
-                check("escritura de overrides", False, str(error))
+                check("overrides write", False, str(error))
                 try:
                     os.remove(probe)
                 except OSError:
                     pass
 
-    # 3-bis) el directorio de datos real solo se mira, nunca se escribe:
-    #     si no existe todavia, el plugin lo creara al escribir.
+    # 3-bis) the real data directory is only looked at, never written to:
+    #     if it does not exist yet, the plugin will create it when writing.
     if os.path.isdir(DATA_DIR):
-        check("directorio de datos real escribible", os.access(DATA_DIR, os.W_OK), DATA_DIR)
+        check("real data directory writable", os.access(DATA_DIR, os.W_OK), DATA_DIR)
     else:
-        padre = os.path.dirname(DATA_DIR)
+        parent = os.path.dirname(DATA_DIR)
         check(
-            "directorio de datos real escribible",
-            os.path.isdir(padre) and os.access(padre, os.W_OK),
-            padre,
+            "real data directory writable",
+            os.path.isdir(parent) and os.access(parent, os.W_OK),
+            parent,
         )
 
-    # 4) el helper responde, crea el directorio si falta y vuelca los
-    #    overrides al settings.toml. Todo con un HOME temporal y el estado
-    #    aislado: si se usara el real, el autotest dejaria cambiados los
-    #    ajustes del usuario (el volcado escribe en el settings.toml de
-    #    verdad).
+    # 4) the helper answers, creates the directory if missing and dumps the
+    #    overrides into settings.toml. All of it with a temporary HOME and
+    #    the state isolated: if the real one were used, the self-test would
+    #    leave the user's settings changed (the dump writes to the real
+    #    settings.toml).
     with tempfile.TemporaryDirectory() as fake_home:
-        resultado = probar_helper_volcado(fake_home)
+        outcome = test_helper_dump(fake_home)
         check(
-            "el helper crea el directorio",
-            resultado["crea_directorio"],
-            resultado["detalle"],
+            "the helper creates the directory",
+            outcome["crea_directorio"],
+            outcome["detalle"],
         )
         check(
-            "el helper vuelca al settings.toml",
-            resultado["vuelca"],
-            resultado["detalle"],
+            "the helper dumps into settings.toml",
+            outcome["vuelca"],
+            outcome["detalle"],
         )
 
-    # 4b) el atajo 'd' del script alterna la direccion y la guarda.
-    #     Es la prueba de que el script, el helper y el overrides
-    #     funcionan juntos de verdad.
-    check_atajos()
+    # 4b) the 'd' shortcut of the script toggles the direction and saves it.
+    #     It is the proof that the script, the helper and the overrides
+    #     really work together.
+    check_shortcuts()
 
-    # 4b-bis) el autotest no puede escribir en el estado real: con
-    #     XDG_STATE_HOME o NOCTALIA_STATE_HOME definidos (lo habitual), el
-    #     volcado del helper dejaria cambiados los ajustes del usuario.
-    check_estado_real_intocable()
+    # 4b-bis) the self-test cannot write to the real state: with
+    #     XDG_STATE_HOME or NOCTALIA_STATE_HOME defined (the usual case), the
+    #     dump of the helper would leave the user's settings changed.
+    check_real_state_is_untouched()
 
-    # 4c) si la terminal se cierra, el script tiene que salir: si se
-    #      queda, sigue dibujando en el vacio indefinidamente.
-    check_salida_al_cerrar()
+    # 4c) if the terminal is closed, the script has to exit: if it stays,
+    #      it keeps drawing into the void indefinitely.
+    check_output_on_close()
 
-    # 4d) el comportamiento del script: desfase, plazo de busqueda de la
-    #      letra, reintento, fila del ecualizador, rutas del estado,
-    #      idioma de la ventana y limites de los ajustes.
-    check_desfase_scroll()
-    check_busqueda_letra()
-    check_reintento_letra()
-    check_layout_imagen()
-    check_karaoke_imagen_pixel_a_pixel()
-    check_karaoke_sin_resplandor()
-    check_karaoke_borde_suave()
-    check_relevo_sin_salto_de_alfa()
-    check_tamano_fraccionario()
-    check_karaoke_imagen_sigue_los_tiempos()
-    check_transicion_real()
-    check_transicion_visual_fluida()
-    check_entrada_karaoke_sin_salto()
-    check_ritmo_de_frames()
-    check_primera_ventana_fps()
-    check_curva_suave()
-    check_relleno_nitro()
-    check_recarga_por_senal()
-    check_tamano_terminal_real()
-    check_rutas_estado()
-    check_sin_modo_texto()
-    check_limites_ajustes()
-    check_limites_del_panel_y_el_script()
-    check_formatos_del_helper()
-    check_titulo_vacio_no_rebusca()
-    check_timeout_adaptador()
-    check_tiempos_reales_no_se_pisan()
-    check_lineas_ordenadas()
-    check_cache_una_sola_vez()
-    check_tiempos_por_palabra()
-    check_fetch_prefiere_palabra()
-    check_fetch_palabra_no_espera()
-    check_letra_sin_acentos()
-    check_mejora_no_pisa_cache()
-    check_cache_se_mejora_sola()
-    check_resultado_no_pisa_letra_igual()
+    # 4d) the behaviour of the script: offset, search deadline for the
+    #      lyrics, retry, equalizer row, state paths, window language and
+    #      limits of the settings.
+    check_scroll_offset()
+    check_lyrics_search()
+    check_lyrics_retry()
+    check_image_layout()
+    check_karaoke_image_pixel_by_pixel()
+    check_karaoke_without_glow()
+    check_karaoke_smooth_edge()
+    check_handover_without_alpha_jump()
+    check_fractional_size()
+    check_karaoke_image_follows_the_times()
+    check_real_transition()
+    check_smooth_visual_transition()
+    check_karaoke_entry_without_jump()
+    check_frame_rhythm()
+    check_first_window_fps()
+    check_smooth_curve()
+    check_sung_text_is_crisp()
+    check_reload_by_signal()
+    check_real_terminal_size()
+    check_state_paths()
+    check_without_text_mode()
+    check_settings_limits()
+    check_limits_of_panel_and_script()
+    check_helper_formats()
+    check_empty_title_does_not_search_again()
+    check_adapter_timeout()
+    check_real_times_do_not_overlap()
+    check_lines_are_sorted()
+    check_only_the_winner_writes_the_cache()
+    check_times_per_word()
+    check_fetch_prefers_the_word_timing()
+    check_word_fetch_does_not_wait()
+    check_lyrics_without_accents()
+    check_improvement_does_not_overwrite_the_cache()
+    check_cache_is_upgraded_in_the_background()
+    check_result_does_not_overwrite_the_same_lyrics()
     check_lyrics_settings_state_dir()
-    check_lrc_horas()
-    check_lrc_minutos()
-    check_lrc_decimales()
-    check_karaoke_usa_tiempos_reales()
-    check_estimate_times_no_adelanta_las_sin_tiempo()
-    check_estimate_times_dentro_de_la_cancion()
-    check_geometria_se_recorta_a_la_pantalla()
-    check_tamano_de_la_ventana_por_hyprctl()
+    check_lrc_hours()
+    check_lrc_minutes()
+    check_lrc_decimals()
+    check_karaoke_uses_real_times()
+    check_helper_accepts_karaoke_brain()
+    check_brain_intelligent_per_line_karaoke()
+    check_estimated_times_do_not_advance_untimed_lines()
+    check_estimated_times_stay_inside_the_song()
+    check_geometry_is_clipped_to_the_screen()
+    check_window_size_via_hyprctl()
     check_redimensionado_manual_se_guarda()
-    check_texto_entre_angulos()
-    check_lrc_mejorado_a_caracteres()
-    check_lrclib_prefiere_letra_mejorada()
-    check_cache_no_objeto()
-    check_espacio_no_rompe()
-    check_atajo_no_se_pierde()
-    check_panel_cubre_manifiesto()
-    check_hints_centrados()
+    check_text_between_angle_brackets()
+    check_enhanced_lrc_to_characters()
+    check_lrclib_prefers_the_enhanced_lyrics()
+    check_cache_json_is_not_an_object()
+    check_pause_key_survives_playerctl_failure()
+    check_shortcut_is_not_reverted()
+    check_panel_covers_the_manifest()
+    check_centered_hints()
     check_translate_lyrics_false_default()
-    check_reparto_de_ajustes()
+    check_settings_are_split()
     check_panel_attached()
 
-    # 4e) el README documenta lo que el manifiesto declara: si el manifiesto
-    #     cambia y el README no, la tienda rechaza el plugin.
+    # 4e) the README documents what the manifest declares: if the manifest
+    #     changes and the README does not, the store rejects the plugin.
     check_readme()
+    check_normalize_text()
 
-    # 5) herramientas externas.
+    # 5) external tools.
     for tool in ("kitty", "fc-match", "playerctl", "hyprctl"):
-        check(f"herramienta {tool}", shutil.which(tool) is not None)
+        check(f"tool {tool}", shutil.which(tool) is not None)
 
-    # 6) Pillow (modo imagen).
+    # 6) Pillow (image mode).
     try:
         import PIL  # noqa: F401
 
@@ -3932,32 +4125,32 @@ def main(argv):
     except ImportError as error:
         check("pillow", False, str(error))
 
-    # 7) el script se resuelve a si mismo con realpath: lanzado por el
-    #    enlace simbolico del PATH tiene que encontrar igual sus modulos
-    #    hermanos (image_renderer, graphics) y el helper. Sin esto el modo
-    #    imagen se caia en silencio al modo texto.
-    check_diagnostics("ruta real", SCRIPT)
+    # 7) the script resolves itself with realpath: launched through the PATH
+    #    symlink it still has to find its sibling modules (image_renderer,
+    #    graphics) and the helper. Without this the image mode silently
+    #    fell back to the text mode.
+    check_diagnostics("real path", SCRIPT)
     if os.path.exists(LAUNCHER):
-        check_diagnostics("enlace simbólico", LAUNCHER)
+        check_diagnostics("symlink", LAUNCHER)
     else:
-        # El enlace del PATH es una comodidad, no un requisito: el panel
-        # lanza el script por ruta absoluta. Si no esta, no es un fallo.
-        print("  (no hay enlace simbólico en %s: el panel usa la ruta absoluta)" % LAUNCHER)
+        # The PATH symlink is a convenience, not a requirement: the panel
+        # launches the script by absolute path. If it is not there, it is not a failure.
+        print("  (no symlink in %s: the panel uses the absolute path)" % LAUNCHER)
 
-    # 8) los .luau del plugin tienen que compilar tal cual. Si usaran
-    #    sintaxis de Luau, la comprobacion estatica no podria ser
-    #    concluyente (no hay compilador de Luau) y un error de verdad
-    #    pasaria desapercibido: el runtime solo lo detecta si el fichero
-    #    se recarga durante la verificacion.
+    # 8) the .luau files of the plugin have to compile as they are. If they
+    #    used Luau syntax, the static check could not be conclusive (there
+    #    is no Luau compiler) and a real error would go unnoticed: the
+    #    runtime only detects it if the file is reloaded during the
+    #    verification.
     compiler = ""
     for name in ("luac5.4", "luac", "luac5.3", "luac5.1", "luajit"):
         compiler = shutil.which(name) or ""
         if compiler:
             break
     if not compiler:
-        check("compilador disponible", False, "no hay luac")
+        check("compiler available", False, "no luac")
     else:
-        malos = []
+        bad_files = []
         for root, dirs, names in os.walk(PLUGIN_DIR):
             dirs[:] = [d for d in dirs if d != "__pycache__"]
             for name in sorted(names):
@@ -3972,28 +4165,28 @@ def main(argv):
                         timeout=20,
                     )
                 except (OSError, subprocess.SubprocessError) as error:
-                    malos.append("%s (%s)" % (name, error))
+                    bad_files.append("%s (%s)" % (name, error))
                     continue
                 if result.returncode != 0:
-                    malos.append(name)
-        check("los .luau compilan tal cual", not malos, ", ".join(malos))
+                    bad_files.append(name)
+        check("the .luau files compile as they are", not bad_files, ", ".join(bad_files))
 
-    # 9) el autotest no debe dejar bytecode en el directorio desde el que se
-    #    lanza el script.
+    # 9) the self-test must not leave bytecode in the directory the script is
+    #    launched from.
     launcher_dir = os.path.dirname(LAUNCHER)
     cache = os.path.join(launcher_dir, "__pycache__")
     leftovers = []
     if os.path.isdir(cache):
         leftovers = [n for n in os.listdir(cache) if n.startswith("lyrics-carousel")]
-    check("sin bytecode en el lanzador", not leftovers, ", ".join(leftovers))
-    nuevos = []
+    check("no bytecode in the launcher", not leftovers, ", ".join(leftovers))
+    new_files = []
     if os.path.isdir(cache_plugin):
-        nuevos = sorted(
+        new_files = sorted(
             name
             for name in os.listdir(cache_plugin)
-            if name.endswith(".pyc") and name not in bytecode_antes
+            if name.endswith(".pyc") and name not in bytecode_before
         )
-    check("sin bytecode nuevo en el plugin", not nuevos, ", ".join(nuevos))
+    check("no new bytecode in the plugin", not new_files, ", ".join(new_files))
 
     failed = 0
     for name, ok, detail in results:
@@ -4002,10 +4195,10 @@ def main(argv):
         if verbose or not ok:
             print(
                 "  %s %s%s"
-                % ("ok " if ok else "FALLO", name, (" -> " + detail) if detail else "")
+                % ("ok " if ok else "FAIL", name, (" -> " + detail) if detail else "")
             )
-    print("%d comprobación(es), %d fallo(s)" % (len(results), failed))
-    shutil.rmtree(caja, ignore_errors=True)
+    print("%d check(s), %d failure(s)" % (len(results), failed))
+    shutil.rmtree(box, ignore_errors=True)
     return 1 if failed else 0
 
 

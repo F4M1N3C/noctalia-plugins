@@ -123,6 +123,7 @@ it belongs to the bar widget, not to the lyrics window.
 | `direction` | `select` | `down` | `down`: the lyrics come in from the top. `up`: from the bottom. |
 | `marker` | `bool` | `false` | Shows a `>` next to the active line. |
 | `karaoke` | `bool` | `true` | Lights the active line as it is sung, letter by letter. |
+| `karaoke_brain` | `bool` | `true` | Intelligent karaoke control (global, persistent). When `karaoke` is on, the panel shows a brain button next to the Karaoke glow toggle: with it on (intelligent, like the `lyrics` plugin), karaoke uses per-word/per-character glow only for lines with precise word timing and highlights lines without usable word timing at once with no progressive glow. Turn it off to use the classic ("boring") progressive karaoke for all lines. |
 | `footer` | `bool` | `false` | Elapsed time and a progress bar. |
 | `hints` | `bool` | `false` | Keyboard hints at the bottom. |
 | `header` | `bool` | `false` | Title, artist and status tags. |
@@ -144,6 +145,53 @@ it belongs to the bar widget, not to the lyrics window.
 The position and the size are applied live to the running window, without recreating
 it. The font family and the font size also apply live: the font cache is
 invalidated on change, so there is no need to reopen the window.
+
+## IPC
+
+The panel is opened with:
+
+```sh
+noctalia msg panel-toggle faminec/lyrics-carousel:panel
+```
+
+Both entries also accept messages, which is handy for keyboard shortcuts:
+
+```sh
+noctalia msg plugin faminec/lyrics-carousel:panel all launch
+noctalia msg plugin faminec/lyrics-carousel:panel all toggle karaoke
+noctalia msg plugin faminec/lyrics-carousel:panel all toggle karaoke_brain
+noctalia msg plugin faminec/lyrics-carousel:panel all set font_size 26 int
+noctalia msg plugin faminec/lyrics-carousel:panel all refresh
+
+noctalia msg plugin faminec/lyrics-carousel:widget all launch
+noctalia msg plugin faminec/lyrics-carousel:widget all toggle karaoke
+noctalia msg plugin faminec/lyrics-carousel:widget all toggle karaoke_brain
+noctalia msg plugin faminec/lyrics-carousel:widget all set font_size 26 int
+noctalia msg plugin faminec/lyrics-carousel:widget all refresh
+```
+
+| Event | `panel` | `widget` |
+| --- | --- | --- |
+| `launch` | Opens the lyrics window (starts the script). | Toggles the panel. |
+| `toggle <key>` | Flips a switch. | Flips a switch. |
+| `set <key> <value> [type]` | Sets a setting. | Sets a setting. |
+| `refresh` | Re-reads the settings and the track, and redraws the panel. | Redraws the bar icon. |
+
+`toggle` only works with the switches — `marker`, `karaoke`, `karaoke_brain`, `footer`, `hints`,
+`header` and `ghost` — because flipping a number makes no sense.
+
+The value of `set` can also be written as `key=value`. Its type (`bool`, `int`,
+`float` or `string`) is optional: without it, the type is deduced from the setting,
+so `set karaoke true` stores a boolean and not the string `"true"`.
+
+```sh
+noctalia msg plugin faminec/lyrics-carousel:widget all set font_size 26 int
+noctalia msg plugin faminec/lyrics-carousel:widget all set font_family="Departure Mono"
+```
+
+`set` and `toggle` write to the same overrides file the panel uses, so the change is
+poured into `settings.toml` when the panel is closed and is visible in the settings
+page afterwards.
 
 ## Changelog
 
@@ -358,60 +406,15 @@ invalidated on change, so there is no need to reopen the window.
   "no lyrics" while a provider is still answering; an empty result is retried every
   minute.
 - The sound visualiser keeps its own row instead of drawing over the lyrics.
-- The texts of the window are in English and Spanish (`--lang`, or the `language`
-  setting; `auto` follows the system language).
+- The texts of the window are in English and Spanish (`--lang`; `auto`, the default,
+  follows the system language).
 - `d` and `k` are saved in `settings.toml`, so they survive a restart.
 - The settings, the overrides and the data directory follow `NOCTALIA_STATE_HOME`
   and `XDG_STATE_HOME`, like Noctalia itself.
 - The window position is a dropdown in the settings page as well, and the panel can
   empty the cache of lyrics.
 
-## IPC
-
-The panel is opened with:
-
-```sh
-noctalia msg panel-toggle faminec/lyrics-carousel:panel
-```
-
-Both entries also accept messages, which is handy for keyboard shortcuts:
-
-```sh
-noctalia msg plugin faminec/lyrics-carousel:panel all launch
-noctalia msg plugin faminec/lyrics-carousel:panel all toggle karaoke
-noctalia msg plugin faminec/lyrics-carousel:panel all set font_size 26 int
-noctalia msg plugin faminec/lyrics-carousel:panel all refresh
-
-noctalia msg plugin faminec/lyrics-carousel:widget all launch
-noctalia msg plugin faminec/lyrics-carousel:widget all toggle karaoke
-noctalia msg plugin faminec/lyrics-carousel:widget all set font_size 26 int
-noctalia msg plugin faminec/lyrics-carousel:widget all refresh
-```
-
-| Event | `panel` | `widget` |
-| --- | --- | --- |
-| `launch` | Opens the lyrics window (starts the script). | Toggles the panel. |
-| `toggle <key>` | Flips a switch. | Flips a switch. |
-| `set <key> <value> [type]` | Sets a setting. | Sets a setting. |
-| `refresh` | Re-reads the settings and the track, and redraws the panel. | Redraws the bar icon. |
-
-`toggle` only works with the switches — `marker`, `karaoke`, `footer`, `hints`,
-`header` and `ghost` — because flipping a number makes no sense.
-
-The value of `set` can also be written as `key=value`. Its type (`bool`, `int`,
-`float` or `string`) is optional: without it, the type is deduced from the setting,
-so `set karaoke true` stores a boolean and not the string `"true"`.
-
-```sh
-noctalia msg plugin faminec/lyrics-carousel:widget all set font_size 26 int
-noctalia msg plugin faminec/lyrics-carousel:widget all set font_family="Departure Mono"
-```
-
-`set` and `toggle` write to the same overrides file the panel uses, so the change is
-poured into `settings.toml` when the panel is closed and is visible in the settings
-page afterwards.
-
-## Diagnostics
+## Tests
 
 ```sh
 python3 ~/.local/share/noctalia/plugins/lyrics-carousel/bin/selftest.py --verbose
@@ -501,16 +504,49 @@ python3 ~/.local/share/noctalia/plugins/lyrics-carousel/tools/check-verifier.py
 
 ## Notes
 
+### What it touches
+
+- **Network:** LRCLIB (`https://lrclib.net/api/search`), NetEase
+  (`https://music.163.com/api/search/get` and `https://music.163.com/api/song/lyric`)
+  and the local SPlayer API (`http://127.0.0.1:25884` by default) are queried
+  directly. Every other provider (SPlayer, QQ Music, Kugou, Spotify, Apple Music
+  and Musixmatch) is reached through the source adapter of the Noctalia Lyrics
+  plugin, `lyric_sources.py`, so the same providers and the same configuration are
+  reused. The credentials of the optional providers are read from that plugin's
+  configuration and are sent to those providers only. Nothing else leaves the
+  machine.
+- **Files written:** the lyrics cache and the debug log under
+  `~/.cache/lyrics-carousel`, and the plugin data directory (`overrides.json`,
+  `window.pid`). The settings are written to Noctalia's `settings.toml`.
+- **Commands spawned:** `kitty` (the lyrics window, launched through the Hyprland
+  Lua API), `python3` (the carousel script, the settings helper and the source
+  adapter), `playerctl` (player metadata and play/pause), `hyprctl` (`clients -j`
+  and `dispatch`), `fc-match` (the font family for Pillow), `pkill` (the previous
+  lyrics window, matched on `noctalia-lyrics-carousel --title lyrics`) and
+  `sleep` (the delay between creating the window and applying its geometry).
+
+### Limitations
+
+- **Hyprland 0.57 or newer only.** The window is opened and placed with the
+  Hyprland Lua API (`hl.dsp.exec_cmd`, `hl.dsp.window.*`), which does not exist in
+  earlier versions. There is no Niri or Sway backend.
+- The image mode has no text fallback: the lyrics cannot be selected with the
+  mouse. Outside kitty (or without Pillow) the window reports the reason in
+  `~/.cache/lyrics-carousel/debug.log` and exits instead of drawing something the
+  user did not ask for.
 - The window is opened with `hl.dsp.exec_cmd(...)` and the class
-  `noctalia-lyrics-carousel`; the script can also be run by hand as `lyrics-carousel`.
+  `noctalia-lyrics-carousel`; the script can also be run by hand as
+  `lyrics-carousel`.
 - The panel starts the script by its absolute path (`python3 <plugin>/bin/lyrics-carousel`),
   so it does not depend on the `PATH` nor on the executable bit.
-- Outside kitty (or without Pillow) there is no text fallback: the window reports
-  the reason in `~/.cache/lyrics-carousel/debug.log` and exits instead of drawing
-  something the user did not ask for.
-- The accent colour is read from the theme Noctalia generates for kitty, so it follows
-  the wallpaper.
+- The accent colour is read from the theme Noctalia generates for kitty, so it
+  follows the wallpaper.
 - Image mode accepts any installed font: the panel lists a few favourites and
   also allows typing a font name.
-- The plugin makes network requests to the lyrics providers; nothing else leaves the
-  machine.
+
+### Debugging
+
+- The debug log of the running script is `~/.cache/lyrics-carousel/debug.log`.
+- `lyrics-carousel --diagnostics` prints the state of the running script as JSON.
+- `bin/selftest.py` checks the installation assumptions without touching the real
+  state. See `## Tests`.

@@ -1,11 +1,11 @@
 --!nonstrict
--- Ajustes del plugin Lyrics Carousel compartidos por el panel y el widget.
+-- Lyrics Carousel plugin settings shared by the panel and the widget.
 --
--- Los cambios se guardan primero en una capa de overrides (un JSON pequeño
--- que Noctalia no vigila) y se vuelcan al settings.toml al cerrar el panel.
--- Motivo: escribir el settings.toml hace que Noctalia recargue la
--- configuracion, lo que cierra el panel que el usuario tiene delante y
--- descarta los clics siguientes.
+-- Changes are stored first in an overrides layer (a small JSON file that
+-- Noctalia does not watch) and are flushed into the settings.toml when the
+-- panel closes. Reason: writing the settings.toml makes Noctalia reload the
+-- configuration, which closes the panel the user is looking at and drops
+-- the following clicks.
 
 local M = {}
 
@@ -17,6 +17,7 @@ local DEFAULTS = {
   direction = "down",
   marker = false,
   karaoke = true,
+  karaoke_brain = true,
   footer = false,
   hints = false,
   header = false,
@@ -38,7 +39,7 @@ local DEFAULTS = {
 }
 
 local BOOL_KEYS = {
-  marker = true, karaoke = true, footer = true,
+  marker = true, karaoke = true, karaoke_brain = true, footer = true,
   hints = true, header = true, ghost = true,
 }
 local INT_KEYS = {
@@ -53,13 +54,13 @@ M.INT_KEYS = INT_KEYS
 M.FLOAT_KEYS = FLOAT_KEYS
 M.DEFAULTS = DEFAULTS
 
---- Rangos (min, max) de los ajustes numericos.
+--- Ranges (min, max) for the numeric settings.
 ---
---- El manifiesto solo declara el icono de la barra, asi que estos rangos ya
---- no estan en dos sitios: los aplica el panel antes de escribir y el script
---- al leerlos. Las dos copias tienen que coincidir (lo comprueba el
---- autotest): si el panel dejara pasar un valor que el script descarta, el
---- usuario veria un numero que no se aplica.
+--- The manifest only declares the bar icon, so these ranges are no longer
+--- duplicated in two places: the panel applies them before writing and the
+--- script applies them when reading. Both copies have to match (the
+--- autotest checks this): if the panel let through a value that the script
+--- discards, the user would see a number that is not applied.
 local LIMITS = {
   font_size = { 6, 96 },
   spacing = { 1, 6 },
@@ -75,28 +76,28 @@ local LIMITS = {
 
 M.LIMITS = LIMITS
 
---- Patrones de los ajustes de texto libre.
+--- Patterns for the free-text settings.
 ---
---- El glifo es un nombre de icono de Material Symbols y el color es un
---- hexadecimal: si se guarda cualquier otra cosa, la barra se queda sin
---- icono o la ventana sin color. Los patrones viven aqui y no en el
---- panel para que las dos entradas (panel y widget) apliquen los
---- mismos: el IPC del widget tambien puede escribir estos ajustes.
+--- The glyph is a Material Symbols icon name and the color is a
+--- hexadecimal value: if anything else is stored, the bar is left without
+--- an icon or the window without a color. The patterns live here and not in
+--- the panel so that both entry points (panel and widget) apply the same
+--- ones: the widget IPC can also write these settings.
 local PATTERNS = {
   glyph = "^[a-z0-9-]+$",
   custom_color = "^#%x%x%x%x%x%x$",
-  -- La fuente es texto libre, pero vacia dejaria la ventana sin tipografia:
-  -- el campo del panel y el IPC del widget tienen que rechazarla igual. Un
-  -- salto de linea tampoco vale: la fuente se pasa al comando de kitty.
+  -- The font is free text, but an empty one would leave the window without
+  -- typography: the panel field and the widget IPC have to reject it alike. A
+  -- line break is not valid either: the font is passed to the kitty command.
   font_family = "^[^\n]+$",
 }
 
 M.PATTERNS = PATTERNS
 
---- Valida el formato de un ajuste de texto libre.
+--- Validates the format of a free-text setting.
 ---
---- Devuelve el valor si cumple el patron y nil si no. Los ajustes sin
---- patron (o sin limite) se devuelven tal cual.
+--- Returns the value if it matches the pattern and nil if it does not.
+--- Settings without a pattern (or without a limit) are returned as they are.
 function M.validate(key, value)
   local pattern = PATTERNS[key]
   if pattern == nil then
@@ -108,11 +109,11 @@ function M.validate(key, value)
   return value
 end
 
---- Recorta un valor a los limites de su ajuste.
+--- Clamps a value to the limits of its setting.
 ---
---- Vive aqui y no en el panel para que las dos entradas (panel y widget)
---- recorten igual: si cada una lo hiciera por su cuenta, el widget
---- dejaria guardar un 500 en un campo que el panel limita a 96.
+--- It lives here and not in the panel so that both entry points (panel and
+--- widget) clamp the same way: if each one did it on its own, the widget
+--- would let you save a 500 in a field that the panel limits to 96.
 function M.clamp(key, value)
   local limit = LIMITS[key]
   if limit == nil then
@@ -133,14 +134,14 @@ function M.clamp(key, value)
   return number
 end
 
---- Normaliza un valor a booleano.
+--- Normalizes a value to a boolean.
 ---
---- Noctalia no siempre entrega los interruptores como booleanos: el control
---- `ui.toggle` pasa el valor como la cadena "true" o "false". Comparar con
---- `== true` haria que un interruptor encendido se leyera apagado.
+--- Noctalia does not always hand over the toggles as booleans: the `ui.toggle`
+--- control passes the value as the string "true" or "false". Comparing with
+--- `== true` would make an enabled toggle read as disabled.
 ---
---- Vive aqui y no en el panel para que el panel y el widget lean los valores
---- igual: si cada uno normalizara por su cuenta, un dia leerian distinto.
+--- It lives here and not in the panel so that the panel and the widget read
+--- the values alike: if each one normalized on its own, they would differ.
 function M.truthy(value)
   if type(value) == "boolean" then
     return value
@@ -179,11 +180,11 @@ local function readOverrides()
   return data
 end
 
--- El panel consulta decenas de valores por render: el fichero de overrides
--- se cachea para no leerlo en cada consulta. La cache se invalida al
--- escribir (M.refresh) y tiene una caducidad corta por si el cambio viene
--- de fuera. Ojo: os.clock() es tiempo de CPU, no de reloj, asi que para la
--- caducidad se usa os.time().
+-- The panel queries dozens of values per render: the overrides file is
+-- cached so that it is not read on every query. The cache is invalidated
+-- on write (M.refresh) and has a short expiry in case the change comes
+-- from outside. Careful: os.clock() is CPU time, not wall-clock time, so
+-- os.time() is used for the expiry.
 local cached = {}
 local cachedAt = 0
 local CACHE_SECONDS = 2
@@ -198,13 +199,13 @@ function M.overrides()
   return cached
 end
 
---- Fuerza a releer los overrides (despues de escribir).
+--- Forces a re-read of the overrides (after writing).
 function M.refresh()
   cachedAt = 0
   cached = {}
 end
 
---- Valor efectivo de un ajuste: overrides > configuracion > guardado > defecto.
+--- Effective value of a setting: overrides > configuration > saved > default.
 function M.value(key)
   local override = M.overrides()[key]
   if override ~= nil then
@@ -214,29 +215,29 @@ function M.value(key)
   if value ~= nil then
     return value
   end
-  -- El manifiesto solo declara el icono de la barra: el resto de ajustes los
-  -- gestiona el panel. `noctalia.getConfig` unicamente devuelve las claves
-  -- que conoce, asi que para las demas se usa lo que hay guardado en el
-  -- settings.toml (lo lee el panel con M.useSaved). Es la misma fuente que
-  -- lee el script: sin esta lectura el panel ensenaria los valores por
-  -- defecto en lugar de los del usuario.
-  local guardado = M.saved()[key]
-  if guardado ~= nil then
-    return guardado
+  -- The manifest only declares the bar icon: the panel manages the rest of
+  -- the settings. `noctalia.getConfig` only returns the keys it knows, so
+  -- for the rest we use what is stored in the settings.toml (the panel
+  -- reads it with M.useSaved). It is the same source the script reads:
+  -- without this lookup the panel would show the default values instead of
+  -- the user's ones.
+  local saved_value = M.saved()[key]
+  if saved_value ~= nil then
+    return saved_value
   end
   return DEFAULTS[key]
 end
 
---- Valores guardados en el settings.toml.
+--- Values stored in the settings.toml.
 ---
---- El panel los trae con el helper (`set-setting.py read`) y los deja aqui
---- con M.useSaved. No caducan: un valor solo cambia cuando el usuario lo
---- cambia, y cada via de cambio (el panel, la pagina de ajustes, el IPC del
---- widget) vuelve a pedirlos. Devolver el ultimo conocido es mejor que
---- ensenar los valores por defecto.
+--- The panel fetches them with the helper (`set-setting.py read`) and leaves
+--- them here with M.useSaved. They do not expire: a value only changes when
+--- the user changes it, and every path to change it (the panel, the
+--- settings page, the widget IPC) asks for them again. Returning the last
+--- known value is better than showing the default values.
 local saved = nil
 
---- Carga los valores leidos del settings.toml (JSON del helper).
+--- Loads the values read from the settings.toml (helper JSON).
 function M.useSaved(raw)
   if type(raw) ~= "string" or raw == "" then
     return false
@@ -264,10 +265,10 @@ function M.kindOf(key)
   return "string"
 end
 
---- Escribe un ajuste en la capa de overrides (inmediato, sin recargar).
+--- Writes a setting to the overrides layer (immediate, without reloading).
 ---
---- El callback recibe true si el helper ha guardado el ajuste y false si no:
---- sin el, quien llama no puede saber si el cambio se ha perdido.
+--- The callback receives true if the helper has stored the setting and false
+--- if not: without it, the caller cannot know whether the change was lost.
 function M.write(key, value, callback)
   local function finish(ok)
     M.refresh()
@@ -290,21 +291,21 @@ function M.write(key, value, callback)
     tostring(value),
     M.kindOf(key),
   }, function(result)
-    local guardado = result ~= nil and result.exitCode == 0
-    if not guardado then
+    local saved_value = result ~= nil and result.exitCode == 0
+    if not saved_value then
       local detail = ""
       if type(result) == "table" then
         detail = tostring(result.stderr or result.stdout or "")
       end
       noctalia.log(
-        "lyrics-carousel: no se pudo guardar " .. key
+        "lyrics-carousel: could not save " .. key
           .. (detail ~= "" and (": " .. detail) or "")
       )
     end
-    finish(guardado)
+    finish(saved_value)
   end)
   if not ok then
-    noctalia.log("lyrics-carousel: no se pudo guardar " .. key .. ": " .. tostring(started))
+    noctalia.log("lyrics-carousel: could not save " .. key .. ": " .. tostring(started))
     finish(false)
     return false
   end
@@ -315,8 +316,8 @@ function M.write(key, value, callback)
   return true
 end
 
---- Vuelca los overrides al settings.toml (para que la pagina de ajustes y el
---- panel muestren lo mismo).
+--- Flushes the overrides into the settings.toml (so that the settings page
+--- and the panel show the same thing).
 function M.merge(callback)
   local dir = noctalia.pluginDir()
   if dir == nil then
@@ -331,12 +332,12 @@ function M.merge(callback)
     "merge",
   }, function(result)
     M.refresh()
-    local guardado = result ~= nil and result.exitCode == 0
-    if not guardado then
-      noctalia.log("lyrics-carousel: no se pudieron volcar los ajustes")
+    local saved_value = result ~= nil and result.exitCode == 0
+    if not saved_value then
+      noctalia.log("lyrics-carousel: could not dump the settings")
     end
     if callback ~= nil then
-      callback(guardado)
+      callback(saved_value)
     end
   end)
   if not ok then
@@ -354,7 +355,7 @@ function M.merge(callback)
   return true
 end
 
---- Interpreta la carga de un IPC: "clave=valor [tipo]" o "clave valor [tipo]".
+--- Parses an IPC payload: "key=value [type]" or "key value [type]".
 function M.parse(payload)
   if type(payload) ~= "string" then
     return nil
@@ -380,23 +381,23 @@ function M.parse(payload)
   if DEFAULTS[key] == nil then
     return nil
   end
-  -- El tipo puede ser el ultimo token; el valor es el resto.
+  -- The type may be the last token; the value is everything else.
   local kind = nil
   local pieces = {}
   for piece in rest:gmatch("%S+") do
     pieces[#pieces + 1] = piece
   end
   local last = pieces[#pieces]
-  -- Solo se come el token si queda un valor detras: "font_family string"
-  -- significa la fuente "string", no un valor vacio de tipo string.
+  -- The token is only consumed if a value is left behind: "font_family string"
+  -- means the font "string", not an empty value of type string.
   if #pieces > 1 and (last == "bool" or last == "int" or last == "float" or last == "string") then
     kind = last
     table.remove(pieces)
   end
   local value = table.concat(pieces, " ")
-  -- Sin token de tipo se deduce de la clave: "set karaoke true" tiene que
-  -- guardar un booleano, no la cadena "true" (el panel y el script lo
-  -- leian de forma distinta y se contradician).
+  -- Without a type token it is deduced from the key: "set karaoke true" has
+  -- to store a boolean, not the string "true" (the panel and the script
+  -- read it differently and would contradict each other).
   if kind == nil then
     kind = M.kindOf(key)
   end
@@ -419,12 +420,12 @@ function M.parse(payload)
   return key, value, kind
 end
 
---- Fija un ajuste (o lo alterna si no hay valor).
+--- Sets a setting (or toggles it if no value is given).
 ---
---- Si no se pasa valor, se alterna: solo tiene sentido en un interruptor, asi
---- que en cualquier otro ajuste no se toca nada. El valor actual se lee con
---- la misma normalizacion que el panel, para que "true" (cadena) se lea igual
---- en los dos sitios.
+--- If no value is passed, it is toggled: that only makes sense for a toggle,
+--- so for any other setting nothing is touched. The current value is read
+--- with the same normalization the panel uses, so that "true" (a string) is
+--- read the same way in both places.
 function M.apply(key, value)
   if value == nil then
     if not BOOL_KEYS[key] then
@@ -432,21 +433,21 @@ function M.apply(key, value)
     end
     value = not M.truthy(M.value(key))
   else
-    -- El recorte va aqui y no solo en el helper: el widget escribe por
-    -- IPC y su valor tiene que ser el mismo que veria el panel.
+    -- The clamping happens here and not only in the helper: the widget
+    -- writes through IPC and its value has to be the one the panel would see.
     value = M.clamp(key, value)
     if value == nil then
-      -- Rechazar en silencio deja al usuario (y al log) sin saber por que
-      -- el IPC no ha cambiado nada.
-      noctalia.log("lyrics-carousel: valor fuera de rango para " .. tostring(key))
+      -- Rejecting silently leaves the user (and the log) without knowing why
+      -- the IPC did not change anything.
+      noctalia.log("lyrics-carousel: value out of range for " .. tostring(key))
       return nil
     end
-    -- Lo mismo con el formato: un glifo con mayusculas o un color que
-    -- no es un hexadecimal dejarian la barra o la ventana sin icono o
-    -- sin color.
+    -- Same for the format: a glyph with uppercase letters or a color that
+    -- is not a hexadecimal value would leave the bar or the window without
+    -- an icon or without a color.
     value = M.validate(key, value)
     if value == nil then
-      noctalia.log("lyrics-carousel: formato no válido para " .. tostring(key))
+      noctalia.log("lyrics-carousel: invalid format for " .. tostring(key))
       return nil
     end
   end

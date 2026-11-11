@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""lyrics-carousel — carrusel vertical de la letra que está sonando.
+"""lyrics-carousel - vertical carousel of the lyrics that are playing.
 
-Lee el reproductor MPRIS activo con playerctl, busca la letra (LRCLIB y, si
-está disponible, el adaptador de fuentes del plugin Lyrics de Noctalia) y la
-dibuja en la terminal con desplazamiento vertical continuo.
+Reads the active MPRIS player with playerctl, looks up the lyrics (LRCLIB and,
+when available, the source adapter of the Noctalia Lyrics plugin) and draws
+them in the terminal with continuous vertical scrolling.
 
-La tipografía pixel se aplica al lanzar kitty desde Floating Term; el script
-no necesita saber nada del font.
+The pixel font is applied when kitty is launched from Floating Term; the
+script does not need to know anything about the font.
 """
 
 from __future__ import annotations
@@ -41,43 +41,43 @@ import urllib.request
 APP = "lyrics-carousel"
 VERSION = "2.5.0"
 
-# Plazo de espera de la busqueda de letra (segundos). Los proveedores
-# tardan: con 4 s una letra que tarda 6 s se tiraba a la basura.
+# Timeout of the lyrics lookup (seconds). The providers are slow: with 4 s a
+# lyrics file that takes 6 s was thrown away.
 SEARCH_TIMEOUT = 15.0
-# Cada cuanto se reintenta una cancion que no tiene letra (segundos).
+# How often a song without lyrics is retried (seconds).
 RETRY_SECONDS = 60
-# Margen, tras la primera letra, para que llegue otra con tiempos por
-# palabra: se muestra ya la primera y se mejora en cuanto aparece.
+# Grace period, after the first lyrics, for a version with word timings to
+# arrive: the first one is shown right away and improved when it appears.
 WORD_GRACE = 3.0
-# Cuanto se recuerda que una cancion no tiene version por palabra, para no
-# repetir la busqueda en cada reproduccion (horas).
+# How long a song without a word-timed version is remembered, so the lookup
+# is not repeated on every playback (hours).
 WORD_CHECK_HOURS = 24 * 7
 
-# realpath: el script se lanza por el enlace simbolico de ~/.local/bin. Con
-# abspath el directorio seria ~/.local/bin y los modulos hermanos
-# (image_renderer, graphics) no se encontrarian: el modo imagen se caeria
-# en silencio al modo texto.
+# realpath: the script is launched through the symlink in ~/.local/bin. With
+# abspath the directory would be ~/.local/bin and the sibling modules
+# (image_renderer, graphics) would not be found: image mode would silently
+# fall back to text mode.
 _HERE = os.path.dirname(os.path.realpath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 IMAGE_ERROR = ""
 try:
-    from image_renderer import IMAGE_FPS, MOTION_FPS  # noqa: F401  (ritmo del modo imagen)
+    from image_renderer import IMAGE_FPS, MOTION_FPS  # noqa: F401  (image mode frame rate)
 except Exception:  # noqa: BLE001
-    # El modulo puede no estar (Pillow ausente): el modo imagen se apaga y el
-    # ritmo se queda en el que usa image_renderer cuando si esta.
+    # The module may be missing (no Pillow): image mode is switched off and
+    # the frame rate stays at the one image_renderer uses when it is there.
     IMAGE_FPS = 30
     MOTION_FPS = 60
 try:
     from image_renderer import ImageRenderer
-except Exception as error:  # noqa: BLE001  (el modo imagen es opcional)
+except Exception as error:  # noqa: BLE001  (image mode is optional)
     ImageRenderer = None
     IMAGE_ERROR = repr(error)
 
-# Las rutas del estado (settings.toml y overrides) viven en un modulo
-# propio: el script y el helper tienen que buscar el mismo sitio o uno
-# escribiria donde el otro lee.
+# The state paths (settings.toml and overrides) live in their own module:
+# the script and the helper have to look in the same place, otherwise one
+# would write where the other reads.
 from paths import (  # noqa: E402
     data_dir,
     overrides_path,
@@ -92,13 +92,13 @@ CACHE_DIR = os.path.join(
 )
 
 # --------------------------------------------------------------------------
-# textos de la ventana
+# window texts
 # --------------------------------------------------------------------------
 #
-# La ventana se dibuja en una terminal: no hay forma de pedirle a Noctalia
-# una traduccion, asi que los textos viven aqui, en ingles y en espanol.
-# El idioma se elige con --lang o con el del sistema (LC_ALL, LC_MESSAGES,
-# LANG).
+# The window is drawn in a terminal: there is no way to ask Noctalia for a
+# translation, so the texts live here, in English and in Spanish. The
+# language is chosen with --lang or taken from the system (LC_ALL,
+# LC_MESSAGES, LANG).
 
 TEXTS = {
     "en": {
@@ -157,11 +157,11 @@ LANGUAGES = ("en", "es")
 
 
 def detect_language(choice: str = "auto") -> str:
-    """Idioma de los textos de la ventana.
+    """Language of the window texts.
 
-    "auto" mira el idioma del sistema. Si no dice nada, ingles: el plugin
-    esta en ingles y el usuario que lo quiera en espanol lo pide con
-    --lang es.
+    "auto" follows the system language. If it says nothing, English: the
+    plugin is in English and the user who wants it in Spanish asks for it
+    with --lang es.
     """
     value = str(choice or "auto").strip().lower()
     if value in LANGUAGES:
@@ -173,21 +173,36 @@ def detect_language(choice: str = "auto") -> str:
     return "en"
 
 # --------------------------------------------------------------------------
-# utilidades
+# utilities
 # --------------------------------------------------------------------------
+
+
+# Fullwidth punctuation that some lyrics sources emit (e.g. NetEase) but that
+# the configured display fonts often lack. Map to ASCII equivalents so they
+# render instead of showing as missing-glyph boxes.
+FULLWIDTH_PUNCTUATION = str.maketrans({
+    "\uff08": "(",  # fullwidth left parenthesis
+    "\uff09": ")",  # fullwidth right parenthesis
+    "\uff3b": "[",  # fullwidth left square bracket
+    "\uff3d": "]",  # fullwidth right square bracket
+    "\uff5b": "{",  # fullwidth left curly bracket
+    "\uff5d": "}",  # fullwidth right curly bracket
+    "\u3000": " ",  # ideographic space
+})
 
 
 def normalize_text(value: str) -> str:
     value = unicodedata.normalize("NFC", value or "")
+    value = value.translate(FULLWIDTH_PUNCTUATION)
     value = value.replace("\t", " ").replace("\r", " ").replace("\n", " ")
     value = "".join(ch for ch in value if ch == " " or unicodedata.category(ch)[0] != "C")
     return re.sub(r"\s+", " ", value).strip()
 
 
-# Letras latinas: NetEase a veces publica la letra sin tildes ni ñ (algn,
-# petrleo, pases, Quin). Se detecta por vocabulario: una letra española,
-# portuguesa o francesa tiene stopwords de sobra; el inglés, que tampoco
-# lleva acentos, no las comparte.
+# Latin-script lyrics: NetEase sometimes publishes the lyrics without
+# accents or tildes (algn, petrleo, pases, Quin). They are detected by
+# vocabulary: a Spanish, Portuguese or French lyric has plenty of
+# stopwords; English, which also goes without accents, shares none of them.
 LATIN_ACCENTS = frozenset("áéíóúüñçãõâêôàèìòùÁÉÍÓÚÜÑÇÃÕÂÊÔÀÈÌÒÙ")
 LATIN_STOPWORDS = frozenset(
     "que de la el y no me mi es un una por para con los las del al se lo como "
@@ -197,12 +212,12 @@ LATIN_STOPWORDS = frozenset(
 )
 
 
-def texto_sin_acentos(lines) -> bool:
-    """True si la letra parece latina pero no tiene ninguna tilde ni ñ.
+def text_without_accents(lines) -> bool:
+    """True if the lyrics look Latin but have no accent and no tilde.
 
-    Marca las letras rotas de NetEase, no las que simplemente no llevan
-    acentos: exige vocabulario latino (25 palabras y 8 stopwords distintas)
-    y cero letras acentuadas.
+    It flags the broken NetEase lyrics, not the ones that simply have no
+    accents: it requires Latin vocabulary (25 words and 8 distinct
+    stopwords) and zero accented characters.
     """
     text = " ".join(line.text for line in lines)
     words = re.findall(r"[^\W\d_]+", text.lower(), re.UNICODE)
@@ -218,36 +233,36 @@ def clamp(value: float, low: float, high: float) -> float:
 
 
 def ease_in_out(progress: float) -> float:
-    """Curva suave: empieza y termina sin velocidad **ni aceleracion**.
+    """Smooth curve: it starts and ends with no speed **and no acceleration**.
 
-    Es la smootherstep (6t5-15t4+10t3). La anterior (smoothstep) frenaba
-    bien, pero la aceleracion saltaba al arrancar y al frenar, y eso se
-    notaba como un micro-tiron en el carrusel.
+    It is the smootherstep (6t5-15t4+10t3). The previous one (smoothstep)
+    braked well, but the acceleration jumped when starting and when braking,
+    and that was noticeable as a micro-stutter in the carousel.
 
-    Se usa en el desplazamiento: el movimiento acelera y frena sin que se
-    note el cambio.
+    It is used for the scrolling: the movement accelerates and brakes
+    without the change being noticeable.
     """
     value = clamp(progress, 0.0, 1.0)
     return value**3 * (value * (value * 6.0 - 15.0) + 10.0)
 
 
-def resto_para_siguiente_frame(inicio: float, ahora: float, intervalo: float) -> float:
-    """Cuánto falta para el siguiente frame con ritmo de paso fijo.
+def remainder_for_next_frame(start_time: float, ahora: float, interval: float) -> float:
+    """How long until the next frame with a fixed step rate.
 
-    El plazo se cuenta desde el INICIO del frame: si el frame ha tardado 8 ms
-    de un intervalo de 16,7 ms solo se duermen 8,7 ms. Dormir el intervalo
-    entero DESPUES del trabajo hacia que el ciclo real fuera
-    `trabajo + intervalo`: 36 fps en vez de 60, y el carrusel se vea a
-    tirones.
+    The deadline is counted from the START of the frame: if the frame took
+    8 ms of a 16.7 ms interval, only 8.7 ms are slept. Sleeping the whole
+    interval AFTER the work made the real cycle
+    `work + interval`: 36 fps instead of 60, and the carousel looked
+    choppy.
     """
-    return max(0.0, inicio + intervalo - ahora)
+    return max(0.0, start_time + interval - ahora)
 
 
-def fps_real(frames: int, segundos: float) -> float:
-    """Frames por segundo de verdad: frames entre el tiempo que ha pasado.
+def real_fps(frames: int, segundos: float) -> float:
+    """Real frames per second: frames over the elapsed time.
 
-    El tiempo de dibujo solo no dice nada: lo que se ve es la distancia
-    entre un cuadro y el siguiente.
+    The draw time alone says nothing: what is seen is the distance between
+    one frame and the next.
     """
     if segundos <= 0:
         return 0.0
@@ -264,7 +279,7 @@ def blend(a, b, t: float):
 
 
 def parse_hex(value, fallback=(255, 255, 255)):
-    """Convierte "#rrggbb" o "rrggbb" en una tupla RGB."""
+    """Converts "#rrggbb" or "rrggbb" into an RGB tuple."""
     text = str(value or "").strip().lstrip("#")
     if len(text) == 3:
         text = "".join(char * 2 for char in text)
@@ -277,7 +292,7 @@ def parse_hex(value, fallback=(255, 255, 255)):
 
 
 # --------------------------------------------------------------------------
-# tema (lee los colores reales de kitty, incluido el include de Noctalia)
+# theme (reads the real kitty colors, including the Noctalia include)
 # --------------------------------------------------------------------------
 
 ACCENT_NAMES = (
@@ -286,12 +301,12 @@ ACCENT_NAMES = (
 
 
 class Theme:
-    """Colores del tema de kitty que Noctalia genera desde el wallpaper.
+    """Colors of the kitty theme that Noctalia generates from the wallpaper.
 
-    El template de kitty exporta la paleta ANSI (color0..color15) y el color
-    primario del sistema en active_border_color/url_color; los colores
-    "primary", "green"... se mapean a esos valores para que el widget siga al
-    fondo de pantalla.
+    The kitty template exports the ANSI palette (color0..color15) and the
+    system primary color in active_border_color/url_color; the "primary",
+    "green"... colors are mapped to those values so the widget follows the
+    desktop background.
     """
 
     COLOR_KEYS = {
@@ -394,7 +409,7 @@ class Theme:
         self.bright = colors.get("color15") or colors.get("color7") or self.bright
         self.faint = blend(self.foreground, self.background, 0.45)
 
-        # El primario del sistema lo exporta Noctalia como color de borde.
+        # Noctalia exports the system primary color as a border color.
         primary = (
             colors.get("active_border_color")
             or colors.get("url_color")
@@ -413,7 +428,7 @@ class Theme:
         return blend(self.background, base, fade)
 
     def accent_color(self, cfg):
-        """Color del renglón activo según el ajuste `accent`."""
+        """Color of the active line according to the `accent` setting."""
         name = cfg.get("accent", "primary")
         if name == "custom":
             return parse_hex(cfg.get("custom_color", ""), self.accent)
@@ -421,7 +436,7 @@ class Theme:
 
 
 # --------------------------------------------------------------------------
-# reproductor
+# player
 # --------------------------------------------------------------------------
 
 class Track:
@@ -542,8 +557,8 @@ class PlayerWatcher:
             or fresh.player != old.player
         )
         fresh.stamp = now
-        # El metadata de MPRIS se actualiza a saltos; conservamos la
-        # extrapolación si la diferencia es pequeña para no vibrar.
+        # The MPRIS metadata is updated in jumps; the extrapolation is kept
+        # when the difference is small so the position does not jitter.
         if changed:
             fresh.position = measured
         else:
@@ -558,16 +573,16 @@ class PlayerWatcher:
 
 
 # --------------------------------------------------------------------------
-# letras
+# lyrics
 # --------------------------------------------------------------------------
 
-# Los minutos admiten tres digitos ([100:00] son 100 minutos): con dos, una
-# letra larga se descartaba entera. Las horas se distinguen por el segundo
-# grupo de dos puntos ([01:02:03] es una hora, dos minutos y tres segundos).
+# Minutes accept three digits ([100:00] is 100 minutes): with only two, a
+# long lyric file was discarded entirely. Hours are told apart by the second
+# group of colons ([01:02:03] is one hour, two minutes and three seconds).
 LRC_TAG = re.compile(r"\[(?:(\d{1,3}):)?(\d{1,3}):(\d{1,2})(?:[.:](\d{1,6}))?\]")
 LRC_OFFSET = re.compile(r"\[offset:([+-]?\d+)\]", re.I)
-# Solo las etiquetas de tiempo mejoradas (<00:12.34>): un patron generico
-# <[^>]*> se comia texto normal entre angulos, como "I <3 you > me".
+# Only the enhanced time tags (<00:12.34>): a generic <[^>]*> pattern
+# would swallow the plain text between angle brackets, like "I <3 you > me".
 ENHANCED_TAG = re.compile(r"<(\d{1,3}):(\d{1,2})(?:[.:](\d{1,6}))?>")
 
 
@@ -600,29 +615,29 @@ class LyricLine:
 
 
 def lines_have_chars(lines):
-    """True si la mayoría del texto trae tiempos por carácter utilizables.
+    """True if most of the text carries usable per-character timings.
 
-    Es la diferencia entre un karaoke que sigue la voz y uno que reparte la
-    duración de la línea a partes iguales. Los adaptadores dan `chars` con
-    un tiempo por carácter; LRCLIB suele dar solo el tiempo de la línea.
+    It is the difference between a karaoke that follows the voice and one
+    that splits the line duration into equal parts. The adapters give `chars`
+    with one timing per character; LRCLIB usually gives only the line timing.
     """
-    con_texto = [line for line in lines or [] if line.text]
-    if not con_texto:
+    with_text = [line for line in lines or [] if line.text]
+    if not with_text:
         return False
-    listas = sum(
+    lists = sum(
         1
-        for line in con_texto
+        for line in with_text
         if line.chars and len(line.chars) >= len(line.text)
     )
-    return listas * 2 >= len(con_texto)
+    return lists * 2 >= len(with_text)
 
 
 def enhanced_pieces(text: str):
-    """Trocea una línea LRC mejorada en (instante o None, texto).
+    """Splits an enhanced LRC line into (instant or None, text).
 
-    Las marcas `<mm:ss.xx>` dan el instante de la palabra que sigue. El
-    texto anterior a la primera marca no tiene instante propio: hereda el
-    de la línea.
+    The `<mm:ss.xx>` marks give the instant of the word that follows. The
+    text before the first mark has no instant of its own: it inherits the
+    line one.
     """
     matches = list(ENHANCED_TAG.finditer(text or ""))
     if not matches:
@@ -641,11 +656,11 @@ def enhanced_pieces(text: str):
 
 
 def enhanced_chars(text: str, pieces, start: float, end: float, offset: float):
-    """Tiempos por carácter de una línea LRC mejorada.
+    """Per-character timings of an enhanced LRC line.
 
-    Cada palabra se reparte entre su marca y la siguiente: sus caracteres
-    entran uno a uno, no todos de golpe. El espacio entre palabras entra
-    con la palabra siguiente, así que el relleno no se detiene en él.
+    Each word is spread between its mark and the next one: its characters
+    come in one by one, not all at once. The space between words comes with
+    the next word, so the fill does not stop on it.
     """
     words = []
     for seconds, piece in pieces or []:
@@ -657,20 +672,20 @@ def enhanced_chars(text: str, pieces, start: float, end: float, offset: float):
     if not words:
         return []
     if " ".join(piece for _, piece in words) != text:
-        # La normalización de los trozos no reconstruye el texto completo:
-        # mejor no inventar tiempos y dejar el karaoke de nivel de línea.
+        # Normalizing the pieces does not rebuild the full text: better to
+        # invent no timings and keep the line-level karaoke.
         return []
     chars = []
     for index, (when, piece) in enumerate(words):
         if chars and when < chars[-1]:
-            # Dos palabras con la misma marca: el relleno no puede
-            # retroceder.
+            # Two words with the same mark: the fill must not go
+            # backwards.
             when = chars[-1]
         if index + 1 < len(words):
             until = words[index + 1][0]
         else:
-            # La última palabra no se estira por un silencio largo: si no,
-            # el relleno se queda arrastrándose hasta la línea siguiente.
+            # The last word is not stretched by a long silence: otherwise
+            # the fill keeps dragging itself until the next line.
             until = min(end, when + max(0.45, 0.35 * len(piece)))
         if until <= when:
             until = when + 0.001
@@ -713,7 +728,7 @@ def parse_lrc(text: str):
             minutes = int(tag.group(2))
             seconds = float(tag.group(3))
             fraction = tag.group(4) or "0"
-            # Hasta seis decimales: algunos LRC traen microsegundos.
+            # Up to six decimals: some LRC files carry microseconds.
             fraction_value = int(fraction) / (10 ** len(fraction))
             start = hours * 3600 + minutes * 60 + seconds + fraction_value + offset
             if start < 0:
@@ -811,7 +826,7 @@ def fetch_lrclib(track: Track, log):
         log(f"lrclib error: {error!r}")
         return [], "red"
     if not isinstance(data, list) or not data:
-        log("lrclib sin resultados")
+        log("lrclib no results")
         return [], None
 
     wanted_title = _normalize_match(track.title)
@@ -825,10 +840,10 @@ def fetch_lrclib(track: Track, log):
         cartist = _normalize_match(candidate.get("artistName", ""))
         synced_lyrics = candidate.get("syncedLyrics") or ""
         synced = bool(synced_lyrics)
-        # Un LRC mejorado trae tiempos por palabra: es la versión que hace
-        # que el karaoke siga la voz, así que gana a la de nivel de línea
-        # cuando las dos encajan igual de bien.
-        mejorada = bool(ENHANCED_TAG.search(synced_lyrics))
+        # An enhanced LRC brings word timings: it is the version that makes
+        # the karaoke follow the voice, so it beats the line-level one when
+        # both match equally well.
+        enhanced = bool(ENHANCED_TAG.search(synced_lyrics))
         score = 0.0
         if ctitle == wanted_title:
             score += 5.0
@@ -840,13 +855,13 @@ def fetch_lrclib(track: Track, log):
             elif wanted_artist in cartist or cartist in wanted_artist:
                 score += 2.0
             else:
-                # artistas separados por comas: basta con uno en común
+                # artists separated by commas: one in common is enough
                 wanted_parts = {part.strip() for part in track.artist.split(",") if part.strip()}
                 if any(_normalize_match(part) in cartist for part in wanted_parts):
                     score += 1.5
         if synced:
             score += 3.0
-        if mejorada:
+        if enhanced:
             score += 1.0
         try:
             cduration = float(candidate.get("duration") or 0)
@@ -885,11 +900,11 @@ def fetch_netease(track: Track, log):
     try:
         data = _http_json(search_url, headers={"Referer": "https://music.163.com"}, timeout=10.0)
     except Exception as error:  # noqa: BLE001
-        log(f"netease búsqueda: {error!r}")
+        log(f"netease lookup: {error!r}")
         return [], "red"
     songs = (((data or {}).get("result") or {}).get("songs") or []) if isinstance(data, dict) else []
     if not songs:
-        log("netease sin resultados")
+        log("netease no results")
         return [], None
 
     wanted_title = _normalize_match(track.title)
@@ -926,14 +941,14 @@ def fetch_netease(track: Track, log):
     try:
         data = _http_json(lyric_url, headers={"Referer": "https://music.163.com"}, timeout=10.0)
     except Exception as error:  # noqa: BLE001
-        log(f"netease letra: {error!r}")
+        log(f"netease lyrics: {error!r}")
         return [], "red"
     lrc = (((data or {}).get("lrc") or {}).get("lyric") or "") if isinstance(data, dict) else ""
     lines = parse_lrc(lrc)
     if lines:
         log(f"netease: {chosen.get('name')} (sync)")
         return lines, None
-    # Algunas canciones solo traen la letra "traducida" o texto plano.
+    # Some songs only bring the "translated" lyrics or plain text.
     text = ENHANCED_TAG.sub("", lrc).strip()
     if text:
         lines = plain_lines(text, track.duration)
@@ -989,7 +1004,7 @@ def fetch_adapter(track: Track, log):
                 check=False,
             )
             if not result.stdout.strip():
-                log(f"{source}: sin salida")
+                log(f"{source}: no output")
                 failed = True
                 continue
             data = json.loads(result.stdout)
@@ -1019,7 +1034,7 @@ def fetch_adapter(track: Track, log):
                     chars = [float(value) / 1000.0 for value in chars]
                 lines.append(LyricLine(start, duration, text, chars))
             if lines:
-                log(f"{source}: {len(lines)} líneas")
+                log(f"{source}: {len(lines)} lines")
                 return lines, None
         except subprocess.TimeoutExpired:
             log(f"{source}: timeout")
@@ -1037,14 +1052,14 @@ def fetch_adapter(track: Track, log):
 
 
 def load_lyrics_settings():
-    """Lee los ajustes del plugin Lyrics de Noctalia si están disponibles."""
+    """Reads the settings of the Noctalia Lyrics plugin when they are available."""
     result = {
         "sources": ["lrclib", "netease", "splayer", "qqmusic", "kugou"],
         "credentials": {},
         "translation": "zh-Hans",
     }
-    # El estado puede estar movido con NOCTALIA_STATE_HOME o XDG_STATE_HOME:
-    # una ruta fija leeria los ajustes de otra instalacion.
+    # The state may be moved with NOCTALIA_STATE_HOME or XDG_STATE_HOME:
+    # a fixed path would read the settings of another installation.
     path = os.path.join(state_dir(), "settings.toml")
     if not os.path.isfile(path) or tomllib is None:
         return result
@@ -1070,10 +1085,10 @@ def load_lyrics_settings():
 
 
 def adapter_track(track: Track, art_url: str = ""):
-    # No se envía la duración: NetEase la usa para filtrar y si no
-    # coincide exactamente (tolerancia ~24 s) descarta la canción. Con
-    # 0 = "desconocida" el matching es solo por título/artista, que
-    # ya acierta (Lovesong / Adele se encuentra al instante).
+    # The duration is not sent: NetEase uses it to filter and, if it does
+    # not match exactly (tolerance ~24 s), it discards the song. With
+    # 0 = "unknown" the match is by title/artist only, which already
+    # works (Lovesong / Adele is found right away).
     return {
         "title": track.title,
         "artist": track.artist,
@@ -1118,13 +1133,13 @@ def run_adapter(source: str, track: Track, settings: dict, log):
             cwd=workdir,
             capture_output=True,
             text=True,
-            # NetEase y QQ Music pueden tardar mas de 3 s: matarlos dejaba
-            # sin letra canciones que el adaptador si sabia resolver.
+            # NetEase and QQ Music can take more than 3 s: killing them left
+            # songs without lyrics that the adapter could resolve.
             timeout=22,
             check=False,
         )
         if not result.stdout.strip():
-            log(f"{source}: sin salida")
+            log(f"{source}: no output")
             return [], "red"
         data = json.loads(result.stdout)
         if not isinstance(data, dict):
@@ -1145,7 +1160,7 @@ def run_adapter(source: str, track: Track, settings: dict, log):
                 continue
             start = float(item.get("time", -1))
             duration = float(item.get("duration", 0))
-            # El adaptador siempre devuelve milisegundos (-1 = sin tiempo).
+            # The adapter always returns milliseconds (-1 = no timing).
             if start < 0:
                 start = -1.0
             else:
@@ -1157,7 +1172,7 @@ def run_adapter(source: str, track: Track, settings: dict, log):
                 chars = [float(value) / 1000.0 for value in chars]
             lines.append(LyricLine(start, duration, text, chars))
         if lines:
-            log(f"{source}: {len(lines)} líneas")
+            log(f"{source}: {len(lines)} lines")
             return lines, None
         return [], None
     except subprocess.TimeoutExpired:
@@ -1247,10 +1262,10 @@ def missing_recent(track: Track, hours=0.4) -> bool:
 
 
 def word_checked_recent(track: Track, hours=WORD_CHECK_HOURS) -> bool:
-    """True si ya se buscó una versión por palabra hace poco.
+    """True if a word-timed version was already looked up recently.
 
-    Sin esta marca, cada reproducción de una canción cuya letra solo tiene
-    tiempos de línea volvería a lanzar la búsqueda en segundo plano.
+    Without this marker, every playback of a song whose lyrics only have
+    line timings would launch the lookup in the background again.
     """
     path = os.path.join(CACHE_DIR, cache_key(track) + ".noword")
     try:
@@ -1274,184 +1289,184 @@ def mark_word_checked(track: Track):
 
 
 def estimate_times(lines, duration: float):
-    """Asigna tiempos estimados solo a las líneas sin marca temporal.
+    """Assigns estimated timings only to the lines without a time tag.
 
-    Una letra puede traer unas líneas con tiempo (LRC a medias) y otras sin
-    él: pisar las que ya lo tienen descoloca el resaltado y la letra deja de
-    seguir la canción.
+    A lyric file may bring some lines with timing (a half-done LRC) and
+    others without: overwriting the ones that already have it misplaces the
+    highlight and the lyrics stop following the song.
 
-    Las líneas sin tiempo se reparten por el hueco que les toca según su
-    posición en la lista: entre dos líneas con tiempo se quedan en medio,
-    detrás de la última si van al final y antes de la primera si van al
-    principio. Repartirlas todas desde el principio (como se hacía) deja que
-    una línea del final de la lista empiece a sonar en el segundo 6, por
-    delante de la parte que sí tiene tiempos.
+    The lines without timing are spread over the gap that fits their
+    position in the list: between two timed lines they stay in the middle,
+    behind the last one if they are at the end and before the first one if
+    they are at the beginning. Spreading them all from the start (as it used
+    to be done) lets a line at the end of the list start playing at second
+    6, ahead of the part that does have timings.
 
-    Si la duración se conoce, todas las estimaciones se recortan a ella:
-    una línea fuera de la canción nunca llega a resaltarse. Con una lista
-    desordenada (la siguiente ancla es anterior a la anterior) no existe
-    un intervalo válido: la estimación se queda detrás de la anterior en
-    la lista, que es la que la precede en pantalla. Y si dos anclas
-    tienen el mismo tiempo tampoco hay hueco: la estimada se queda en ese
-    instante, porque detrás de la línea siguiente el resaltado volvería
-    hacia atrás (la línea que va después ya se habría cantado).
+    If the duration is known, every estimate is clipped to it: a line
+    outside the song never gets highlighted. With an unordered list (the
+    next anchor comes before the previous one) there is no valid interval:
+    the estimate stays behind the previous one in the list, which is the
+    one that precedes it on screen. And if two anchors have the same time
+    there is no gap either: the estimate stays at that instant, because
+    behind the next line the highlight would go backwards (the line that
+    comes after would already have been sung).
     """
-    sin_tiempo = [
+    without_timing = [
         (index, line)
         for index, line in enumerate(lines)
         if line.text and line.start < 0
     ]
-    if not sin_tiempo:
+    if not without_timing:
         return lines
 
-    # Hueco por defecto entre líneas: cuatro segundos.
+    # Default gap between lines: four seconds.
     #
-    # No se deriva de la duración: con una canción de 200 s y una línea
-    # sin tiempo al final, un hueco de 196 s la colocaba en el segundo 226
-    # (fuera de la canción, así que nunca se resaltaba). El hueco es fijo
-    # y el reparto se recorta al final, donde haga falta.
-    hueco = 4.0
+    # It is not derived from the duration: with a 200 s song and a line
+    # without timing at the end, a 196 s gap placed it at second 226
+    # (outside the song, so it was never highlighted). The gap is fixed and
+    # the spread is clipped at the end, where needed.
+    time_gap = 4.0
 
-    # Anclas: las líneas con tiempo real y su posición en la lista.
-    anclas = [
+    # Anchors: the lines with a real timing and their position in the list.
+    anchors = [
         (index, line.start)
         for index, line in enumerate(lines)
         if line.start >= 0
     ]
 
-    # Cada línea sin tiempo se asigna al hueco que la rodea (la anterior con
-    # tiempo y la siguiente con tiempo).
-    grupos = []
-    for indice, linea in sin_tiempo:
-        antes = None
-        despues = None
-        for pos, inicio in anclas:
-            if pos < indice and (antes is None or pos > antes[0]):
-                antes = (pos, inicio)
-            if pos > indice and (despues is None or pos < despues[0]):
-                despues = (pos, inicio)
-        for grupo in grupos:
-            if grupo["antes"] == antes and grupo["despues"] == despues:
-                grupo["lineas"].append(linea)
+    # Every line without timing is assigned to the gap that surrounds it
+    # (the previous timed line and the next timed line).
+    groups = []
+    for indice, lyric_line in without_timing:
+        before = None
+        after = None
+        for pos, start_time in anchors:
+            if pos < indice and (before is None or pos > before[0]):
+                before = (pos, start_time)
+            if pos > indice and (after is None or pos < after[0]):
+                after = (pos, start_time)
+        for grupo in groups:
+            if grupo["before"] == before and grupo["after"] == after:
+                grupo["lines"].append(lyric_line)
                 break
         else:
-            grupos.append(
-                {"antes": antes, "despues": despues, "lineas": [linea]}
+            groups.append(
+                {"before": before, "after": after, "lines": [lyric_line]}
             )
 
-    # Si la duración se conoce, ninguna estimación puede caer fuera de la
-    # canción: el último instante útil es el final.
-    limite = duration if duration and duration > 0 else None
+    # If the duration is known, no estimate can fall outside the song: the
+    # last useful instant is the end.
+    limit = duration if duration and duration > 0 else None
 
-    for grupo in grupos:
-        miembros = grupo["lineas"]
-        antes = grupo["antes"]
-        despues = grupo["despues"]
-        total = len(miembros)
-        if antes and despues:
-            # Entre dos líneas con tiempo: se reparten el hueco intermedio.
-            # La siguiente puede estar más allá del final (un LRC con
-            # tiempos rotos): el hueco se recorta a la duración.
-            span = despues[1] - antes[1]
-            if span > 0 and limite is not None:
-                span = min(span, limite - antes[1])
+    for grupo in groups:
+        members = grupo["lines"]
+        before = grupo["before"]
+        after = grupo["after"]
+        total = len(members)
+        if before and after:
+            # Between two timed lines: they share the gap in between.
+            # The next one may be beyond the end (an LRC with broken
+            # timings): the gap is clipped to the duration.
+            span = after[1] - before[1]
+            if span > 0 and limit is not None:
+                span = min(span, limit - before[1])
             if span > 0:
-                paso = span / (total + 1)
-            elif despues[1] < antes[1]:
-                # Lista desordenada: la siguiente ancla es anterior a la
-                # anterior. Se usa el hueco fijo detrás de la anterior,
-                # recortado a lo que quede de canción.
-                paso = hueco
-                if limite is not None:
-                    paso = (
-                        min(hueco, (limite - antes[1]) / (total + 1))
-                        if limite > antes[1]
+                time_step = span / (total + 1)
+            elif after[1] < before[1]:
+                # Unordered list: the next anchor comes before the
+                # previous one. The fixed gap behind the previous one is
+                # used, clipped to what is left of the song.
+                time_step = time_gap
+                if limit is not None:
+                    time_step = (
+                        min(time_gap, (limit - before[1]) / (total + 1))
+                        if limit > before[1]
                         else 0.0
                     )
             else:
-                # La siguiente ancla tiene el mismo tiempo que la anterior
-                # (o cae al final de la canción): no hay hueco entre las
-                # dos. Poner la estimada detrás la dejaria despues de la
-                # linea siguiente de la lista, y el resaltado volveria
-                # hacia atras.
-                paso = 0.0
-            for indice, linea in enumerate(miembros):
-                if paso > 0:
-                    linea.start = antes[1] + (indice + 1) * paso
+                # The next anchor has the same time as the previous one
+                # (or falls at the end of the song): there is no gap
+                # between the two. Putting the estimate behind it would
+                # leave it after the next line of the list, and the
+                # highlight would go backwards.
+                time_step = 0.0
+            for indice, lyric_line in enumerate(members):
+                if time_step > 0:
+                    lyric_line.start = before[1] + (indice + 1) * time_step
                 else:
-                    linea.start = (
-                        min(antes[1], limite)
-                        if limite is not None
-                        else antes[1]
+                    lyric_line.start = (
+                        min(before[1], limit)
+                        if limit is not None
+                        else before[1]
                     )
-                if linea.start < 0:
-                    linea.start = 0.0
-                if linea.duration <= 0:
-                    linea.duration = max(0.1, paso * 0.92) if paso > 0 else 0.1
-        elif antes:
-            # Detrás de la última línea con tiempo. Si la canción se sabe
-            # y no caben todas las líneas antes de que termine, el paso se
-            # recorta: una línea fuera de la canción nunca se resaltaba.
-            if limite is None:
-                paso = hueco
-            elif limite > antes[1]:
-                paso = min(hueco, (limite - antes[1]) / (total + 1))
+                if lyric_line.start < 0:
+                    lyric_line.start = 0.0
+                if lyric_line.duration <= 0:
+                    lyric_line.duration = max(0.1, time_step * 0.92) if time_step > 0 else 0.1
+        elif before:
+            # Behind the last timed line. If the song is known and not all
+            # the lines fit before it ends, the step is clipped: a line
+            # outside the song was never highlighted.
+            if limit is None:
+                time_step = time_gap
+            elif limit > before[1]:
+                time_step = min(time_gap, (limit - before[1]) / (total + 1))
             else:
-                # La última real ya está en el final (o más allá): no queda
-                # sitio detrás sin salirse de la canción.
-                paso = 0.0
-            for indice, linea in enumerate(miembros):
-                if paso > 0:
-                    linea.start = antes[1] + (indice + 1) * paso
+                # The last real one is already at the end (or beyond):
+                # there is no room behind it without leaving the song.
+                time_step = 0.0
+            for indice, lyric_line in enumerate(members):
+                if time_step > 0:
+                    lyric_line.start = before[1] + (indice + 1) * time_step
                 else:
-                    linea.start = (
-                        min(antes[1], limite)
-                        if limite is not None
-                        else antes[1]
+                    lyric_line.start = (
+                        min(before[1], limit)
+                        if limit is not None
+                        else before[1]
                     )
-                if linea.start < 0:
-                    linea.start = 0.0
-                if linea.duration <= 0:
-                    linea.duration = max(0.1, paso * 0.92) if paso > 0 else 0.1
-        elif despues:
-            # Antes de la primera línea con tiempo. Se reparte hacia atrás
-            # sin salirse del origen ni de la canción: si no, varias
-            # líneas sin tiempo delante de una real muy temprana acaban
-            # todas en el segundo 0 y se resaltan a la vez.
-            fin = despues[1]
-            if limite is not None:
-                fin = min(fin, limite)
-            inicio = max(0.0, fin - total * hueco)
-            paso = (fin - inicio) / (total + 1)
-            if paso <= 0:
-                # La línea real llega en el segundo 0 (o la canción es tan
-                # corta que no hay hueco): se quedan en el origen.
-                paso = 0.0
-            for indice, linea in enumerate(miembros):
-                linea.start = inicio + indice * paso
-                if linea.duration <= 0:
-                    linea.duration = max(0.1, paso * 0.92) if paso > 0 else 0.1
+                if lyric_line.start < 0:
+                    lyric_line.start = 0.0
+                if lyric_line.duration <= 0:
+                    lyric_line.duration = max(0.1, time_step * 0.92) if time_step > 0 else 0.1
+        elif after:
+            # Before the first timed line. It is spread backwards without
+            # leaving the origin or the song: otherwise several lines
+            # without timing in front of a very early real one end up all
+            # at second 0 and are highlighted at the same time.
+            end_time = after[1]
+            if limit is not None:
+                end_time = min(end_time, limit)
+            start_time = max(0.0, end_time - total * time_gap)
+            time_step = (end_time - start_time) / (total + 1)
+            if time_step <= 0:
+                # The real line arrives at second 0 (or the song is so
+                # short that there is no gap): they stay at the origin.
+                time_step = 0.0
+            for indice, lyric_line in enumerate(members):
+                lyric_line.start = start_time + indice * time_step
+                if lyric_line.duration <= 0:
+                    lyric_line.duration = max(0.1, time_step * 0.92) if time_step > 0 else 0.1
         else:
-            # Ninguna línea tiene tiempo: se reparte desde el principio y,
-            # si la duración se conoce, sin pasarse del final.
-            if limite is not None and limite > 20:
-                inicio = min(6.0, limite * 0.05)
-                fin = max(inicio + 1, limite - 4.0)
-                paso = (fin - inicio) / max(1, total)
-            elif limite is not None:
-                inicio = min(1.0, limite * 0.1)
-                paso = (limite - inicio) / (total + 1)
-                if paso <= 0:
-                    paso = 0.0
+            # No line has a timing: it is spread from the start and, if
+            # the duration is known, without going past the end.
+            if limit is not None and limit > 20:
+                start_time = min(6.0, limit * 0.05)
+                end_time = max(start_time + 1, limit - 4.0)
+                time_step = (end_time - start_time) / max(1, total)
+            elif limit is not None:
+                start_time = min(1.0, limit * 0.1)
+                time_step = (limit - start_time) / (total + 1)
+                if time_step <= 0:
+                    time_step = 0.0
             else:
-                inicio = 1.0
-                paso = 4.0
-            for indice, linea in enumerate(miembros):
-                linea.start = inicio + indice * paso
-                if limite is not None:
-                    linea.start = min(linea.start, limite)
-                if linea.duration <= 0:
-                    linea.duration = max(0.1, paso * 0.92) if paso > 0 else 0.1
+                start_time = 1.0
+                time_step = 4.0
+            for indice, lyric_line in enumerate(members):
+                lyric_line.start = start_time + indice * time_step
+                if limit is not None:
+                    lyric_line.start = min(lyric_line.start, limit)
+                if lyric_line.duration <= 0:
+                    lyric_line.duration = max(0.1, time_step * 0.92) if time_step > 0 else 0.1
     return lines
 
 
@@ -1467,15 +1482,15 @@ def fetch_lyrics(
         cached = load_cache(track)
         if cached:
             lines, source, synced = cached
-            log(f"cache: {len(lines)} líneas ({source})")
+            log(f"cache: {len(lines)} lines ({source})")
             return lines, source, synced
         if missing_recent(track):
-            log("sin letra (caché negativa)")
+            log("no lyrics (negative cache)")
             return [], "cache", False
 
     settings = load_lyrics_settings()
     sources = list(settings.get("sources") or ["lrclib", "netease"])
-    # Filtra las fuentes que necesitan credenciales ausentes.
+    # Filters out the sources whose credentials are missing.
     available = []
     for source in sources:
         source = source.strip().lower()
@@ -1496,9 +1511,9 @@ def fetch_lyrics(
         if source not in available:
             available.append(source)
 
-    # Trabajadores en paralelo: la primera letra se publica en cuanto
-    # llega, para no hacer esperar. Si otra fuente trae tiempos por
-    # palabra, la mejora en cuanto aparece y es la que se queda en caché.
+    # Workers in parallel: the first lyrics are published as soon as they
+    # arrive, so nobody waits. If another source brings word timings, the
+    # improvement is applied when it shows up and that is the one kept in cache.
     result = {
         "lines": None,
         "source": "",
@@ -1515,40 +1530,40 @@ def fetch_lyrics(
         lines = estimate_times(lines, track.duration)
         synced = len(lines) > 1 and any(line.start >= 0 for line in lines)
         word = lines_have_chars(lines)
-        sin_acentos = texto_sin_acentos(lines)
-        aviso = None
+        without_accents = text_without_accents(lines)
+        warning = None
         with result_lock:
-            actual_palabra = result["word"]
+            current_word = result["word"]
             if result["lines"] is not None:
-                actual_sin_acentos = result["sin_acentos"]
-                if sin_acentos and not actual_sin_acentos:
-                    # Una letra sin tildes no cambia la que ya está bien
-                    # escrita, aunque traiga tiempos por carácter.
+                current_without_accents = result["sin_acentos"]
+                if without_accents and not current_without_accents:
+                    # Lyrics without accents do not replace the ones that
+                    # are already spelled correctly, even with char timings.
                     return False
-                mejora = (word and not actual_palabra) or (
-                    actual_sin_acentos and not sin_acentos
+                improvement = (word and not current_word) or (
+                    current_without_accents and not without_accents
                 )
-                if not mejora:
-                    # La primera letra ya está y esta no la mejora: no se pisa
-                    # lo que el usuario está viendo ni la caché buena.
+                if not improvement:
+                    # The first lyrics are already there and this one does
+                    # not improve them: what the user sees is left alone.
                     return False
             result["lines"] = lines
             result["source"] = source
             result["synced"] = synced
             result["word"] = word
-            result["sin_acentos"] = sin_acentos
-            # Solo el ganador escribe la cache: si escribieran todos, el
-            # ultimo en llegar podia dejar la letra perdedora. Una mejora
-            # sin tiempos por palabra no reescribe una caché válida.
+            result["sin_acentos"] = without_accents
+            # Only the winner writes the cache: if they all wrote, the last
+            # one to arrive could leave the losing lyrics behind. An
+            # improvement without word timings does not rewrite a valid cache.
             if word or not upgrade:
                 try:
                     save_cache(track, lines, source, synced)
                 except Exception:  # noqa: BLE001
                     pass
-            aviso = (lines, source, synced)
+            warning = (lines, source, synced)
         if on_update is not None:
             try:
-                on_update(*aviso)
+                on_update(*warning)
             except Exception:  # noqa: BLE001
                 pass
         return True
@@ -1558,7 +1573,7 @@ def fetch_lyrics(
             try:
                 lines, error = fetch_lrclib(track, log)
             except Exception as exc:  # noqa: BLE001
-                log(f"lrclib: excepción {exc!r}")
+                log(f"lrclib: exception {exc!r}")
                 return
             if lines:
                 publish(lines, "lrclib")
@@ -1574,7 +1589,7 @@ def fetch_lyrics(
             if lines:
                 publish(lines, source)
         except Exception as exc:  # noqa: BLE001
-            log(f"{source}: excepción {exc!r}")
+            log(f"{source}: exception {exc!r}")
 
     threads = []
     for source in available:
@@ -1592,20 +1607,20 @@ def fetch_lyrics(
     for t in threads:
         t.start()
 
-    # Espera a la primera letra; despues, un margen corto a que llegue una
-    # versión con tiempos por palabra. El plazo general es largo porque
-    # hay proveedores que tardan: con 4 s una letra que tarda 6 s se tiraba
-    # a la basura y el usuario se quedaba sin letra pese a estar
-    # disponible.
+    # Waits for the first lyrics; then, a short grace period for a version
+    # with word timings to arrive. The overall deadline is long because
+    # some providers are slow: with 4 s a lyrics file that takes 6 s was
+    # thrown away and the user was left without lyrics even though they
+    # were available.
     deadline = time.monotonic() + SEARCH_TIMEOUT
     grace_deadline = None
     while True:
         with result_lock:
             lines_now = result["lines"]
             word_now = result["word"]
-            sin_acentos_now = result["sin_acentos"]
-        if word_now and not sin_acentos_now:
-            # Ya está lo mejor posible: no se espera al resto.
+            without_accents_now = result["sin_acentos"]
+        if word_now and not without_accents_now:
+            # The best possible is already there: no need to wait for the rest.
             break
         if cancelled is not None and cancelled():
             break
@@ -1621,7 +1636,7 @@ def fetch_lyrics(
             break
         time.sleep(0.05)
 
-    # Cancelación best-effort: se dejan terminar los hilos (daemon).
+    # Best-effort cancellation: the threads are left to finish (daemon).
     with result_lock:
         lines = result["lines"]
         source = result["source"]
@@ -1630,14 +1645,14 @@ def fetch_lyrics(
     if lines:
         return lines, source, synced
     if upgrade:
-        # La caché que se está mostrando sigue siendo válida: no se toca.
+        # The cache being shown is still valid: it is left alone.
         return [], "", False
     if any(t.is_alive() for t in threads):
-        # Se agoto el plazo con proveedores todavia en marcha: la letra
-        # puede llegar despues, asi que no se marca la cache negativa
-        # (si se marcara, la busqueda se daria por cerrada y no se
-        # volveria a mirar esa cancion).
-        log("plazo de busqueda agotado: no se marca la caché negativa")
+        # The deadline ran out with providers still running: the lyrics
+        # may arrive later, so the negative cache is not marked (if it
+        # were, the lookup would be considered closed and that song would
+        # never be looked at again).
+        log("lookup deadline exceeded: the negative cache is not marked")
         return [], "", False
     mark_missing(track)
     return [], "", False
@@ -1674,13 +1689,13 @@ class Fetcher:
                 time.sleep(0.08)
                 continue
             track, force, upgrade, generation = request
-            entregado = [False]
+            delivered = [False]
 
             def on_update(lines, source, synced):
                 with self._lock:
                     if generation != self._generation:
                         return
-                    entregado[0] = True
+                    delivered[0] = True
                     self._result = (lines, source, synced)
 
             try:
@@ -1696,9 +1711,9 @@ class Fetcher:
                 self.log(f"fetch: {error!r}")
                 lines, source, synced = [], "", False
             with self._lock:
-                # Lo ya entregado no se repite: volver a aplicarlo
-                # recolocaría el carrusel a mitad de canción.
-                if generation == self._generation and not entregado[0]:
+                # What was already delivered is not repeated: applying it
+                # again would move the carousel to the middle of the song.
+                if generation == self._generation and not delivered[0]:
                     self._result = (lines, source, synced)
 
 
@@ -1708,9 +1723,9 @@ class Fetcher:
 
 PLUGIN_ID = "faminec/lyrics-carousel"
 
-# Segundos que dura el desplazamiento entre líneas cuando la transición
-# suave está activa. Se recorta al 80 % del hueco si la siguiente línea
-# llega antes, para que nunca se solapen dos movimientos.
+# Seconds that the scroll between lines lasts when the smooth transition
+# is active. It is clipped to 80 % of the gap if the next line arrives
+# sooner, so that two movements never overlap.
 GHOST_SECONDS = 0.9
 
 DEFAULTS = {
@@ -1719,6 +1734,7 @@ DEFAULTS = {
     "direction": "down",
     "marker": False,
     "karaoke": True,
+    "karaoke_brain": True,
     "footer": False,
     "hints": False,
     "header": False,
@@ -1738,7 +1754,7 @@ DEFAULTS = {
     "translate_lyrics": False,
 }
 
-BOOL_KEYS = ("marker", "karaoke", "footer", "hints", "header", "ghost")
+BOOL_KEYS = ("marker", "karaoke", "karaoke_brain", "footer", "hints", "header", "ghost")
 INT_KEYS = (
     "font_size", "spacing", "offset_ms", "width", "height",
     "custom_x", "custom_y", "visible_above", "visible_below",
@@ -1747,7 +1763,7 @@ FLOAT_KEYS = ("active_scale",)
 
 
 def read_overrides() -> dict:
-    """Ajustes cambiados desde el panel (capa temporal, se vuelca al cerrar)."""
+    """Settings changed from the panel (temporary layer, flushed on close)."""
     try:
         with open(overrides_path(), encoding="utf-8") as handle:
             data = json.load(handle)
@@ -1757,7 +1773,7 @@ def read_overrides() -> dict:
 
 
 def load_settings() -> dict:
-    """Ajustes del plugin: valores por defecto + settings.toml + overrides."""
+    """Plugin settings: default values + settings.toml + overrides."""
     cfg = dict(DEFAULTS)
 
     if os.path.isfile(settings_path()) and tomllib is not None:
@@ -1771,8 +1787,8 @@ def load_settings() -> dict:
         except Exception:  # noqa: BLE001
             pass
 
-    # Los overrides del panel tienen prioridad: son cambios explicitos
-    # todavia no volcados al settings.toml.
+    # The panel overrides have priority: they are explicit changes not
+    # yet flushed to settings.toml.
     for key, value in read_overrides().items():
         if key in cfg:
             cfg[key] = value
@@ -1795,10 +1811,10 @@ def load_settings() -> dict:
             cfg[key] = DEFAULTS[key]
     cfg["font_size"] = max(6, min(96, cfg["font_size"]))
     cfg["spacing"] = max(1, min(6, cfg["spacing"]))
-    # Los limites son los del panel (lib/settings.luau, LIMITS): el
-    # manifiesto ya no los declara porque esos ajustes solo se cambian en el
-    # panel. El script los recorta al leer, asi que un valor que llegue
-    # fuera de rango (un IPC, un fichero editado a mano) no rompe nada.
+    # The limits are the panel's (lib/settings.luau, LIMITS): the manifest
+    # no longer declares them because those settings are only changed from
+    # the panel. The script clips them on read, so a value that arrives out
+    # of range (an IPC, a hand-edited file) breaks nothing.
     cfg["offset_ms"] = max(-3000, min(3000, cfg["offset_ms"]))
     cfg["width"] = max(400, min(3840, cfg["width"]))
     cfg["height"] = max(200, min(2160, cfg["height"]))
@@ -1848,12 +1864,12 @@ def normalize_anchor(value) -> str:
 
 
 def window_size_px():
-    """Tamaño en píxeles de la ventana del carrusel, según Hyprland.
+    """Size in pixels of the carousel window, according to Hyprland.
 
-    El ajuste width/height es el tamaño de la ventana en píxeles (lo que el
-    panel usa al crearla), no el número de celdas ni el área de dibujo de
-    kitty. Preguntarlo a Hyprland evita mezclar las tres medidas: antes el
-    script guardaba las celdas del terminal y la ventana salía diminuta.
+    The width/height setting is the size of the window in pixels (what the
+    panel uses to create it), not the number of cells nor the kitty drawing
+    area. Asking Hyprland avoids mixing the three measures: the script
+    used to store the terminal cells and the window came out tiny.
     """
     try:
         result = subprocess.run(
@@ -1896,6 +1912,7 @@ class LyricsCarousel:
         self._set_language(getattr(args, "lang", None) or "auto")
         self.direction = 1 if self.cfg["direction"] == "down" else -1
         self.karaoke = bool(self.cfg["karaoke"])
+        self.karaoke_brain = bool(self.cfg.get("karaoke_brain", True))
         self.spacing = int(self.cfg["spacing"])
         self.last_cfg = 0.0
         self.track = Track()
@@ -1918,20 +1935,20 @@ class LyricsCarousel:
         self.moving = False
         self.last_reload = 0.0
         self.last_fetch = 0.0
-        # Última comprobación del tamaño de la ventana (redimensionado manual).
+        # Last check of the window size (manual resize).
         self._last_size_check = 0.0
         self._last_viz_log = 0.0
         self.status_message = ""
         self.stop_requested = False
-        # SIGUSR1: el panel avisa de que la caché se ha vaciado y la
-        # ventana abierta tiene que volver a buscar la canción actual.
+        # SIGUSR1: the panel warns that the cache has been emptied and the
+        # open window has to look up the current song again.
         self.reload_requested = False
         self.last_counters = 0.0
         self._player = PlayerWatcher(args.player) if not self.demo else None
         self.image = None
         self.image_error = ""
-        # Si la terminal se cierra, las escrituras fallan: hay que salir en
-        # vez de quedarse dibujando en el vacio.
+        # If the terminal is closed, the writes fail: it has to exit
+        # instead of staying drawing into the void.
         self.output_broken = False
         if ImageRenderer is not None:
             try:
@@ -1939,7 +1956,7 @@ class LyricsCarousel:
             except Exception as error:  # noqa: BLE001
                 self.image = None
                 self.image_error = repr(error)
-        # Solo modo imagen: si no hay renderizador, avisar y salir
+        # Image mode only: if there is no renderer, warn and exit
         if self.image is None:
             reason = self.image_error or IMAGE_ERROR or self.tr("unknown_reason")
         elif not getattr(getattr(self.image, "gfx", None), "supported", False):
@@ -1947,7 +1964,7 @@ class LyricsCarousel:
         else:
             reason = ""
         if reason:
-            self.warn(f"modo imagen no disponible: {reason}")
+            self.warn(f"image mode not available: {reason}")
             self.status_message = self.tr("image_unavailable", reason=reason)
         self.last_mode = ""
         self._demo_start = time.monotonic() - max(0.0, args.demo_offset)
@@ -1955,19 +1972,19 @@ class LyricsCarousel:
             self._load_demo()
         self.update_size()
 
-    # ---- utilidades de terminal -------------------------------------
+    # ---- terminal utilities -------------------------------------
 
     def _set_language(self, choice: str):
-        """Fija el idioma de los textos de la ventana."""
+        """Sets the language of the window texts."""
         language = detect_language(choice)
         self.language = language
         self.texts = TEXTS.get(language, TEXTS["en"])
 
     def tr(self, key: str, **kwargs) -> str:
-        """Texto de la ventana en el idioma elegido.
+        """Window text in the chosen language.
 
-        Si la clave no existe se devuelve la clave: se ve al instante que
-        falta una traduccion en vez de dejar un hueco en la ventana.
+        If the key does not exist, the key itself is returned: a missing
+        translation is obvious at once instead of leaving a hole.
         """
         value = self.texts.get(key)
         if value is None:
@@ -1986,7 +2003,7 @@ class LyricsCarousel:
         self.warn(message)
 
     def warn(self, message: str):
-        """Anota un problema en el log de diagnostico (siempre, no solo con --debug)."""
+        """Records a problem in the diagnostic log (always, not only with --debug)."""
         try:
             os.makedirs(CACHE_DIR, exist_ok=True)
             with open(os.path.join(CACHE_DIR, "debug.log"), "a", encoding="utf-8") as handle:
@@ -1996,9 +2013,9 @@ class LyricsCarousel:
 
     def update_size(self):
         size = shutil.get_terminal_size(fallback=(96, 30))
-        # Las celdas reales mandan: la ventana puede tener menos de 30x12
-        # celdas (por ejemplo con una fuente grande) y un minimo inventado
-        # hace que cada fila se desborde y la letra se parta en trozos.
+        # The real cells are what counts: the window can have fewer than
+        # 30x12 cells (for example with a large font) and an invented
+        # minimum makes every row overflow and the lyrics break in pieces.
         width = size.columns if size.columns > 0 else 96
         height = size.lines if size.lines > 0 else 30
         if width != self.width or height != self.height:
@@ -2006,12 +2023,12 @@ class LyricsCarousel:
             self.height = height
 
     def check_manual_resize(self):
-        """Guarda el tamaño si el usuario ha redimensionado la ventana a mano.
+        """Stores the size if the user resized the window by hand.
 
-        Los ajustes width/height están en píxeles de la ventana, no en celdas
-        del terminal: redimensionar con el ratón no pasa por el panel, así que
-        el script lo guarda en la capa de overrides (que no vigila Noctalia:
-        escribir el settings.toml cerraría el panel que estuviera abierto).
+        The width/height settings are in window pixels, not terminal cells:
+        resizing with the mouse does not go through the panel, so the
+        script stores it in the overrides layer (which Noctalia does not
+        watch: writing settings.toml would close an open panel).
         """
         if self.demo:
             return
@@ -2023,17 +2040,17 @@ class LyricsCarousel:
         if size is None:
             return
         width, height = size
-        # Solo se guarda lo que el panel y el script aceptan: una ventana
-        # diminuta (por ejemplo a medio arrastrar) no vale.
+        # Only what the panel and the script accept is stored: a tiny
+        # window (for example half dragged) is not valid.
         if not (400 <= width <= 3840 and 200 <= height <= 2160):
             return
         if width == self.cfg.get("width") and height == self.cfg.get("height"):
             return
-        self.log(f"tamaño manual: {width}x{height}")
+        self.log(f"manual size: {width}x{height}")
         self._save_override("width", width, "int", persist=False)
         self._save_override("height", height, "int", persist=False)
 
-    # ---- datos --------------------------------------------------------
+    # ---- data --------------------------------------------------------
 
     def _load_demo(self):
         sample = [
@@ -2060,9 +2077,9 @@ class LyricsCarousel:
         ]
         self.lines = [LyricLine(start, 4.6, text) for start, text in sample]
         self.source = "demo"
-        # Sin busqueda: el modo demo es autonomo (ni al arrancar ni al
-        # recargar se pide letra a internet).
-        self.log("demo: letra de muestra, sin busqueda")
+        # No lookup: demo mode is self-contained (neither at startup nor
+        # on reload are lyrics requested from the internet).
+        self.log("demo: sample lyrics, no lookup")
         self.synced = True
         self.state = "lyrics"
         self.track = Track("Eternamente", "Stranger Beats, Inexistente y BabyG", "Extraños Clika II", 96.0, "demo", "Playing")
@@ -2080,9 +2097,9 @@ class LyricsCarousel:
         return min(elapsed, self.demo_duration), self.demo_duration
 
     def _apply_track(self, track: Track):
-        # La clave basta para saber que es el mismo tema. Exigir ademas un
-        # titulo hacia que un tema sin titulo (solo artista) se volviera a
-        # buscar en cada sondeo, sin fin.
+        # The key is enough to know it is the same track. Requiring a title
+        # as well meant that a track without one (artist only) was looked
+        # up again on every poll, forever.
         if track.key == self.track_key and self.track_key:
             self.track = track
             return
@@ -2107,17 +2124,17 @@ class LyricsCarousel:
             self.lines, self.source, self.synced = cached
             self.state = "lyrics" if self.lines else "empty"
             self._snap_scroll()
-            self.log(f"tema: {track.title} — {track.artist} (cache)")
-            # La letra se muestra ya, pero si solo trae tiempos de línea se
-            # busca en segundo plano una versión con tiempos por palabra.
-            # Sin red de por medio el karaoke repartiría la línea a partes
-            # iguales y no seguiría la voz.
+            self.log(f"track: {track.title} — {track.artist} (cache)")
+            # The lyrics are shown right away, but if they only bring line
+            # timings, a version with word timings is looked up in the
+            # background. Without it the karaoke would spread the line in
+            # equal parts and would not follow the voice.
             if (
                 not lines_have_chars(self.lines)
                 and not word_checked_recent(track)
             ):
                 self.fetcher.start(track, force=True, upgrade=True)
-                self.log("buscando una versión con tiempos por palabra")
+                self.log("searching for a version with word timings")
         else:
             self.state = "loading"
             self.lines = []
@@ -2125,30 +2142,30 @@ class LyricsCarousel:
             self.synced = False
             self.fetcher.start(track, force=force)
             self.last_fetch = time.monotonic()
-            self.log(f"tema: {track.title} — {track.artist} (buscando)")
+            self.log(f"track: {track.title} — {track.artist} (searching)")
 
     def _apply_fetched(self, lines, source, synced) -> bool:
-        """Aplica un resultado de búsqueda sin pisar una letra igual o mejor.
+        """Applies a search result without overwriting equal or better lyrics.
 
-        Una mejora en segundo plano puede llegar cuando la canción ya va
-        por la mitad. Volver a aplicar la misma letra (o una peor) haría
-        saltar el carrusel sin ganar nada, y una búsqueda fallida no debe
-        borrar la letra que se está mostrando.
+        A background improvement can arrive when the song is already half
+        over. Applying the same lyrics again (or worse ones) would make the
+        carousel jump without gaining anything, and a failed lookup must
+        not erase the lyrics that are being shown.
         """
         if not (self.track.title or self.track.artist):
             return False
-        nueva_palabra = lines_have_chars(lines)
-        actual_palabra = lines_have_chars(self.lines)
+        new_word = lines_have_chars(lines)
+        current_word = lines_have_chars(self.lines)
         if (
             self.lines
-            and texto_sin_acentos(lines)
-            and not texto_sin_acentos(self.lines)
+            and text_without_accents(lines)
+            and not text_without_accents(self.lines)
         ):
-            # Una letra sin tildes no sustituye a la que ya está bien escrita,
-            # aunque la búsqueda de mejora la devuelva con tiempos por carácter.
+            # Lyrics without accents do not replace the ones already
+            # spelled correctly, even if the lookup brings char timings.
             return False
-        if self.lines and not (nueva_palabra and not actual_palabra):
-            if lines and not nueva_palabra:
+        if self.lines and not (new_word and not current_word):
+            if lines and not new_word:
                 mark_word_checked(self.track)
             return False
         self.lines = lines
@@ -2156,7 +2173,7 @@ class LyricsCarousel:
         self.synced = synced
         self.state = "lyrics" if lines else "empty"
         self._snap_scroll()
-        if lines and not nueva_palabra:
+        if lines and not new_word:
             mark_word_checked(self.track)
         return True
 
@@ -2178,9 +2195,9 @@ class LyricsCarousel:
             cfg["active_scale"] = self.args.active_scale
         if self.args.accent:
             cfg["accent"] = self.args.accent
-        # Los atajos guardan en segundo plano. Mientras el settings.toml no
-        # recoja el valor, la configuracion trae el viejo: se mantiene el
-        # cambio local para que la recarga no lo revierta.
+        # The shortcuts are stored in the background. While settings.toml
+        # does not pick up the value, the configuration brings the old one:
+        # the local change is kept so the reload does not revert it.
         pending = getattr(self, "pending_overrides", None)
         if pending:
             for key, value in list(pending.items()):
@@ -2188,20 +2205,20 @@ class LyricsCarousel:
                     del pending[key]
                 else:
                     cfg[key] = value
-        # Compara clave a clave: la igualdad de diccionarios puede fallar
-        # por tipos (int vs float) y entonces los cambios se ignoran.
+        # Compares key by key: dictionary equality can fail because of
+        # types (int vs float) and then the changes would be ignored.
         if all(
             cfg.get(key) == self.cfg.get(key)
             for key in cfg
             if key in self.cfg
         ) and set(cfg.keys()) == set(self.cfg.keys()):
             return
-        # Copia congelada de la configuracion anterior: comparar contra el
-        # mismo diccionario que se va a reemplazar permite que cualquier
-        # mutacion local (por ejemplo, la que hacia draw_image al fallar)
-        # se confunda con una peticion nueva del usuario.
+        # Frozen copy of the previous configuration: comparing against the
+        # same dictionary that is about to be replaced lets any local
+        # mutation (for example the one draw_image does on failure) be
+        # mistaken for a new request from the user.
         previous = dict(self.cfg)
-        # Invalida la cache de fuentes si cambio la familia o el tamaño.
+        # Invalidates the font cache if the family or the size changed.
         if (
             str(previous.get("font_family")) != str(cfg.get("font_family"))
             or int(previous.get("font_size", 0)) != int(cfg.get("font_size", 0))
@@ -2211,19 +2228,20 @@ class LyricsCarousel:
                     self.image.invalidate_fonts()
                 except Exception:  # noqa: BLE001
                     pass
-            # La tipografía se cachea en el renderizador de imagen: al
-            # cambiarla hay que invalidar la caché, no reiniciar nada.
+            # The typeface is cached in the image renderer: changing it
+            # requires invalidating the cache, not restarting anything.
         self.cfg = cfg
         self.direction = 1 if cfg["direction"] == "down" else -1
         self.karaoke = bool(cfg["karaoke"])
+        self.karaoke_brain = bool(cfg.get("karaoke_brain", True))
         self.spacing = int(cfg["spacing"])
-        self.log("ajustes: " + json.dumps(cfg, ensure_ascii=False))
-        # La geometría de la ventana la aplica el panel (es quien tiene la
-        # API de Noctalia): aquí no se toca, solo se vigila el tamaño por si
-        # el usuario redimensiona la ventana a mano.
+        self.log("settings: " + json.dumps(cfg, ensure_ascii=False))
+        # The window geometry is applied by the panel (it has the Noctalia
+        # API): it is not touched here, only the size is watched in case
+        # the user resizes the window by hand.
 
     def _poll_data(self):
-        # Recarga de ajustes: vale tanto en modo demo como en modo real.
+        # Settings reload: it applies both in demo mode and in real mode.
         if time.monotonic() - self.last_cfg > 0.5:
             self.last_cfg = time.monotonic()
             self._reload_config()
@@ -2246,26 +2264,26 @@ class LyricsCarousel:
         if result is not None:
             lines, source, synced = result
             if self._apply_fetched(lines, source, synced):
-                self.log(f"resultado: {len(lines)} líneas ({source})")
+                self.log(f"result: {len(lines)} lines ({source})")
 
         if (
             self.state == "empty"
             and self.track.title
             and time.monotonic() - self.last_fetch > RETRY_SECONDS
         ):
-            # La letra puede no estar disponible la primera vez (API caída o
-            # canción recién añadida): se reintenta cada minuto.
+            # The lyrics may not be available the first time (API down or
+            # a song just added): it is retried every minute.
             self.last_fetch = time.monotonic()
             self.fetcher.start(self.track, force=True)
-            self.log("reintento automático de la letra")
+            self.log("automatic lyrics retry")
 
-        # (la recarga de ajustes ya se hizo arriba, vale para demo y real)
+        # (the settings reload already happened above, it covers demo and real)
 
         if time.monotonic() - self.last_reload > 15:
             self.last_reload = time.monotonic()
             self.theme.reload()
 
-    # ---- cálculo de la línea activa ----------------------------------
+    # ---- active line calculation ----------------------------------
 
     def _position(self):
         if self.demo:
@@ -2276,15 +2294,15 @@ class LyricsCarousel:
         return self.track.current_position()
 
     def position(self):
-        """Posición de reproducción con el desfase aplicado."""
+        """Playback position with the offset applied."""
         return max(0.0, self._position() + self.cfg["offset_ms"] / 1000.0)
 
     def _timed_lines(self):
-        """(inicio, índice) de las líneas con tiempo, ordenado por inicio.
+        """(start, index) of the timed lines, sorted by start.
 
-        Las líneas de una letra plain no tienen tiempo (-1). Si se mezclan
-        con la búsqueda binaria, el orden deja de ser creciente y se resalta
-        una línea que no suena.
+        The lines of a plain lyric have no timing (-1). If they are mixed
+        with the binary search, the order stops being increasing and a line
+        that is not playing gets highlighted.
         """
         pairs = [
             (line.start, index)
@@ -2295,47 +2313,47 @@ class LyricsCarousel:
         return pairs
 
     def next_timed_start(self, index):
-        """Inicio de la siguiente linea con tiempo real (o None).
+        """Start of the next line with a real timing (or None).
 
-        Las lineas sin marca de tiempo valen -1: si el relleno del karaoke
-        toma "la siguiente de la lista" como final, la linea activa se
-        queda con un final de -1 (o se acorta de golpe) y el resaltado se
-        descuadra. Aqui se busca el menor tiempo real posterior al de la
-        linea, que es lo que marca cuando empieza la siguiente.
+        The lines without a time tag are -1: if the karaoke fill takes
+        "the next one in the list" as its end, the active line is left
+        with an end of -1 (or is cut short all at once) and the highlight
+        goes out of sync. Here the smallest real timing after the current
+        one is looked for, which is what marks when the next one starts.
 
-        Devuelve None si no hay ninguna linea con tiempo despues.
+        Returns None if there is no timed line after it.
         """
         if index < 0 or index >= len(self.lines):
             return None
-        actual = self.lines[index].start
-        if actual < 0:
-            # Una linea sin tiempo no tiene final por karaoke.
+        current = self.lines[index].start
+        if current < 0:
+            # A line without timing has no karaoke end.
             return None
-        siguiente = None
+        next_line = None
         for line in self.lines:
-            if line.start > actual and (siguiente is None or line.start < siguiente):
-                siguiente = line.start
-        return siguiente
+            if line.start > current and (next_line is None or line.start < next_line):
+                next_line = line.start
+        return next_line
 
     def scroll_state(self, position):
-        """(línea cantada, línea en el centro, progreso de la transición)."""
+        """(sung line, centered line, transition progress)."""
         if not self.lines:
             return 0, 0, 0.0
         timed = self._timed_lines()
         if not timed:
             return 0, 0, 0.0
         times = [start for start, _ in timed]
-        # Sin tolerancia: la línea siguiente solo es la activa cuando
-        # empieza de verdad. Si se adelantara, el final de la transición
-        # volvería a progress 0 y el carrusel daría un tirón al llegar.
+        # No tolerance: the next line is only active when it really starts.
+        # If it were picked early, the end of the transition would go back
+        # to progress 0 and the carousel would jerk when it arrived.
         slot = bisect.bisect_right(times, position) - 1
         slot = max(0, min(slot, len(timed) - 1))
         index = timed[slot][1]
         focus = index
         progress = 0.0
-        # La transición suave es una duración fija (~0.9 s) y solo existe si
-        # el usuario la ha activado: con `ghost` apagado el carrusel salta
-        # de una línea a la siguiente sin animación.
+        # The smooth transition is a fixed duration (~0.9 s) and only exists
+        # if the user has enabled it: with `ghost` off the carousel jumps
+        # from one line to the next without animation.
         duration = GHOST_SECONDS if self.cfg["ghost"] else 0.0
         nxt = slot + 1
         if nxt < len(timed) and duration > 0:
@@ -2350,11 +2368,11 @@ class LyricsCarousel:
         return index, focus, progress
 
     def karaoke_amount(self, line, text, position, end) -> float:
-        """Cuántos caracteres de la línea se han cantado, con decimales.
+        """How many characters of the line have been sung, with decimals.
 
-        Para el modo imagen el relleno es pixel-perfect: el avance se interpola
-        dentro del carácter en curso. Con tiempos por carácter usa esos tiempos;
-        sin ellos reparte la duración de la línea entre los caracteres.
+        In image mode the fill is pixel-perfect: the progress is
+        interpolated inside the character being sung. With char timings it
+        uses those; without them it spreads the duration over the chars.
         """
         length = len(text)
         if length <= 0:
@@ -2390,11 +2408,11 @@ class LyricsCarousel:
             return 0, 0
 
     def _update_scroll(self, position):
-        """El desplazamiento es función del tiempo de reproducción.
+        """The scroll is a function of the playback time.
 
-        El bloque empieza a moverse justo antes de que entre la línea nueva y
-        termina exactamente cuando le toca, así que el movimiento es continuo
-        y no un salto seco.
+        The block starts moving just before the new line comes in and ends
+        exactly when its turn comes, so the movement is continuous and not
+        an abrupt jump.
         """
         if not self.lines:
             return
@@ -2410,20 +2428,20 @@ class LyricsCarousel:
 
     def draw_image(self):
         if self.image is None:
-            # Sin renderizador no hay nada que dibujar: el aviso ya se dio al
-            # arrancar y el bucle de --once termina solo.
+            # Without a renderer there is nothing to draw: the warning was
+            # already given at startup and the --once loop ends on its own.
             return
         if self.last_mode != "image":
             sys.stdout.write("\x1b[2J\x1b[H")
             sys.stdout.flush()
             self.last_mode = "image"
-            self.log("modo: imagen")
+            self.log("mode: image")
         try:
             rendered = self.image.render()
         except OSError as error:
-            # Terminal redimensionado o cerrado: no cuenta como fallo de
-            # render, pero si esta cerrado hay que salir.
-            self.log(f"escritura: {error!r}")
+            # Terminal resized or closed: it does not count as a render
+            # failure, but if it is closed it has to exit.
+            self.log(f"write: {error!r}")
             self.output_broken = True
             return
         except Exception as error:  # noqa: BLE001
@@ -2431,29 +2449,29 @@ class LyricsCarousel:
 
             self.image_failures = getattr(self, "image_failures", 0) + 1
             self.log(
-                "imagen: " + repr(error) + "\n" + traceback.format_exc()
+                "image: " + repr(error) + "\n" + traceback.format_exc()
             )
             if self.image_failures >= 3:
-                self.log("modo imagen desactivado tras varios fallos")
+                self.log("image mode disabled after several failures")
                 self.image_disabled = True
                 self.status_message = self.tr("image_disabled")
                 self.last_mode = ""
             return
         if not rendered:
-            # No se ha podido colocar la imagen (p. ej. sin tamaño en píxeles).
+            # The image could not be placed (e.g. no size in pixels).
             self.image_failures = getattr(self, "image_failures", 0) + 1
             if self.image_failures >= 3:
-                self.log("modo imagen desactivado: no se puede dibujar")
+                self.log("image mode disabled: cannot draw")
                 self.image_disabled = True
             return
         self.image_failures = 0
 
     def draw(self):
         now = time.monotonic()
-        # El ritmo lo pone el bucle (plazo de paso fijo): aqui solo se dibuja.
-        # Antes este metodo tambien descartaba frames si se habia pasado del
-        # intervalo, y con el trabajo por delante el ciclo real era
-        # `trabajo + intervalo`: 36 fps en vez de 60.
+        # The pace comes from the loop (fixed step deadline): here it only
+        # draws. This method also dropped frames when the interval had
+        # already elapsed, and with the work in front the real cycle was
+        # `work + interval`: 36 fps instead of 60.
         draw_start = now
         self.draw_image()
         draw_ms = (time.monotonic() - draw_start) * 1000
@@ -2461,46 +2479,46 @@ class LyricsCarousel:
             self._draw_accum = getattr(self, "_draw_accum", 0) + draw_ms
             self._draw_frames = getattr(self, "_draw_frames", 0) + 1
             if self._draw_frames == 1:
-                # La ventana de estadísticas empieza con el primer cuadro:
-                # si el inicio se tomara al logar, la primera línea
-                # saldría siempre con 0 fps.
-                self._draw_desde = now
+                # The statistics window starts with the first frame: if the
+                # start were taken when logging, the first line would always
+                # come out with 0 fps.
+                self._draw_from = now
             if self._draw_frames % 180 == 0:
                 avg = self._draw_accum / self._draw_frames
-                desde = getattr(self, "_draw_desde", now)
-                # 180 cuadros son 179 intervalos: se cuentan los
-                # intervalos, no los cuadros, o el fps sale un 0,6 % alto.
-                fps = fps_real(max(0, self._draw_frames - 1), now - desde)
-                self.warn(f"draw avg: {avg:.1f}ms | {fps:.0f} fps reales")
+                since = getattr(self, "_draw_from", now)
+                # 180 frames are 179 intervals: the intervals are counted,
+                # not the frames, or the fps comes out 0.6 % too high.
+                fps = real_fps(max(0, self._draw_frames - 1), now - since)
+                self.warn(f"draw avg: {avg:.1f}ms | {fps:.0f} real fps")
                 self._draw_accum = 0
                 self._draw_frames = 0
-                self._draw_desde = now
+                self._draw_from = now
 
-    # ---- teclado ------------------------------------------------------
+    # ---- keyboard ------------------------------------------------------
 
     def _save_override(self, key, value, kind="string", persist=True):
-        """Guarda un ajuste y lo deja escrito en el settings.toml.
+        """Stores a setting and leaves it written in settings.toml.
 
-        La capa de overrides es temporal: el panel la vuelca al cerrarse.
-        Un atajo de la ventana no tiene panel que la vuelque, asi que el
-        helper escribe tambien en el settings.toml: si no, el cambio se
-        perderia al reiniciar la sesion.
+        The overrides layer is temporary: the panel flushes it when it
+        closes. A window shortcut has no panel to flush it, so the helper
+        writes to settings.toml as well: otherwise the change would be
+        lost when the session restarts.
 
-        Ojo: escribir el settings.toml hace que Noctalia recargue la
-        configuracion (y cierre el panel que estuviera abierto). Por eso el
-        redimensionado manual usa persist=False: se queda solo en la capa
-        de overrides, que el panel vuelca al cerrarse.
+        Watch out: writing settings.toml makes Noctalia reload the
+        configuration (and close an open panel). That is why the manual
+        resize uses persist=False: it stays only in the overrides layer,
+        which the panel flushes when it closes.
         """
-        # realpath: el script suele lanzarse por el enlace simbolico de
-        # ~/.local/bin, y el helper vive en bin/.
+        # realpath: the script is usually launched through the symlink in
+        # ~/.local/bin, and the helper lives in bin/.
         helper = os.path.join(
             os.path.dirname(os.path.realpath(__file__)), "set-setting.py"
         )
         if not os.path.isfile(helper):
-            self.log(f"no se encuentra el helper: {helper}")
+            self.log(f"helper not found: {helper}")
             return
-        # La escritura va en segundo plano: hasta que el settings.toml la
-        # recoja, una recarga traeria el valor viejo y revertiria el atajo.
+        # The write goes to the background: until settings.toml picks it
+        # up, a reload would bring the old value back and revert the shortcut.
         pending = getattr(self, "pending_overrides", None)
         if pending is None:
             pending = {}
@@ -2521,14 +2539,14 @@ class LyricsCarousel:
             )
         except OSError as error:
             pending.pop(key, None)
-            self.log(f"no se pudo guardar {key}: {error}")
+            self.log(f"could not save {key}: {error}")
 
     def _on_reload_signal(self, _signum, _frame):
-        """Marca la recarga; el bucle la atiende en el siguiente cuadro."""
+        """Flags the reload; the loop handles it on the next frame."""
         self.reload_requested = True
 
     def _consume_reload(self) -> bool:
-        """Atiende una recarga pedida por SIGUSR1 (una sola vez)."""
+        """Handles a reload requested by SIGUSR1 (only once)."""
         if not getattr(self, "reload_requested", False):
             return False
         self.reload_requested = False
@@ -2538,13 +2556,47 @@ class LyricsCarousel:
             self.reload_lyrics(force=True)
         return True
 
+    def _toggle_bool_setting(self, key: str) -> bool:
+        value = not bool(self.cfg.get(key))
+        self.cfg[key] = value
+        if key == "karaoke":
+            self.karaoke = value
+        if key == "karaoke_brain":
+            self.karaoke_brain = value
+        self._save_override(key, value, "bool")
+        return True
+
+    def _cycle_accent(self) -> bool:
+        accents = ["primary", "green", "yellow", "blue", "magenta", "cyan", "red"]
+        current = str(self.cfg.get("accent") or "primary")
+        try:
+            index = accents.index(current)
+        except ValueError:
+            index = -1
+        self.cfg["accent"] = accents[(index + 1) % len(accents)]
+        self._save_override("accent", self.cfg["accent"], "string")
+        return True
+
+    def _adjust_font_size(self, delta: int) -> bool:
+        try:
+            size = int(self.cfg.get("font_size", DEFAULTS["font_size"]))
+        except (TypeError, ValueError):
+            size = int(DEFAULTS["font_size"])
+        size = max(6, min(96, size + delta))
+        self.cfg["font_size"] = size
+        self._save_override("font_size", size, "int")
+        image = getattr(self, "image", None)
+        if image is not None and hasattr(image, "invalidate_fonts"):
+            image.invalidate_fonts()
+        return True
+
     def handle_key(self, key: str) -> bool:
         if key in ("q", "Q", "\x03"):
             return False
         if key == " ":
             if self.track.player and self.track.player != "demo":
-                # playerctl puede no estar instalado o fallar: la ventana
-                # sigue viva y la tecla no se propaga.
+                # playerctl may not be installed or may fail: the window
+                # stays alive and the key does not propagate.
                 try:
                     subprocess.run(
                         ["playerctl", "-p", self.track.player, "play-pause"],
@@ -2564,15 +2616,28 @@ class LyricsCarousel:
             self._save_override("direction", self.cfg["direction"], "string")
             return True
         if key in ("k", "K"):
-            self.karaoke = not self.karaoke
-            self.cfg["karaoke"] = self.karaoke
-            self._save_override("karaoke", self.karaoke, "bool")
-            return True
+            return self._toggle_bool_setting("karaoke")
+        if key in ("h", "H"):
+            return self._toggle_bool_setting("header")
+        if key in ("m", "M"):
+            return self._toggle_bool_setting("marker")
+        if key in ("g", "G"):
+            return self._toggle_bool_setting("ghost")
+        if key in ("f", "F"):
+            return self._toggle_bool_setting("footer")
+        if key in ("t", "T"):
+            return self._toggle_bool_setting("hints")
+        if key in ("c", "C"):
+            return self._cycle_accent()
+        if key in ("+", "="):
+            return self._adjust_font_size(1)
+        if key in ("-", "_"):
+            return self._adjust_font_size(-1)
         if key in ("r", "R"):
             if self.demo:
-                # En modo demo no se busca en internet: se recarga la letra
-                # de muestra (buscarla haria cuatro peticiones a los
-                # proveedores sin ningun sentido).
+                # In demo mode there is no lookup on the internet: the
+                # sample lyrics are reloaded (looking them up would mean
+                # four pointless requests to the providers).
                 self._load_demo()
                 return True
             if self.track.title or self.track.artist:
@@ -2586,55 +2651,55 @@ class LyricsCarousel:
         self._announce_pid()
         try:
             while not self.stop_requested:
-                # Ritmo de paso fijo: el plazo se cuenta desde el inicio del
-                # frame, asi que el trabajo del frame no se suma al intervalo.
-                inicio_frame = time.monotonic()
+                # Fixed step pace: the deadline is counted from the start
+                # of the frame, so its work is not added to the interval.
+                frame_start = time.monotonic()
                 self.update_size()
                 self._poll_data()
                 self.check_manual_resize()
                 self._consume_reload()
-                # Con el desfase: si el scroll usara la posicion cruda, la
-                # linea resaltada (que si usa el desfase) no seria la que
-                # esta en el centro.
+                # With the offset: if the scroll used the raw position, the
+                # highlighted line (which does use the offset) would not be
+                # the one in the center.
                 position = self.position()
                 self._update_scroll(position)
                 self.draw()
                 if self.args.once or self.output_broken:
-                    # La terminal se ha cerrado: se sale limpio en vez de
-                    # quedarse dibujando en el vacio.
+                    # The terminal has been closed: it exits cleanly instead
+                    # of staying drawing into the void.
                     break
                 for key in self._read_keys():
                     if not self.handle_key(key):
                         self.stop_requested = True
                         break
-                # El bucle late a 60 Hz (MOTION_FPS): plugin entero a 60 fps.
-                resto = resto_para_siguiente_frame(
-                    inicio_frame, time.monotonic(), 1.0 / MOTION_FPS
+                # The loop beats at 60 Hz (MOTION_FPS): all of it at 60 fps.
+                remainder = remainder_for_next_frame(
+                    frame_start, time.monotonic(), 1.0 / MOTION_FPS
                 )
-                if resto > 0:
-                    time.sleep(resto)
+                if remainder > 0:
+                    time.sleep(remainder)
         finally:
             self._forget_pid()
             self._restore_terminal(interactive)
 
-    # -- PID de la ventana -------------------------------------------------
+    # -- window PID ---------------------------------------------------------
 
     def _announce_pid(self):
-        """Deja escrito el PID para que el panel pueda avisar a esta ventana.
+        """Leaves the PID written so the panel can notify this window.
 
-        Sin esto, el panel tendria que buscar el proceso por su linea de
-        comandos, y SIGUSR1 mata por defecto: un `pkill -f lyrics-carousel`
-        alcanzaria tambien a un editor que tenga el fichero abierto.
+        Without this, the panel would have to find the process by its
+        command line, and SIGUSR1 kills by default: a `pkill -f lyrics-carousel`
+        would also hit an editor that has the file open.
         """
         try:
             os.makedirs(data_dir(), exist_ok=True)
             with open(pid_path(), "w", encoding="utf-8") as handle:
                 handle.write(str(os.getpid()))
         except OSError as error:
-            self.log(f"no se pudo guardar el PID: {error!r}")
+            self.log(f"could not save the PID: {error!r}")
 
     def _forget_pid(self):
-        """Borra el PID: la ventana ya no está, señalizarla no tiene sentido."""
+        """Deletes the PID: the window is gone, signalling it makes no sense."""
         try:
             os.unlink(pid_path())
         except OSError:
@@ -2685,11 +2750,11 @@ class LyricsCarousel:
 # --------------------------------------------------------------------------
 
 def diagnostics() -> dict:
-    """Estado del script: rutas, modulos disponibles y ajustes en uso.
+    """State of the script: paths, available modules and the settings in use.
 
-    Sirve para diagnosticar sin abrir la interfaz (lo usa el autotest) y
-    comprueba que los modulos hermanos se encuentran aunque el script se
-    lance por el enlace simbolico de ~/.local/bin.
+    It serves to diagnose without opening the interface (the self-test uses
+    it) and checks that the sibling modules are found even when the script
+    is launched through the symlink in ~/.local/bin.
     """
     helper = os.path.join(_HERE, "set-setting.py")
     try:
@@ -2717,30 +2782,30 @@ def diagnostics() -> dict:
 def main():
     parser = argparse.ArgumentParser(
         prog=APP,
-        description="Carrusel vertical de la letra que está sonando.",
+        description="Vertical carousel of the lyrics that are playing.",
     )
-    parser.add_argument("--direction", choices=("down", "up"), default=None, help="sentido del carrusel (por defecto: el del plugin)")
-    parser.add_argument("--player", default="", help="nombre de reproductor MPRIS (por defecto: el que esté sonando)")
-    parser.add_argument("--no-karaoke", action="store_true", help="no rellenar la línea activa carácter a carácter")
-    parser.add_argument("--active-scale", type=float, default=None, help="tamaño de la línea activa")
-    parser.add_argument("--accent", default=None, help="color de la línea activa")
-    parser.add_argument("--no-keys", action="store_true", help="ocultar la ayuda de teclas")
+    parser.add_argument("--direction", choices=("down", "up"), default=None, help="carousel direction (default: the plugin's)")
+    parser.add_argument("--player", default="", help="MPRIS player name (default: the one that is playing)")
+    parser.add_argument("--no-karaoke", action="store_true", help="do not fill the active line character by character")
+    parser.add_argument("--active-scale", type=float, default=None, help="active line size")
+    parser.add_argument("--accent", default=None, help="active line colour")
+    parser.add_argument("--no-keys", action="store_true", help="hide the keyboard hints")
     parser.add_argument(
         "--lang",
         choices=("auto", "en", "es"),
         default=None,
-        help="idioma de los textos de la ventana (por defecto: el del plugin)",
+        help="language of the window texts (default: the system language)",
     )
-    parser.add_argument("--demo", action="store_true", help="letra de demostración sin reproductor")
+    parser.add_argument("--demo", action="store_true", help="demo lyrics without a player")
     parser.add_argument("--demo-offset", type=float, default=0.0, help=argparse.SUPPRESS)
-    parser.add_argument("--once", action="store_true", help="dibujar un cuadro y salir")
-    parser.add_argument("--force", action="store_true", help="ignorar la caché al buscar letra")
-    parser.add_argument("--debug", action="store_true", help="escribir diagnóstico en la caché")
-    parser.add_argument("--clear-cache", action="store_true", help="borrar la caché de letras y salir")
+    parser.add_argument("--once", action="store_true", help="draw one frame and quit")
+    parser.add_argument("--force", action="store_true", help="ignore the cache when searching for lyrics")
+    parser.add_argument("--debug", action="store_true", help="write diagnostics to the cache")
+    parser.add_argument("--clear-cache", action="store_true", help="clear the lyrics cache and quit")
     parser.add_argument(
         "--diagnostics",
         action="store_true",
-        help="imprimir el estado del script (rutas, modulos, ajustes) y salir",
+        help="print the script state (paths, modules, settings) and quit",
     )
     parser.add_argument("--version", action="version", version=f"{APP} {VERSION}")
     args = parser.parse_args()
@@ -2753,15 +2818,15 @@ def main():
     if args.clear_cache:
         if os.path.isdir(CACHE_DIR):
             for name in os.listdir(CACHE_DIR):
-                # El log de avisos no es cache: borrarlo dejaria al usuario
-                # sin diagnostico justo cuando acaba de vaciar la cache.
+                # The warning log is not cache: deleting it would leave the
+                # user without diagnostics right after emptying the cache.
                 if name == "debug.log":
                     continue
                 try:
                     os.remove(os.path.join(CACHE_DIR, name))
                 except OSError:
                     pass
-        print(f"caché borrada: {CACHE_DIR}")
+        print(f"cache cleared: {CACHE_DIR}")
         if not args.diagnostics:
             return 0
 

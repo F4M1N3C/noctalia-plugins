@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
-"""Escribe ajustes del plugin en el settings.toml de Noctalia.
+"""Writes the plugin settings into Noctalia's settings.toml.
 
-Uso:  set-setting.py <clave> <valor> [tipo] [<clave> <valor> [tipo] ...]
-       set-setting.py override <clave> <valor> <tipo>
-       set-setting.py persist <clave> <valor> <tipo>
-       set-setting.py merge
+Usage:  set-setting.py <key> <value> [type] [<key> <value> [type] ...]
+        set-setting.py override <key> <value> <type>
+        set-setting.py persist <key> <value> <type>
+        set-setting.py merge
+        set-setting.py read
 
-Tipos: bool | int | float | string
+Types: bool | int | float | string
 
-Mantiene el formato del fichero (secciones entrecomilladas, claves ordenadas
-como las deja Noctalia) y escribe de forma atómica para no corromper la
-configuración.
+It keeps the file format (quoted sections, keys sorted the way Noctalia
+leaves them) and writes atomically so the configuration is not corrupted.
 
-"override" deja el valor solo en la capa temporal (overrides.json), que el
-panel vuelca al cerrarse. "persist" lo escribe además en el settings.toml:
-es lo que necesitan los atajos de la ventana, que no tienen panel que
-vuelque nada.
+"override" leaves the value only in the temporary layer (overrides.json),
+which the panel dumps when it closes. "persist" writes it to settings.toml
+as well: that is what the window shortcuts need, since they have no panel
+to dump anything. "merge" folds the overrides layer into settings.toml.
+"read" writes nothing: it prints the stored values as JSON, which is how
+the panel sees the settings the manifest no longer declares.
 """
 
 from __future__ import annotations
@@ -32,9 +34,9 @@ try:
 except ImportError:  # pragma: no cover - python < 3.11
     tomllib = None
 
-# Las rutas del estado las comparte el script: si el helper buscara el
-# settings.toml en un sitio y el script en otro, uno escribiria donde el
-# otro lee.
+# The state paths are shared by the script: if the helper looked for
+# settings.toml in one place and the script in another, one would write
+# where the other reads.
 from paths import overrides_path, settings_path
 
 PLUGIN_ID = "faminec/lyrics-carousel"
@@ -42,14 +44,14 @@ SECTION = f'[plugin_settings."{PLUGIN_ID}"]'
 
 ALLOWED = {
     "font_family", "font_size", "direction", "marker",
-    "karaoke", "footer", "hints", "header", "spacing",
+    "karaoke", "karaoke_brain", "footer", "hints", "header", "spacing",
     "ghost", "offset_ms", "width", "height", "anchor",
     "custom_x", "custom_y", "accent", "custom_color", "active_scale",
     "visible_above", "visible_below", "glyph",
 }
 
 BOOL_KEYS = {
-    "marker", "karaoke", "footer", "hints", "header", "ghost",
+    "marker", "karaoke", "karaoke_brain", "footer", "hints", "header", "ghost",
 }
 INT_KEYS = {
     "font_size", "spacing", "offset_ms", "width", "height",
@@ -57,30 +59,30 @@ INT_KEYS = {
 }
 FLOAT_KEYS = {"active_scale"}
 
-# Los mismos patrones que lib/settings.luau (PATTERNS). El panel y el IPC
-# del widget ya los aplican; el helper es otra via de escritura y sin esto
-# podria guardar un glifo inexistente o un color invalido.
+# The same patterns as lib/settings.luau (PATTERNS). The panel and the
+# widget IPC already apply them; the helper is another write path and
+# without this it could store a nonexistent glyph or an invalid color.
 PATTERNS = {
     "glyph": r"^[a-z0-9-]+$",
     "custom_color": r"^#[0-9a-fA-F]{6}$",
-    # Mismo patron que en lib/settings.luau: la fuente no puede estar
-    # vacia ni llevar saltos de linea (se pasa al comando de kitty).
+    # Same pattern as in lib/settings.luau: the font cannot be empty nor
+    # contain line breaks (it is passed to the kitty command).
     "font_family": r"^[^\n]+$",
 }
 
-# Los limites (min/max) no se copian aqui: se leen del manifiesto, que es
-# la fuente de verdad. Si se codificaran, un cambio en plugin.toml
-# dejaria al plugin escribiendo valores que su propia pagina de ajustes
-# no permite.
+# The limits (min/max) are not hardcoded here: they are read from the
+# manifest, which is the source of truth. If they were hardcoded, a change
+# in plugin.toml would leave the plugin writing values that its own
+# settings page does not allow.
 _MANIFEST_LIMITS = None
 
 
 def manifest_limits() -> dict:
-    """Rangos (min, max) que declara el manifiesto del plugin.
+    """The ranges (min, max) declared by the plugin manifest.
 
-    Sin tomllib (Python < 3.11) el manifiesto se lee con una expresion
-    regular: si no, el recorte desapareceria en silencio y el helper
-    escribiria valores que la pagina de ajustes no permite.
+    Without tomllib (Python < 3.11) the manifest is read with a regular
+    expression: otherwise the clamping would silently disappear and the
+    helper would write values that the settings page does not allow.
     """
     global _MANIFEST_LIMITS
     if _MANIFEST_LIMITS is not None:
@@ -105,69 +107,69 @@ def manifest_limits() -> dict:
                 continue
             limits[key] = (low, high)
     else:
-        limits = manifest_limits_sin_tomllib(manifest)
+        limits = manifest_limits_without_tomllib(manifest)
     _MANIFEST_LIMITS = limits
     return limits
 
 
-def _numero_toml(texto: str):
-    """Convierte un numero TOML (con +, exponente o _) a int/float."""
-    valor = float(texto.replace("_", ""))
-    return int(valor) if valor.is_integer() else valor
+def _toml_number(setting_text: str):
+    """Converts a TOML number (with +, exponent or _) to int/float."""
+    setting_value = float(setting_text.replace("_", ""))
+    return int(setting_value) if setting_value.is_integer() else setting_value
 
 
-def manifest_limits_sin_tomllib(manifest: str) -> dict:
-    """Lee min/max del manifiesto con una expresion regular.
+def manifest_limits_without_tomllib(manifest: str) -> dict:
+    """Reads min/max from the manifest with a regular expression.
 
-    Solo se usa cuando no hay tomllib. El formato del manifiesto es
-    sencillo (bloques [[setting]] con key/min/max), pero el fallback no
-    puede suponer que sea el unico formato valido: acepta comillas simples
-    y numeros con signo +, exponente o separadores, y cierra el ajuste en
-    cualquier cabecera de tabla (un min/max de [[panel]] no pertenece al
-    ultimo ajuste).
+    It is only used when there is no tomllib. The manifest format is
+    simple ([[setting]] blocks with key/min/max), but the fallback cannot
+    assume it is the only valid format: it accepts single quotes and
+    numbers with a + sign, an exponent or separators, and it closes the
+    setting at any table header (a min/max from [[panel]] does not belong
+    to the last setting).
     """
     limits = {}
     try:
         with open(manifest, encoding="utf-8") as handle:
-            texto = handle.read()
+            setting_text = handle.read()
     except OSError:
         return limits
 
-    def anadir(clave, minimo, maximo):
-        if clave is not None and (minimo is not None or maximo is not None):
-            limits[clave] = (minimo, maximo)
+    def add(setting_key, minimum, maximum):
+        if setting_key is not None and (minimum is not None or maximum is not None):
+            limits[setting_key] = (minimum, maximum)
 
-    numero = r"[-+]?(?:\d[\d_]*(?:\.\d[\d_]*)?|\.\d[\d_]*)(?:[eE][-+]?\d[\d_]*)?"
-    clave = None
-    minimo = None
-    maximo = None
-    for linea in texto.splitlines():
-        limpia = linea.strip()
-        if not limpia or limpia.startswith("#"):
+    number = r"[-+]?(?:\d[\d_]*(?:\.\d[\d_]*)?|\.\d[\d_]*)(?:[eE][-+]?\d[\d_]*)?"
+    setting_key = None
+    minimum = None
+    maximum = None
+    for lyric_line in setting_text.splitlines():
+        cleans = lyric_line.strip()
+        if not cleans or cleans.startswith("#"):
             continue
-        if re.match(r"^\[\[.*\]\]\s*(?:#.*)?$", limpia) or re.match(
-            r"^\[[^\[].*\]\s*(?:#.*)?$", limpia
+        if re.match(r"^\[\[.*\]\]\s*(?:#.*)?$", cleans) or re.match(
+            r"^\[[^\[].*\]\s*(?:#.*)?$", cleans
         ):
-            anadir(clave, minimo, maximo)
-            clave, minimo, maximo = None, None, None
+            add(setting_key, minimum, maximum)
+            setting_key, minimum, maximum = None, None, None
             continue
-        encontrado = re.match(r"""^key\s*=\s*(?:"([^"]+)"|'([^']+)')""", limpia)
-        if encontrado:
-            clave = encontrado.group(1) or encontrado.group(2)
+        found = re.match(r"""^key\s*=\s*(?:"([^"]+)"|'([^']+)')""", cleans)
+        if found:
+            setting_key = found.group(1) or found.group(2)
             continue
-        encontrado = re.match(rf"^min\s*=\s*({numero})", limpia)
-        if encontrado:
-            minimo = _numero_toml(encontrado.group(1))
+        found = re.match(rf"^min\s*=\s*({number})", cleans)
+        if found:
+            minimum = _toml_number(found.group(1))
             continue
-        encontrado = re.match(rf"^max\s*=\s*({numero})", limpia)
-        if encontrado:
-            maximo = _numero_toml(encontrado.group(1))
-    anadir(clave, minimo, maximo)
+        found = re.match(rf"^max\s*=\s*({number})", cleans)
+        if found:
+            maximum = _toml_number(found.group(1))
+    add(setting_key, minimum, maximum)
     return limits
 
 
 def clamp_value(key: str, value):
-    """Recorta un valor numerico a los limites del manifiesto."""
+    """Clamps a numeric value to the manifest limits."""
     bounds = manifest_limits().get(key)
     if bounds is None:
         return value
@@ -182,19 +184,19 @@ def clamp_value(key: str, value):
 
 
 def prepare(key: str, value, kind: str):
-    """Convierte el valor a su tipo, lo recorta y valida su formato."""
-    preparado = clamp_value(key, parse_value(value, kind))
-    # visualizer_position: validacion manual (no hay alternacion | en regex)
+    """Converts the value to its type, clamps it and validates its format."""
+    prepared = clamp_value(key, parse_value(value, kind))
+    # visualizer_position: manual validation (no alternation | in the regex)
     if key == "visualizer_position":
-        if not isinstance(preparado, str) or preparado not in ("top", "bottom", "left", "right"):
-            raise ValueError(f"formato no válido para {key}: {value!r}")
-        return preparado
-    patron = PATTERNS.get(key)
-    if patron is not None and (
-        not isinstance(preparado, str) or re.fullmatch(patron, preparado) is None
+        if not isinstance(prepared, str) or prepared not in ("top", "bottom", "left", "right"):
+            raise ValueError(f"invalid format for {key}: {value!r}")
+        return prepared
+    pattern = PATTERNS.get(key)
+    if pattern is not None and (
+        not isinstance(prepared, str) or re.fullmatch(pattern, prepared) is None
     ):
-        raise ValueError(f"formato no válido para {key}: {value!r}")
-    return preparado
+        raise ValueError(f"invalid format for {key}: {value!r}")
+    return prepared
 
 
 def format_value(value: str, kind: str) -> str:
@@ -209,7 +211,7 @@ def format_value(value: str, kind: str) -> str:
 
 
 def patch(text: str, key: str, raw_value: str) -> str:
-    """Inserta o reemplaza una clave dentro de la sección del plugin."""
+    """Inserts or replaces a key inside the plugin section."""
     lines = text.split("\n")
     start = None
     end = len(lines)
@@ -229,9 +231,9 @@ def patch(text: str, key: str, raw_value: str) -> str:
         return prefix + "\n".join(block) + "\n"
 
     body = lines[start + 1 : end]
-    # El TOML no admite claves duplicadas: si las hay, todo el fichero
-    # queda invalido y Noctalia descarta la seccion entera. Se deja solo la
-    # primera aparicion de cada clave.
+    # TOML does not allow duplicate keys: if there are any, the whole file
+    # becomes invalid and Noctalia discards the entire section. Only the
+    # first occurrence of each key is kept.
     seen = set()
     clean = []
     for line in body:
@@ -249,8 +251,8 @@ def patch(text: str, key: str, raw_value: str) -> str:
                 body[index] = f"{key} = {raw_value}"
                 replaced = True
             else:
-                # Clave duplicada: el TOML ser\u00eda inv\u00e1lido y Noctalia
-                # descartaria toda la secci\u00f3n. Se elimina el duplicado.
+                # Duplicate key: the TOML would be invalid and Noctalia
+                # would discard the whole section. The duplicate is removed.
                 body[index] = None
     body = [line for line in body if line is not None]
     if not replaced:
@@ -272,7 +274,7 @@ def parse_args(argv):
     while index < len(argv):
         key = argv[index]
         if index + 1 >= len(argv):
-            raise ValueError(f"falta el valor de {key}")
+            raise ValueError(f"missing value for {key}")
         value = argv[index + 1]
         kind = "string"
         if index + 2 < len(argv) and argv[index + 2] in ("bool", "int", "float", "string"):
@@ -284,11 +286,11 @@ def parse_args(argv):
 
 
 def ensure_dir(path: str) -> bool:
-    """Garantiza que el directorio exista.
+    """Makes sure the directory exists.
 
-    El directorio de datos del plugin lo crea Noctalia, pero puede no existir
-    (si se borra a mano o si el plugin nunca ha guardado nada) y entonces ni
-    el lock ni la escritura podrian crearse.
+    Noctalia creates the plugin data directory, but it may not exist (if it
+    was deleted by hand or if the plugin has never saved anything) and then
+    neither the lock nor the write could be created.
     """
     directory = os.path.dirname(path)
     if not directory:
@@ -297,12 +299,12 @@ def ensure_dir(path: str) -> bool:
         os.makedirs(directory, exist_ok=True)
         return True
     except OSError as error:
-        print(f"no se pudo crear {directory}: {error}", file=sys.stderr)
+        print(f"could not create {directory}: {error}", file=sys.stderr)
         return False
 
 
 def overrides_path_now() -> str:
-    """Ruta actual del fichero de overrides (se lee cada vez)."""
+    """Current path of the overrides file (read every time)."""
     return overrides_path()
 
 
@@ -333,17 +335,17 @@ def write_overrides(data) -> bool:
         os.replace(temporary, path)
         temporary = ""
     except OSError as error:
-        print(f"no se pudo escribir los overrides: {error}", file=sys.stderr)
+        print(f"could not write the overrides: {error}", file=sys.stderr)
         return False
     return True
 
 
 def set_override(key: str, value: str, kind: str) -> int:
-    """Guarda un ajuste en el fichero de overrides (no lo vigila Noctalia).
+    """Stores a setting in the overrides file (Noctalia does not watch it).
 
-    Varias escrituras pueden solaparse (el panel escribe sin esperar), asi que
-    la lectura-modificacion-escritura va con lock: si no, la segunda pisa a la
-    primera.
+    Several writes can overlap (the panel writes without waiting), so the
+    read-modify-write cycle takes a lock: otherwise the second one
+    overwrites the first.
     """
     path = overrides_path_now()
     lock_path = path + ".lock"
@@ -352,7 +354,7 @@ def set_override(key: str, value: str, kind: str) -> int:
     try:
         lock = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
     except OSError as error:
-        print(f"no se pudo abrir el lock: {error}", file=sys.stderr)
+        print(f"could not open the lock: {error}", file=sys.stderr)
         return 1
     try:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -370,11 +372,11 @@ def set_override(key: str, value: str, kind: str) -> int:
 
 
 def remove_override(key: str, value) -> bool:
-    """Quita una clave de los overrides si sigue teniendo ese valor.
+    """Removes a key from the overrides if it still holds that value.
 
-    El valor se comprueba: si el panel ha cambiado esa clave mientras
-    tanto, su cambio se respeta y no se toca (el panel vuelca lo suyo al
-    cerrarse).
+    The value is checked: if the panel changed that key in the meantime,
+    its change is respected and left alone (the panel dumps its own values
+    when it closes).
     """
     path = overrides_path_now()
     lock_path = path + ".lock"
@@ -410,7 +412,7 @@ def parse_value(value: str, kind: str):
 
 
 def merge_overrides() -> int:
-    """Vuelca los overrides al settings.toml y borra el fichero."""
+    """Dumps the overrides into settings.toml and deletes the file."""
     data = read_overrides()
     if not data:
         return 0
@@ -431,12 +433,13 @@ def merge_overrides() -> int:
             kind = "string"
             raw = str(value)
         try:
-            # Un override viejo con formato invalido (por ejemplo, un glifo
-            # con guion bajo guardado antes de validar) no puede volcarse:
-            # se descarta al cerrar el panel en vez de romper el volcado.
+            # An old override with an invalid format (for example, a glyph
+            # with an underscore stored before validation) cannot be
+            # dumped: it is discarded when the panel closes instead of
+            # breaking the dump.
             prepare(key, raw, kind)
         except ValueError as error:
-            print(f"se descarta {key}: {error}", file=sys.stderr)
+            print(f"discarded {key}: {error}", file=sys.stderr)
             continue
         pairs.append((key, raw, kind))
     if not pairs:
@@ -454,32 +457,32 @@ def merge_overrides() -> int:
     return code
 
 
-def _valor_toml(texto: str):
-    """Convierte un escalar TOML (true, 12, 1.5 o "texto") a su tipo."""
-    texto = texto.strip()
-    if texto == "true":
+def _toml_value(setting_text: str):
+    """Converts a TOML scalar (true, 12, 1.5 or "text") to its type."""
+    setting_text = setting_text.strip()
+    if setting_text == "true":
         return True
-    if texto == "false":
+    if setting_text == "false":
         return False
-    if len(texto) >= 2 and texto[0] == texto[-1] and texto[0] in "\"'":
-        return texto[1:-1]
-    numero = re.match(
-        r"^[-+]?(?:\d[\d_]*(?:\.\d[\d_]*)?|\.\d[\d_]*)(?:[eE][-+]?\d+)?$", texto
+    if len(setting_text) >= 2 and setting_text[0] == setting_text[-1] and setting_text[0] in "\"'":
+        return setting_text[1:-1]
+    number = re.match(
+        r"^[-+]?(?:\d[\d_]*(?:\.\d[\d_]*)?|\.\d[\d_]*)(?:[eE][-+]?\d+)?$", setting_text
     )
-    if numero is not None:
-        return _numero_toml(numero.group(0))
-    return texto
+    if number is not None:
+        return _toml_number(number.group(0))
+    return setting_text
 
 
 def read_settings() -> dict:
-    """Ajustes guardados del plugin en el settings.toml (solo lectura).
+    """The plugin settings stored in settings.toml (read only).
 
-    El manifiesto solo declara el icono de la barra: el resto de ajustes los
-    gestiona el panel. Noctalia conserva las claves guardadas aunque no estén
-    declaradas, pero `noctalia.getConfig` únicamente devuelve las que conoce,
-    así que el panel necesita leer el fichero para ver el valor real. Es la
-    misma fuente que usa el script: si el panel enseñara otra cosa, el
-    usuario vería un valor que no se aplica.
+    The manifest only declares the toolbar icon: the panel manages the
+    rest of the settings. Noctalia keeps stored keys even when they are
+    not declared, but `noctalia.getConfig` only returns the ones it knows,
+    so the panel has to read the file to see the real value. It is the
+    same source the script uses: if the panel showed something else, the
+    user would see a value that is not applied.
     """
     try:
         with open(settings_path(), encoding="utf-8") as handle:
@@ -493,49 +496,48 @@ def read_settings() -> dict:
             return {}
         section = (data.get("plugin_settings") or {}).get(PLUGIN_ID) or {}
         return {key: section[key] for key in ALLOWED if key in section}
-    return read_settings_sin_tomllib(text)
+    return read_settings_without_tomllib(text)
 
 
-def read_settings_sin_tomllib(text: str) -> dict:
-    """Lee la sección del plugin con una expresión regular (Python < 3.11).
+def read_settings_without_tomllib(text: str) -> dict:
+    """Reads the plugin section with a regular expression (Python < 3.11).
 
-    Solo se usa cuando no hay tomllib. El formato del fichero lo escribe
-    Noctalia (una sección `[plugin_settings."faminec/lyrics-carousel"]` con
-    claves escalares), pero el fallback se limita a lo que necesita el panel
-    y descarta cualquier línea que no entienda.
+    It is only used when there is no tomllib. The file format is written
+    by Noctalia (a `[plugin_settings."faminec/lyrics-carousel"]` section
+    with scalar keys), but the fallback limits itself to what the panel
+    needs and discards any line it does not understand.
     """
     values = {}
-    dentro = False
-    for linea in text.splitlines():
-        limpia = linea.strip()
-        if not limpia or limpia.startswith("#"):
+    inside = False
+    for lyric_line in text.splitlines():
+        cleans = lyric_line.strip()
+        if not cleans or cleans.startswith("#"):
             continue
-        if limpia.startswith("["):
-            dentro = limpia == SECTION
+        if cleans.startswith("["):
+            inside = cleans == SECTION
             continue
-        if not dentro or "=" not in limpia:
+        if not inside or "=" not in cleans:
             continue
-        name, _, resto = limpia.partition("=")
+        name, _, remainder = cleans.partition("=")
         name = name.strip()
         if name not in ALLOWED:
             continue
-        values[name] = _valor_toml(resto)
+        values[name] = _toml_value(remainder)
     return values
 
 
 def persist_override(key: str, value: str, kind: str) -> int:
-    """Guarda el ajuste y lo deja escrito en el settings.toml.
+    """Stores the setting and leaves it written in settings.toml.
 
-    La capa de overrides es temporal (la vuelca el panel al cerrarse). Un
-    atajo de la ventana no tiene panel que la vuelque, asi que el valor se
-    escribe tambien en el settings.toml: si no, se perderia al reiniciar
-    la sesion.
+    The overrides layer is temporary (the panel dumps it when it closes). A
+    window shortcut has no panel to dump it, so the value is written to
+    settings.toml as well: otherwise it would be lost when the session
+    restarts.
 
-    Primero se escribe en los overrides: si la escritura del settings.toml
-    falla, el valor sigue en vigor durante la sesion y el panel lo vuelca
-    al cerrarse. Si la escritura va bien, la clave se quita de los
-    overrides para que no tape un cambio posterior hecho en la pagina de
-    ajustes.
+    The overrides are written first: if writing settings.toml fails, the
+    value stays in effect during the session and the panel dumps it when
+    it closes. If the write succeeds, the key is removed from the overrides
+    so it does not mask a later change made on the settings page.
     """
     if set_override(key, value, kind) != 0:
         return 1
@@ -549,10 +551,10 @@ def persist_override(key: str, value: str, kind: str) -> int:
 def main(argv):
     if len(argv) >= 2 and argv[1] == "override":
         if len(argv) < 5:
-            print("uso: set-setting.py override <clave> <valor> <tipo>", file=sys.stderr)
+            print("usage: set-setting.py override <key> <value> <type>", file=sys.stderr)
             return 2
         if argv[2] not in ALLOWED:
-            print(f"clave desconocida: {argv[2]}", file=sys.stderr)
+            print(f"unknown key: {argv[2]}", file=sys.stderr)
             return 2
         try:
             return set_override(argv[2], argv[3], argv[4])
@@ -561,10 +563,10 @@ def main(argv):
             return 2
     if len(argv) >= 2 and argv[1] == "persist":
         if len(argv) < 5:
-            print("uso: set-setting.py persist <clave> <valor> <tipo>", file=sys.stderr)
+            print("usage: set-setting.py persist <key> <value> <type>", file=sys.stderr)
             return 2
         if argv[2] not in ALLOWED:
-            print(f"clave desconocida: {argv[2]}", file=sys.stderr)
+            print(f"unknown key: {argv[2]}", file=sys.stderr)
             return 2
         try:
             return persist_override(argv[2], argv[3], argv[4])
@@ -574,12 +576,12 @@ def main(argv):
     if len(argv) >= 2 and argv[1] == "merge":
         return merge_overrides()
     if len(argv) >= 2 and argv[1] == "read":
-        # Solo lectura: el panel la usa para ver el valor real de un ajuste
-        # que el manifiesto ya no declara. No escribe nada.
+        # Read only: the panel uses it to see the real value of a setting
+        # that the manifest no longer declares. It does not write anything.
         print(json.dumps(read_settings(), ensure_ascii=False, sort_keys=True))
         return 0
     if len(argv) < 3:
-        print("uso: set-setting.py <clave> <valor> [tipo] ...", file=sys.stderr)
+        print("usage: set-setting.py <key> <value> [type] ...", file=sys.stderr)
         return 2
     try:
         pairs = parse_args(argv[1:])
@@ -589,7 +591,7 @@ def main(argv):
 
     for key, _, _ in pairs:
         if key not in ALLOWED:
-            print(f"clave desconocida: {key}", file=sys.stderr)
+            print(f"unknown key: {key}", file=sys.stderr)
             return 2
 
     try:
@@ -600,10 +602,11 @@ def main(argv):
 
 
 def write_settings(pairs) -> int:
-    """Escribe los ajustes en el settings.toml (con lock).
+    """Writes the settings into settings.toml (with a lock).
 
-    El script y el panel pueden escribir a la vez: con un fichero de lock
-    la lectura-modificacion-escritura se serializa y no se pisan.
+    The script and the panel can write at the same time: with a lock file
+    the read-modify-write cycle is serialized and they do not overwrite
+    each other.
     """
     settings = settings_path()
     lock_path = settings + ".lock"
@@ -612,7 +615,7 @@ def write_settings(pairs) -> int:
     try:
         lock = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
     except OSError as error:
-        print(f"no se pudo abrir el lock: {error}", file=sys.stderr)
+        print(f"could not open the lock: {error}", file=sys.stderr)
         return 1
     try:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -620,7 +623,7 @@ def write_settings(pairs) -> int:
             with open(settings, encoding="utf-8") as handle:
                 text = handle.read()
         except OSError as error:
-            print(f"no se pudo leer: {error}", file=sys.stderr)
+            print(f"could not read: {error}", file=sys.stderr)
             return 1
         return _write(text, pairs)
     finally:
@@ -660,23 +663,23 @@ def _write(text, pairs):
                 os.unlink(temporary)
             except OSError:
                 pass
-        print(f"no se pudo escribir: {error}", file=sys.stderr)
+        print(f"could not write: {error}", file=sys.stderr)
         return 1
 
-    # Comprobación: el fichero debe seguir siendo un TOML válido y tener los
-    # valores escritos. Si algo falla, se avisa con código de error.
+    # Check: the file must still be valid TOML and hold the written values.
+    # If anything fails, it is reported with an error code.
     if tomllib is None:
         return 0
     try:
         with open(settings, "rb") as handle:
             check = tomllib.load(handle)
     except (OSError, tomllib.TOMLDecodeError) as error:
-        print(f"el fichero quedó ilegible: {error}", file=sys.stderr)
+        print(f"the file became unreadable: {error}", file=sys.stderr)
         return 1
     section = (check.get("plugin_settings") or {}).get(PLUGIN_ID) or {}
     for key, value, _ in pairs:
         if key not in section:
-            print(f"no se pudo guardar {key}", file=sys.stderr)
+            print(f"could not save {key}", file=sys.stderr)
             return 1
     return 0
 

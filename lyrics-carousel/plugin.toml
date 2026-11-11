@@ -1,19 +1,20 @@
-# Carrusel de letras sincronizadas en la terminal, al estilo de cava/unimatrix.
+# Synced lyrics in the terminal, in the spirit of cava/unimatrix.
 #
-# Lee el reproductor MPRIS con playerctl, busca la letra (LRCLIB, NetEase y el
-# adaptador de fuentes del plugin Lyrics de Noctalia) y la dibuja en una
-# ventana flotante de kitty con desplazamiento vertical.
+# Reads the active MPRIS player with playerctl, looks the lyrics up (LRCLIB,
+# NetEase and the source adapter of Noctalia's Lyrics plugin) and draws them in
+# a floating kitty window with a vertical scroll.
 #
-# Ajustes: aqui solo queda el icono de la barra. El resto se cambia en el panel
-# del plugin (el que se abre desde el widget), que es el sitio que el usuario
-# tiene a mano. Declararlos aqui los duplicaba: la pagina de ajustes de Noctalia
-# y el panel ofrecian lo mismo con dos limites distintos, y los valores se
-# leian por dos caminos. Noctalia conserva en el settings.toml las claves
-# guardadas aunque no esten declaradas, y el panel las lee de ahi (ver
-# lib/settings.luau y `set-setting.py read`), asi que nada se pierde.
+# Settings: only the bar glyph is left here. Everything else is changed in the
+# plugin panel (the one opened from the widget), which is where the user has it
+# at hand. Declaring them here duplicated them: Noctalia's settings page and
+# the panel offered the same thing with two different ranges, and the values
+# were read through two different paths. Noctalia keeps the saved keys in the
+# settings.toml even when the manifest does not declare them, and the panel
+# reads them back from there (see lib/settings.luau and `set-setting.py read`),
+# so nothing is lost.
 #
-# El script de Python lee esos mismos ajustes del settings.toml, mas un fichero
-# de overrides que escribe el panel para los interruptores rapidos.
+# The Python script reads those same settings from the settings.toml, plus an
+# overrides file the panel writes for the quick switches.
 
 id = "faminec/lyrics-carousel"
 name = "Lyrics Carousel"
@@ -26,8 +27,8 @@ tags = ["music", "system", "utility", "media"]
 icon = "music"
 description = "Synced lyrics in a floating terminal window with karaoke and a large active line."
 
-# Lo unico que no esta en el panel: el icono es del widget de la barra, que se
-# configura en esta pagina y no en la ventana de letras.
+# The only thing that is not in the panel: the icon belongs to the bar widget,
+# configured on this page and not in the lyrics window.
 [[setting]]
 key = "glyph"
 type = "glyph"
@@ -46,8 +47,8 @@ width = 470
 height = 760
 placement = "attached"
 open_near_click = true
-# El panel tiene campos de texto (X e Y): si se cierra al pulsar fuera, el
-# usuario pierde lo que estaba escribiendo. Con foco exclusivo, las teclas
-# (incluidas las de la ventana de letras) no se escapan al escritorio.
+# The panel has text fields (X and Y): if it closed on an outside click, the
+# user would lose what they were typing. With exclusive focus the keys
+# (including the ones of the lyrics window) do not leak to the desktop.
 dismiss_on_outside_click = false
 keyboard_focus = "exclusive"

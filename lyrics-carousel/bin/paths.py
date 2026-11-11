@@ -1,12 +1,13 @@
-"""Rutas del estado de Noctalia que usa el plugin.
+"""State paths of Noctalia used by the plugin.
 
-El settings.toml y los overrides viven en el directorio de estado de
-Noctalia. Ese directorio cambia si el usuario mueve el estado con
-NOCTALIA_STATE_HOME o XDG_STATE_HOME: si el plugin no lo respeta, leeria
-(y escribiria) los ajustes de otra instalacion.
+The settings.toml and the overrides live in the Noctalia state directory.
+That directory changes if the user moves the state with
+NOCTALIA_STATE_HOME or XDG_STATE_HOME: if the plugin does not honor it, it
+would read (and write) the settings of another installation.
 
-Este modulo lo usan el script y el helper: las dos piezas tienen que
-buscar exactamente el mismo sitio o una escribiria donde la otra lee.
+This module is used by both the script and the helper: the two pieces
+have to look in exactly the same place, otherwise one writes where the
+other reads.
 """
 
 from __future__ import annotations
@@ -17,17 +18,17 @@ PLUGIN_ID = "faminec/lyrics-carousel"
 
 
 def state_dir() -> str:
-    """Directorio de estado de Noctalia (el que contiene settings.toml).
+    """The Noctalia state directory (the one containing settings.toml).
 
-    Noctalia usa la raiz del estado como si fuera el HOME: con
-    NOCTALIA_STATE_HOME o XDG_STATE_HOME, el settings.toml queda en
-    <raiz>/noctalia/settings.toml.
+    Noctalia uses the state root as if it were the HOME: with
+    NOCTALIA_STATE_HOME or XDG_STATE_HOME, settings.toml ends up in
+    <root>/noctalia/settings.toml.
     """
-    # LYRICS_CAROUSEL_STATE manda sobre todo lo demas: es el gancho que
-    # usan las pruebas para apuntar a un directorio temporal.
-    directo = os.environ.get("LYRICS_CAROUSEL_STATE", "").strip()
-    if directo:
-        return os.path.expanduser(directo)
+    # LYRICS_CAROUSEL_STATE takes precedence over everything else: it is
+    # the hook the tests use to point at a temporary directory.
+    direct = os.environ.get("LYRICS_CAROUSEL_STATE", "").strip()
+    if direct:
+        return os.path.expanduser(direct)
     base = (
         os.environ.get("NOCTALIA_STATE_HOME", "").strip()
         or os.environ.get("XDG_STATE_HOME", "").strip()
@@ -37,34 +38,34 @@ def state_dir() -> str:
 
 
 def settings_path() -> str:
-    """Ruta del settings.toml de Noctalia."""
+    """Path of the Noctalia settings.toml."""
     return os.path.join(state_dir(), "settings.toml")
 
 
 def data_dir() -> str:
-    """Directorio de datos del plugin (donde vive overrides.json)."""
+    """Data directory of the plugin (where overrides.json lives)."""
     return os.path.join(state_dir(), "plugins", "data", *PLUGIN_ID.split("/"))
 
 
 def pid_path() -> str:
-    """Ruta del fichero con el PID de la ventana abierta.
+    """Path of the file holding the PID of the open window.
 
-    El panel necesita avisar a la ventana cuando vacía la caché. Se señaliza
-    el PID Guardado y no se busca el proceso por su línea de comandos: SIGUSR1
-    mata por defecto, así que un `pkill -f lyrics-carousel` podría alcanzar a
-    un editor que tenga el fichero abierto.
+    The panel needs to notify the window when it clears the cache. The
+    stored PID is signalled and the process is not looked up by its command
+    line: SIGUSR1 kills by default, so a `pkill -f lyrics-carousel` could
+    reach an editor that has the file open.
     """
     return os.path.join(data_dir(), "window.pid")
 
 
 def overrides_path() -> str:
-    """Ruta del fichero de overrides.
+    """Path of the overrides file.
 
-    Se puede redirigir con LYRICS_CAROUSEL_OVERRIDES (la usa el autotest
-    para no tocar el estado real). Una variable vacia se ignora: si no, la
-    ruta seria "" y no se podria leer nada.
+    It can be redirected with LYRICS_CAROUSEL_OVERRIDES (the autotest uses
+    it so it does not touch the real state). An empty variable is ignored:
+    otherwise the path would be "" and nothing could be read.
     """
-    alternativa = os.environ.get("LYRICS_CAROUSEL_OVERRIDES", "").strip()
-    if alternativa:
-        return os.path.expanduser(alternativa)
+    fallback = os.environ.get("LYRICS_CAROUSEL_OVERRIDES", "").strip()
+    if fallback:
+        return os.path.expanduser(fallback)
     return os.path.join(data_dir(), "overrides.json")

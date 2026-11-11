@@ -1,24 +1,24 @@
 --!nonstrict
--- Panel del carrusel de letras: abre la ventana flotante y ofrece
--- interruptores rápidos.
+-- Lyrics carousel panel: opens the floating window and offers
+-- quick toggles.
 --
--- Los ajustes viven en el settings.toml de Noctalia
--- (`plugin_settings."faminec/lyrics-carousel"`), que es la misma fuente que
--- usa la página de ajustes del plugin. El panel escribe ahí con un helper
--- Python y recarga la configuración, así que ambos sitios siempre coinciden.
--- El script de Python lee ese mismo fichero, por lo que los cambios se
--- aplican en caliente a la ventana que ya esté abierta.
+-- Settings live in Noctalia's settings.toml
+-- (`plugin_settings."faminec/lyrics-carousel"`), which is the same source the
+-- plugin settings page uses. The panel writes there through a Python helper
+-- and reloads the configuration, so both places always agree. The Python
+-- script reads that same file, so changes apply live to the window that is
+-- already open.
 --
--- Todas las llamadas a la API de Noctalia van envueltas en `safe`: si una de
--- ellas falla (permisos, disco lleno, API que no existe) el panel avisa en
--- lugar de reventar el script.
+-- Every call to the Noctalia API is wrapped in `safe`: if one of them fails
+-- (permissions, full disk, an API that does not exist) the panel reports it
+-- instead of blowing up the script.
 
 local settingsLib = require("./lib/settings.luau")
 
--- Los valores por defecto y la lista de claves viven en lib/settings.luau
--- para que el panel, el widget y el script compartan una sola fuente.
+-- Default values and the list of keys live in lib/settings.luau
+-- so the panel, the widget and the script share a single source.
 
--- Solo monoespaciadas las acepta kitty; las demas solo valen en modo imagen.
+-- kitty only accepts monospaced fonts; the rest are only valid in image mode.
 local FONT_CHOICES = {
   "Departure Mono",
   "Press Start 2P",
@@ -35,8 +35,8 @@ local FONT_CHOICES = {
 
 local ACCENT_CHOICES = { "primary", "green", "yellow", "blue", "magenta", "cyan", "red", "custom" }
 
--- Claves completas: el validador de recursos necesita verlas literales, no
--- concatenadas ("accent_" .. name), o las marca como inexistentes.
+-- Full keys: the resource validator needs to see them literally, not
+-- concatenated ("accent_" .. name), or it flags them as nonexistent.
 local ACCENT_KEYS = {
   primary = "accent_primary",
   green = "accent_green",
@@ -48,10 +48,10 @@ local ACCENT_KEYS = {
   custom = "accent_custom",
 }
 
--- Las funciones se llaman entre sí (un ajuste lanza la ventana, la ventana
--- avisa al panel, el panel vuelve a dibujar). En Luau un `local function`
--- solo existe desde su declaración: sin estas declaraciones, las llamadas
--- de arriba se resolverían contra un global sin valor (nil).
+-- The functions call each other (a setting launches the window, the window
+-- notifies the panel, the panel redraws). In Luau a `local function` only
+-- exists from its declaration onwards: without these declarations, the
+-- calls above would resolve against a global with no value (nil).
 local render
 local launch
 local applyGeometry
@@ -62,11 +62,11 @@ local trackTitle = ""
 local trackArtist = ""
 local launching = false
 local lastError = ""
--- El selector de fuente muestra la lista hasta que el usuario elige
--- "Otra". Es estado de la interfaz, no un ajuste: no se escribe nada.
+-- The font selector shows the list until the user picks
+-- "Other". It is interface state, not a setting: nothing is written.
 local fontCustom = nil
--- Un callback asincrono (playerctl, el helper) puede llegar despues de
--- cerrar el panel. Sin esta bandera, el callback redibuja un arbol muerto.
+-- An async callback (playerctl, the helper) can arrive after the panel has
+-- closed. Without this flag the callback would redraw a dead tree.
 local panelClosed = false
 
 local function tr(key, args)
@@ -77,9 +77,9 @@ local function tr(key, args)
   return key
 end
 
--- --------------------------------------------------------- API protegida --
+-- --------------------------------------------------------- Protected API --
 
--- Envuelve una llamada a la API de Noctalia: si falla, se avisa y se sigue.
+-- Wraps a call to the Noctalia API: if it fails, it reports and carries on.
 local function safe(label, fn, ...)
   local args = { ... }
   local ok, result = pcall(fn, table.unpack(args))
@@ -91,7 +91,7 @@ local function safe(label, fn, ...)
   return result
 end
 
--- Cierra el panel sin reventar si la API falla.
+-- Closes the panel without blowing up if the API fails.
 closePanel = function()
   local ok, error = pcall(function()
     panel.close()
@@ -119,17 +119,17 @@ local function runAsync(argv, callback)
   return true
 end
 
--- ------------------------------------------------------------- ajustes
+-- ------------------------------------------------------------- Settings
 
--- Vacia los cambios locales: a partir de aqui manda la configuracion real.
+-- Empties the local changes: from here on the real configuration wins.
 local function refreshSettings()
   settings = {}
   settingsLib.refresh()
-  -- El manifiesto solo declara el icono de la barra: el resto de ajustes los
-  -- gestiona el panel. `noctalia.getConfig` no los devuelve, asi que el valor
-  -- real se lee del settings.toml con el helper (la misma fuente que lee el
-  -- script). Es asincrono: cuando llegue, el panel se redibuja con el valor
-  -- bueno en vez de con el de por defecto.
+  -- The manifest only declares the bar icon: the panel manages all the other
+  -- settings. `noctalia.getConfig` does not return them, so the real value is
+  -- read from settings.toml with the helper (the same source the script
+  -- reads). It is asynchronous: once it arrives, the panel redraws with the
+  -- right value instead of the default one.
   local dir = noctalia.pluginDir()
   if dir == nil or dir == "" then
     return
@@ -146,8 +146,8 @@ local function refreshSettings()
 end
 
 local function valueOf(key)
-  -- Lo que el panel acaba de cambiar tiene prioridad; si no, el valor
-  -- efectivo (overrides + configuracion de Noctalia).
+  -- What the panel just changed takes priority; otherwise, the effective
+  -- value (overrides + Noctalia configuration).
   local value = settings[key]
   if value ~= nil then
     return value
@@ -155,9 +155,9 @@ local function valueOf(key)
   return settingsLib.value(key)
 end
 
--- Noctalia entrega los valores de los controles como cadenas: un interruptor
--- manda "true" / "false" (no un booleano). La normalizacion vive en
--- lib/settings.luau para que el panel y el widget la compartan.
+-- Noctalia hands control values over as strings: a toggle sends
+-- "true" / "false" (not a boolean). The normalization lives in
+-- lib/settings.luau so the panel and the widget share it.
 local truthy = settingsLib.truthy
 
 local function boolOf(key)
@@ -168,11 +168,11 @@ local function numberOf(key)
   return tonumber(valueOf(key)) or settingsLib.DEFAULTS[key]
 end
 
--- Limites de los ajustes numericos (lib/settings.luau, LIMITS).
--- El script recorta lo que le llegue; el panel no puede ofrecer mas de lo
--- que el script acepta, o el usuario veria un valor que no se aplica.
--- Ajustes que cambian la geometria de la ventana abierta: al tocarlos hay
--- que moverla o redimensionarla, no basta con guardar el valor.
+-- Limits for the numeric settings (lib/settings.luau, LIMITS).
+-- The script clamps whatever reaches it; the panel cannot offer more than
+-- the script accepts, or the user would see a value that does not apply.
+-- Settings that change the geometry of the open window: touching them means
+-- moving or resizing it, saving the value is not enough.
 local GEOMETRY_KEYS = {
   width = true,
   height = true,
@@ -184,8 +184,8 @@ local GEOMETRY_KEYS = {
 local LIMITS = settingsLib.LIMITS
 
 local function clampSetting(key, value)
-  -- Recorte y formato: los dos vienen de la libreria compartida, para que
-  -- el panel y el widget apliquen las mismas reglas al mismo ajuste.
+  -- Clamping and formatting: both come from the shared library, so the
+  -- panel and the widget apply the same rules to the same setting.
   value = settingsLib.clamp(key, value)
   if value == nil then
     return nil
@@ -193,12 +193,12 @@ local function clampSetting(key, value)
   return settingsLib.validate(key, value)
 end
 
--- Escribe un ajuste en la capa de overrides del plugin.
+-- Writes a setting into the plugin override layer.
 --
--- No se escribe en el settings.toml con el panel abierto: Noctalia vigila ese
--- fichero y al cambiarlo recarga la configuracion, lo quecierra el panel que
--- el usuario tiene delante y descarta los clics siguientes. Los overrides se
--- vuelcan al settings.toml al cerrar el panel (ver onClose).
+-- Nothing is written to settings.toml while the panel is open: Noctalia
+-- watches that file and reloads the configuration when it changes, which
+-- closes the panel the user is looking at and discards the following
+-- clicks. The overrides are flushed into settings.toml on close (see onClose).
 local pendingWrites = 0
 
 local function writeSetting(key, value)
@@ -219,8 +219,8 @@ local function setSetting(key, value, options)
     return
   end
   settings[key] = value
-  -- Se escribe al instante: el widget lo aplica en el acto (lee los
-  -- overrides cada 1,2 s) y el panel sigue abierto para más cambios.
+  -- Written right away: the widget applies it immediately (it reads the
+  -- overrides every 1.2 s) and the panel stays open for further changes.
   writeSetting(key, value)
   if options.relaunch then
     launch()
@@ -235,7 +235,7 @@ local function toggleKey(key)
   setSetting(key, not boolOf(key))
 end
 
--- ---------------------------------------------------------------- lanzar
+-- ---------------------------------------------------------------- launch
 
 local function shellQuote(value)
   return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
@@ -353,11 +353,11 @@ local function dispatch(expression, callback)
   end
 end
 
--- Mueve y redimensiona la ventana existente sin recrearla.
+-- Moves and resizes the existing window without recreating it.
 applyGeometry = function()
   local screenWidth, screenHeight = outputGeometry()
-  -- La ventana nunca puede ser mayor que el monitor: Hyprland acepta el
-  -- tamano, pero la deja cortada y sin forma de moverla.
+  -- The window can never be larger than the monitor: Hyprland accepts the
+  -- size but leaves the window clipped and impossible to move.
   local width = math.min(math.floor(numberOf("width")), screenWidth)
   local height = math.min(math.floor(numberOf("height")), screenHeight)
   local anchor = normalizeAnchor(valueOf("anchor"))
@@ -369,9 +369,9 @@ applyGeometry = function()
     x, y = anchorPosition(anchor, width, height, screenWidth, screenHeight)
   end
   local window = "class:^noctalia-lyrics-carousel$"
-  -- keep_aspect_ratio = false es imprescindible: sin esa flag el
-  -- despachador de Hyprland 0.57 mantiene la proporcion y descarta el
-  -- cambio de tamano (la ventana se queda con el tamano que ya tenia).
+  -- keep_aspect_ratio = false is essential: without that flag the
+  -- Hyprland 0.57 dispatcher keeps the aspect ratio and discards the
+  -- size change (the window keeps the size it already had).
   local resize = string.format(
     'hl.dsp.window.resize({ x = %d, y = %d, window = "%s", keep_aspect_ratio = false })',
     width,
@@ -391,7 +391,7 @@ launch = function()
     return
   end
   launching = true
-  -- Watchdog: si la ventana no llega a crearse, el botón no se queda muerto.
+  -- Watchdog: if the window never gets created, the button does not hang.
   runAsync({ "sleep", "6" }, function()
     if launching then
       launching = false
@@ -414,18 +414,18 @@ launch = function()
     x, y = anchorPosition(anchor, width, height, screenWidth, screenHeight)
   end
 
-  -- Se lanza el script por ruta absoluta (y con python3): depender del
-  -- PATH exigiria un enlace simbolico en ~/.local/bin que el plugin no
-  -- crea, y asi tampoco hace falta el bit de ejecucion.
+  -- The script is launched by absolute path (and with python3): relying on
+  -- PATH would require a symlink in ~/.local/bin that the plugin does not
+  -- create, and this way the executable bit is not needed either.
   local script = "lyrics-carousel"
   local pluginDir = noctalia.pluginDir()
   if pluginDir ~= nil and pluginDir ~= "" then
     script = "python3 " .. pluginDir .. "/bin/lyrics-carousel"
   end
-  -- La ventana se crea con el tamaño en pixeles que mandan las reglas de
-  -- exec_cmd; dentro de kitty el script lee el tamaño real del terminal
-  -- (kitty lo publica en TIOCGWINSZ), asi que no hace falta pasar nada por
-  -- variables de entorno.
+  -- The window is created with the pixel size that the exec_cmd rules
+  -- dictate; inside kitty the script reads the real terminal size
+  -- (kitty publishes it through TIOCGWINSZ), so nothing has to be passed
+  -- through environment variables.
   local command = string.format(
     "kitty -o confirm_os_window_close=0 -o font_family=%s -o font_size=%d --class noctalia-lyrics-carousel --title lyrics -e sh -lc %s",
     shellQuote(family),
@@ -438,7 +438,7 @@ launch = function()
   )
   local expression = string.format("hl.dsp.exec_cmd(%s, %s)", luaQuote(command), rules)
 
-  -- Reinicia la ventana anterior para que recoja la tipografía nueva.
+  -- Restarts the previous window so it picks up the new typography.
   local started = runAsync(
     { "pkill", "-f", "noctalia-lyrics-carousel --title lyrics" },
     function()
@@ -467,7 +467,7 @@ launch = function()
   end
 end
 
--- ------------------------------------------------------------- cancion
+-- ------------------------------------------------------------- track
 
 local function readTrack()
   local format = "{{playerInstance}}\t{{status}}\t{{title}}\t{{artist}}"
@@ -528,10 +528,10 @@ local function chipRow(items)
       onClick = item.onClick,
     }))
   end
-  return ui.row({ gap = 6 }, chips)
+  return ui.row({ gap = 6, justify = "center", align = "center" }, chips)
 end
 
--- Todas las fuentes que ofrece el panel, en el orden en que se muestran.
+-- Every font the panel offers, in the order they are shown.
 local function fontNames()
   local names = {}
   for _, name in ipairs(FONT_CHOICES) do
@@ -558,9 +558,9 @@ local function fontIndex(name)
   return nil
 end
 
--- Un solo selector de fuente: la lista de disponibles y una ultima opcion
--- para escribir una que no este. Antes habia dos listas de chips y un campo
--- siempre visible, y no se sabia cual de los tres mandaba.
+-- A single font selector: the list of available fonts plus a last option
+-- to type one that is not in the list. There used to be two chip lists and
+-- an always-visible field, and it was never clear which of the three won.
 local function fontSelector()
   local names = fontNames()
   local current = tostring(valueOf("font_family"))
@@ -605,8 +605,8 @@ local function accentChips()
         setSetting("accent", name)
       end,
     })
-    -- Cuatro por fila: con los ocho en una sola fila los nombres se
-    -- apretaban y el ultimo quedaba fuera del panel.
+    -- Four per row: with all eight on a single row the names get
+    -- cramped and the last one falls outside the panel.
     if index % 4 == 0 then
       table.insert(rows, chipRow(row))
       row = {}
@@ -618,8 +618,8 @@ local function accentChips()
   return ui.column({ gap = 4 }, rows)
 end
 
--- La rejilla representa la pantalla: tres filas de tres botones, en el
--- mismo orden en que el usuario ve las posiciones.
+-- The grid represents the screen: three rows of three buttons, in the
+-- same order the user sees the positions in.
 local ANCHOR_GRID = {
   { "top-left", "top-center", "top-right" },
   { "left-center", "center", "right-center" },
@@ -639,9 +639,9 @@ local ANCHOR_KEYS = {
   custom = "anchor_custom",
 }
 
--- Nueve botones con el nombre de cada posicion dentro. Se pulsan
--- directamente: no hay que abrir un desplegable para ver donde cae cada
--- uno. La posicion personalizada es el decimo boton, debajo de la rejilla.
+-- Nine buttons carrying the name of each position inside. They are pressed
+-- directly: there is no dropdown to open to see where each one lands. The
+-- custom position is the tenth button, below the grid.
 local function anchorButtons()
   local current = normalizeAnchor(valueOf("anchor"))
   local rows = {}
@@ -673,10 +673,10 @@ local function anchorButtons()
   return ui.column({ gap = 6, align = "stretch" }, rows)
 end
 
--- Botones "-" y "+" de un valor numerico.
+-- "-" and "+" buttons for a numeric value.
 --
--- El hover no toca nada: antes el ajuste se cambiaba al pasar el raton por
--- encima, y un ancho que se encogia solo al mover el puntero era un fallo.
+-- Hover changes nothing: the setting used to change when the mouse passed
+-- over it, and a width that shrank on its own was a bug.
 local function sizeStepper(key, min, max, step)
   local current = math.floor(numberOf(key))
   local function bump(delta)
@@ -714,12 +714,16 @@ local function sizeStepper(key, min, max, step)
   })
 end
 
--- Deslizador con su etiqueta y el valor a la derecha. Los limites son los
--- del panel: no puede ofrecer mas de lo que el script acepta.
+-- Slider with its label and the value on the right. The limits are the
+-- panel's: it cannot offer more than the script accepts.
+--
+-- Note: on this Noctalia version the native slider consumes the mouse wheel
+-- when hovered (wheel-adjust cannot be disabled separately), so the wheel may
+-- change the value instead of scrolling the panel while over the slider.
 local function sliderRow(key, label, min, max, step, integer)
-  -- El valor mostrado se recorta: si el ajuste esta fuera de rango (por
-  -- ejemplo escrito a mano en el settings.toml), el deslizador tiene que
-  -- ensenar el valor real, no uno que el script va a descartar.
+  -- The displayed value is clamped: if the setting is out of range (for
+  -- instance hand-written into settings.toml), the slider has to show the
+  -- real value, not one the script is going to discard.
   local current = clampSetting(key, numberOf(key))
   if current == nil then
     current = min
@@ -751,12 +755,12 @@ local function sliderRow(key, label, min, max, step, integer)
   })
 end
 
--- Campo de texto con validacion. Solo se guarda lo que cumple el patron: un
--- color a medias o un nombre de glifo con mayusculas dejaria la ventana sin
--- color o sin icono.
+-- Text field with validation. Only values that match the pattern are
+-- saved: a half-written color or a glyph name with uppercase letters would
+-- leave the window without a color or without an icon.
 local function inputRow(key, label, placeholder)
-  -- El patron de cada campo vive en lib/settings.luau (PATTERNS): el
-  -- widget lo usa por su IPC y los dos tienen que aplicar el mismo.
+  -- The pattern for each field lives in lib/settings.luau (PATTERNS): the
+  -- widget uses it through its IPC and both have to apply the same one.
   local pattern = settingsLib.PATTERNS[key]
   return ui.column({ gap = 4 }, {
     ui.label({ text = label, fontSize = 11, color = "on_surface_variant" }),
@@ -805,8 +809,8 @@ render = function()
       }),
       ui.button({
         key = "close-panel",
-        -- "x" es el nombre real en el set de Tabler; "close" también
-        -- funciona (alias de Noctalia) pero el validador no lo conoce.
+        -- "x" is the real name in the Tabler set; "close" also works
+        -- (a Noctalia alias) but the validator does not know it.
         glyph = "x",
         variant = "ghost",
         tooltip = tr("close"),
@@ -824,7 +828,7 @@ render = function()
     }),
     ui.separator({ thickness = 1, spacing = 6 }),
 
-    -- Presentación -------------------------------------------------------
+    -- Display -------------------------------------------------------
     ui.label({ text = tr("section_display"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     ui.row({ align = "center", gap = 10, paddingH = 4, padding = 4 }, {
       ui.glyph({ name = "arrows-vertical", size = 14, color = "on_surface_variant" }),
@@ -848,17 +852,48 @@ render = function()
         end,
       }),
     }),
-    -- Qué se dibuja dentro de la ventana --------------------------------
+    -- What is drawn inside the window --------------------------------
     toggleRow("header", tr("header"), "heading"),
     toggleRow("marker", tr("marker"), "chevron-right"),
-    toggleRow("karaoke", tr("karaoke"), "sun"),
+    (function()
+      local karaokeOn = boolOf("karaoke")
+      local brainOn = boolOf("karaoke_brain")
+      local children = {
+        ui.glyph({ name = "sun", size = 14, color = "on_surface_variant" }),
+        ui.label({ text = tr("karaoke"), fontSize = 12, color = "on_surface", flexGrow = 1 }),
+      }
+      if karaokeOn then
+        table.insert(children, ui.button({
+          key = "btn-karaoke-brain",
+          glyph = "psychology",
+          variant = brainOn and "secondary" or "ghost",
+          -- Small: a big button here made the row taller and pushed the
+          -- whole panel down.
+          controlSize = "xs",
+          glyphSize = 13,
+          tooltip = "Intelligent karaoke (on): per-word glow only when word timing is available. Off: classic progressive karaoke",
+          onClick = function()
+            setSetting("karaoke_brain", not boolOf("karaoke_brain"))
+          end,
+        }))
+      end
+      table.insert(children, ui.toggle({
+        key = "toggle-karaoke",
+        checked = karaokeOn,
+        onChange = function(value)
+          setSetting("karaoke", truthy(value))
+        end,
+      }))
+      return ui.row({ key = "row-karaoke", align = "center", gap = 10, paddingH = 4, padding = 4 }, children)
+    end)(),
     toggleRow("ghost", tr("ghost"), "sparkles"),
     toggleRow("footer", tr("footer"), "clock"),
     toggleRow("hints", tr("hints"), "keyboard"),
 
-    -- Letra --------------------------------------------------------------
+    -- Lyrics --------------------------------------------------------------
     ui.separator({ thickness = 1, spacing = 6 }),
     ui.label({ text = tr("section_lyrics"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
+    sliderRow("font_size", tr("font_size"), 6, 96, 1, true),
     sliderRow("active_scale", tr("active_scale"), 1.0, 2.5, 0.05, false),
     ui.row({ gap = 10 }, {
       ui.column({ flexGrow = 1, gap = 4 }, {
@@ -873,19 +908,19 @@ render = function()
 
     -- Color --------------------------------------------------------------
     ui.separator({ thickness = 1, spacing = 6 }),
-    ui.label({ text = tr("section_color"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
-    ui.column({ gap = 4 }, {
+    ui.column({ gap = 6, align = "center" }, {
+      ui.label({ text = tr("section_color"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
       ui.label({ text = tr("accent"), fontSize = 11, color = "on_surface_variant" }),
       accentChips(),
+      (function()
+        if accent == "custom" then
+          return inputRow("custom_color", tr("custom_color"), tr("color_placeholder"))
+        end
+        return ui.column({})
+      end)(),
     }),
-    (function()
-      if accent == "custom" then
-        return inputRow("custom_color", tr("custom_color"), tr("color_placeholder"))
-      end
-      return ui.column({})
-    end)(),
 
-    -- Tipografía ---------------------------------------------------------
+    -- Typography ---------------------------------------------------------
     ui.separator({ thickness = 1, spacing = 6 }),
     ui.label({ text = tr("section_font"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     ui.label({ text = tr("font_family"), fontSize = 11, color = "on_surface_variant" }),
@@ -897,9 +932,8 @@ render = function()
       end
       return ui.column({})
     end)(),
-    sliderRow("font_size", tr("font_size"), 6, 96, 1, true),
 
-    -- Ventana ------------------------------------------------------------
+    -- Window ------------------------------------------------------------
     ui.separator({ thickness = 1, spacing = 6 }),
     ui.label({ text = tr("section_window"), fontSize = 11, fontWeight = "bold", color = "on_surface_variant" }),
     ui.label({ text = tr("anchor"), fontSize = 11, color = "on_surface_variant" }),
@@ -910,8 +944,8 @@ render = function()
           return ui.column({ flexGrow = 1, gap = 4 }, {
             ui.label({ text = label, fontSize = 10, color = "on_surface_variant" }),
             ui.input({
-              -- El campo de texto no se controla desde el árbol: necesita una
-              -- clave estable para que conserve lo que el usuario teclea.
+              -- The text field is not controlled from the tree: it needs a
+              -- stable key so it keeps what the user types.
               key = key,
               value = tostring(math.floor(numberOf(key))),
               controlSize = "sm",
@@ -939,8 +973,8 @@ render = function()
     ui.row({ gap = 10 }, {
       ui.column({ flexGrow = 1, gap = 4 }, {
         ui.label({ text = tr("width"), fontSize = 11, color = "on_surface_variant" }),
-        -- Los límites son los de este panel: el script
-        -- recorta lo que le llegue, así que el panel no puede ofrecer más.
+        -- The limits are this panel's: the script
+        -- clamps whatever reaches it, so the panel cannot offer more.
         sizeStepper("width", 400, 3840, 100),
       }),
       ui.column({ flexGrow = 1, gap = 4 }, {
@@ -961,17 +995,17 @@ end
 
 function onOpen()
   panelClosed = false
-  -- Cada apertura vuelve a deducir si la fuente actual está en la lista:
-  -- así una fuente elegida a mano no deja el campo abierto para siempre.
+  -- Every open works out again whether the current font is in the list:
+  -- that way a hand-picked font does not leave the field open forever.
   fontCustom = nil
   refreshSettings()
   readTrack()
   render()
 end
 
--- Vuelca los overrides al settings.toml: asi la pagina de ajustes del plugin
--- y el panel muestran lo mismo. Espera a que terminen las escrituras que
--- estaban en vuelo para no perder el ultimo cambio.
+-- Flushes the overrides into settings.toml: that way the plugin settings
+-- page and the panel show the same thing. It waits for the writes that were
+-- in flight so the last change is not lost.
 local function mergeOverrides(attempts)
   if pendingWrites > 0 and (attempts or 0) < 20 then
     runAsync({ "sleep", "0.1" }, function()
@@ -982,8 +1016,8 @@ local function mergeOverrides(attempts)
   settingsLib.merge(function(ok)
     refreshSettings()
     if not ok then
-      -- El cambio se queda en la capa de overrides: si el usuario no se
-      -- entera, cree que se ha guardado y al reiniciar lo pierde.
+      -- The change stays in the override layer: if the user does not find
+      -- out, they think it was saved and lose it on the next restart.
       reportError(tr("write_failed"))
       safe("notifyError", noctalia.notifyError, tr("title"), tr("write_failed"))
     end
@@ -991,7 +1025,7 @@ local function mergeOverrides(attempts)
 end
 
 function onClose()
-  -- La recarga que dispara Noctalia ya no molesta: el panel se esta cerrando.
+  -- The reload that Noctalia triggers no longer gets in the way: it is closing.
   panelClosed = true
   mergeOverrides(0)
 end
@@ -1005,16 +1039,16 @@ function onIpc(event, payload)
   if event == "launch" then
     launch()
   elseif event == "toggle" then
-    -- Alterna un ajuste booleano: toggle marker
+    -- Toggles a boolean setting: toggle marker
     if type(payload) == "string" and settingsLib.BOOL_KEYS[payload] then
       toggleKey(payload)
     end
   elseif event == "set" then
-    -- Fija un ajuste: "set font_size=26 int" o "set font_size 26 int"
+    -- Sets a setting: "set font_size=26 int" or "set font_size 26 int"
     local key, value = settingsLib.parse(payload)
     if key ~= nil then
-      -- setSetting recorta el valor a los limites del panel y refresca
-      -- la vista: escribir `settings` antes saltaria ese recorte.
+      -- setSetting clamps the value to the panel limits and refreshes
+      -- the view: writing `settings` directly would skip that clamping.
       setSetting(key, value, { geometry = GEOMETRY_KEYS[key] == true })
     end
   elseif event == "refresh" then

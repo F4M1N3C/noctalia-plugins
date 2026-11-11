@@ -1,17 +1,17 @@
 --!nonstrict
--- Widget de barra del carrusel de letras.
+-- Bar widget of the lyrics carousel.
 --
--- Ademas de abrir el panel, acepta IPC para cambiar ajustes sin abrirlo
--- (util para atajos de teclado):
+-- Besides opening the panel, it accepts IPC to change settings without
+-- opening it (useful for keyboard shortcuts):
 --   noctalia msg plugin faminec/lyrics-carousel:widget all set visible_above 4 int
 --   noctalia msg plugin faminec/lyrics-carousel:widget all toggle karaoke
 
 local settings = require("./lib/settings.luau")
 
--- El glifo se lee de la capa de overrides y no solo de la configuracion:
--- el panel escribe ahi y la vuelca al cerrarse, asi que si el widget
--- mirara solo la configuracion, el icono de la barra no cambiaria hasta
--- que se cerrara el panel.
+-- The glyph is read from the overrides layer and not only from the
+-- configuration: the panel writes there and flushes it when it closes, so
+-- if the widget only looked at the configuration, the bar icon would not
+-- change until the panel was closed.
 local function currentGlyph()
   local value = settings.value("glyph")
   if type(value) == "string" and value ~= "" then
@@ -49,7 +49,7 @@ function onIpc(event, payload)
       settings.apply(key, value)
     end
   elseif event == "toggle" then
-    -- Solo se alternan los interruptores: alternar un numero no tiene sentido.
+    -- Only toggles are toggled: toggling a number makes no sense.
     if type(payload) == "string" and settings.BOOL_KEYS[payload] then
       settings.apply(payload, nil)
     end

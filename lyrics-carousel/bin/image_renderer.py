@@ -1,4 +1,4 @@
-"""Clase ImageRenderer: dibuja el carrusel como imagen y lo manda a kitty."""
+"""ImageRenderer class: draws the carousel as an image and sends it to kitty."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import os
 import subprocess
 import sys
 
-# realpath: el modulo puede alcanzarse por un enlace simbolico y sus
-# hermanos (graphics) viven en el directorio real.
+# realpath: the module may be reached through a symbolic link and its
+# siblings (graphics) live in the real directory.
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
 from graphics import GraphicsRenderer, load_font, terminal_cells, text_width  # noqa: E402
@@ -20,31 +20,61 @@ except ImportError:  # pragma: no cover
 
 FALLBACK_FONT = "/usr/share/fonts/TTF/DejaVuSansMono.ttf"
 
-# Cuadros por segundo de la imagen. En reposo (karaoke y fondo animado) 30
-# bastan; mientras el carrusel se desplaza se sube a 60, que es cuando el
-# ojo nota el tirón. La huella del cuadro evita reenviar lo que no cambia.
+# Frames per second of the image. At rest (karaoke and animated background)
+# 30 are enough; while the carousel scrolls it goes up to 60, which is when
+# the eye notices the stutter. The frame signature avoids resending it.
 IMAGE_FPS = 30
 MOTION_FPS = 60
 
 
 def mmss(seconds):
-    """Segundos -> mm:ss."""
+    """Seconds -> mm:ss."""
     seconds = max(0, int(seconds or 0))
     return f"{seconds // 60:02d}:{seconds % 60:02d}"
 
 
-class ImageRenderer:
-    """Renderiza el carrusel con Pillow y lo muestra con el protocolo de kitty.
+def line_has_word_timing(line, text):
+    """True if the line carries usable per-character/word timings.
 
-    Ventajas sobre el modo texto:
-      * la línea activa se dibuja con otro tamaño (active_scale),
-      * el desplazamiento es a nivel de píxel,
-      * admite cualquier tipografía, no solo monoespaciadas.
+    Mirrors the lyrics plugin's `lineHasWordTiming`: timings must be present,
+    aligned 1:1 with the rendered text, monotonic and covering time. Without
+    them the line falls back to line-mode (no progressive karaoke fill).
+    """
+    chars = getattr(line, "chars", None)
+    if not isinstance(chars, list) or len(chars) < 2:
+        return False
+    if len(chars) < len(text or ""):
+        return False
+    prev = None
+    for value in chars[: len(text or "")]:
+        try:
+            current = float(value)
+        except (TypeError, ValueError):
+            return False
+        if prev is not None and current < prev:
+            return False
+        prev = current
+    if prev is None:
+        return False
+    try:
+        first = float(chars[0])
+    except (TypeError, ValueError):
+        return False
+    return prev > first
+
+
+class ImageRenderer:
+    """Renders the carousel with Pillow and displays it with the kitty protocol.
+
+    Advantages over text mode:
+      * the active line is drawn at a different size (active_scale),
+      * scrolling happens at the pixel level,
+      * any typeface is supported, not just monospaced ones.
     """
 
-    # Qué fuerza tiene el acento en el tono de lo que aún no se ha cantado
-    # (el karaoke): 45 % del acento sobre el fondo.
-    KARAOKE_PENDIENTE = 0.45
+    # How strongly the accent shows in the tone of what has not been sung
+    # yet (the karaoke): 45% of the accent over the background.
+    KARAOKE_PENDING = 0.45
 
     def __init__(self, app):
         self.app = app
@@ -57,7 +87,7 @@ class ImageRenderer:
         self.frames = 0
         self.sends = 0
 
-    # -- tipografías ---------------------------------------------------
+    # -- typefaces ------------------------------------------------------
 
     def font_file(self, family: str) -> str:
         if family in self.font_files:
@@ -82,9 +112,9 @@ class ImageRenderer:
         return path
 
     def font(self, family: str, size: float):
-        # El tamaño se guarda en cuartos de píxel: la letra crece de forma
-        # continua (sin escalones de 1 px) y la caché no crece sin límite,
-        # porque el rango de tamaños posibles es pequeño.
+        # The size is stored in quarter-pixels: the text grows continuously
+        # (without 1 px steps) and the cache does not grow without bound,
+        # because the range of possible sizes is small.
         key = (family, int(round(size * 4)))
         font = self.fonts.get(key)
         if font is None:
@@ -93,11 +123,11 @@ class ImageRenderer:
         return font
 
     def invalidate_fonts(self):
-        """Limpia la cache de fuentes (tras un cambio de font_family/font_size)."""
+        """Clears the font cache (after a font_family/font_size change)."""
         self.fonts.clear()
         self.font_files.clear()
 
-    # -- utilidades de dibujo ------------------------------------------
+    # -- drawing utilities ---------------------------------------------
 
     @staticmethod
     def _mix(color, background, factor):
@@ -108,32 +138,33 @@ class ImageRenderer:
         )
 
     @staticmethod
-    def _lerp(primero, segundo, factor):
-        """Interpola de `primero` (factor 0) a `segundo` (factor 1).
+    def _lerp(first, second, factor):
+        """Interpolates from `first` (factor 0) to `second` (factor 1).
 
-        `_mix` mezcla un color sobre el fondo y el factor dice cuanta
-        fuerza tiene el color; aquí el factor es el avance de una
-        transición, así que el orden de los colores es el orden en el que
-        se ven en pantalla.
+        `_mix` blends a color over the background and the factor says how
+        strong the color is; here the factor is the progress of a
+        transition, so the order of the colors is the order in which they
+        are seen on screen.
         """
         factor = max(0.0, min(1.0, factor))
         return (
-            int(primero[0] + (segundo[0] - primero[0]) * factor),
-            int(primero[1] + (segundo[1] - primero[1]) * factor),
-            int(primero[2] + (segundo[2] - primero[2]) * factor),
+            int(first[0] + (second[0] - first[0]) * factor),
+            int(first[1] + (second[1] - first[1]) * factor),
+            int(first[2] + (second[2] - first[2]) * factor),
         )
 
-    def _karaoke_pendiente(self, accent, background):
-        """El tono apagado de lo que aún no se ha cantado (el karaoke).
+    def _karaoke_pending(self, accent, background):
+        """The dimmed tone of what has not been sung yet (the karaoke).
 
-        Es el color con el que se dibuja la parte de la línea principal que
-        todavía no se ha cantado. La línea que va a ser principal tiene que
-        llegar a este tono, o al volverse principal se oscurece de golpe.
+        This is the color used to draw the part of the main line that has
+        not been sung yet. The line that is about to become the main one
+        has to arrive at this tone, otherwise it darkens abruptly once it
+        becomes the main line.
         """
-        return self._mix(accent, background, self.KARAOKE_PENDIENTE)
+        return self._mix(accent, background, self.KARAOKE_PENDING)
 
     def fit_text(self, text, max_width, size, family):
-        """Recorta el texto para que quepa en el ancho disponible."""
+        """Trims the text so it fits in the available width."""
         font = self.font(family, size)
         if font is None:
             return text
@@ -157,55 +188,56 @@ class ImageRenderer:
         return width
 
     @staticmethod
-    def _imagen_de(draw):
-        """La imagen completa que está dibujando `draw`.
+    def _image_from(draw):
+        """The full image that `draw` is drawing on.
 
-        ImageDraw no guarda la imagen: `draw.im` es el núcleo interno (sirve
-        para saber el tamaño, pero no para componer capas). La imagen entera
-        hace falta para recortar y pegar el trozo cantado, así que se busca
-        primero la de verdad.
+        ImageDraw does not keep the image: `draw.im` is the internal core
+        (it is useful to know the size, but not to compose layers). The
+        whole image is needed to crop and paste the sung portion, so the
+        real one is looked up first.
         """
         for atributo in ("_image", "image", "im"):
-            candidata = getattr(draw, atributo, None)
-            if candidata is not None and hasattr(candidata, "crop"):
-                return candidata
+            candidate_image = getattr(draw, atributo, None)
+            if candidate_image is not None and hasattr(candidate_image, "crop"):
+                return candidate_image
         return None
 
     def _draw_karaoke(
-        self, draw, text, center_y, size, sung, unsung, amount, family, alfa=255
+        self, draw, text, center_y, size, sung, unsung, amount, family, alpha=255
     ):
-        """Rellena la línea cantada de izquierda a derecha, píxel a píxel.
+        """Fills the sung part of the line from left to right, pixel by pixel.
 
-        `amount` son los caracteres cantados con decimales. El avance se
-        interpola dentro del glifo en curso, así que el relleno no salta
-        de letra en letra pero sigue el ritmo real de la letra: una
-        sílaba larga tarda más en llenarse, que es lo que hacía parecer
-        que reconocía la velocidad de la canción.
+        `amount` is the number of sung characters, with decimals. The
+        progress is interpolated inside the current glyph, so the fill
+        does not jump from letter to letter but follows the real rhythm of
+        the lyrics: a long syllable takes longer to fill, which is what
+        made it look like it recognized the song speed.
 
-        El brillo es el de la propia letra: lo cantado se rellena con el
-        color de acento y lo que falta va en un tono apagado. No hay halo
-        difuminado alrededor (era una sombra que además costaba 3,2 ms por
-        cuadro y hacía bajar el carrusel de 60 fps).
+        The brightness is the text's own: the sung part is filled with the
+        accent color and what is missing goes in a dimmed tone. There is no
+        blurred halo around it (it was a shadow that also cost 3.2 ms per
+        frame and made the carousel drop below 60 fps).
 
-        El borde del relleno se desvanece con una rampa de alfa: la letra
-        cantada se funde con la que falta en vez de cortar en seco, y el
-        ojo sigue la luz que avanza.
+        The edge of the fill fades out with an alpha ramp: the sung text
+        blends into the missing one instead of cutting sharply, and the
+        eye follows the light as it advances.
 
-        `alfa` es la opacidad de la línea (la de su distancia al centro):
-        sin ella, la línea saliente llegaba opaca al relevo y al cambiar
-        de ruta de dibujo se volvía translúcida de golpe.
+        `alpha` is the opacity of the line (derived from its distance to
+        the center): without it, the outgoing line arrived opaque at the
+        handover and turned translucent all at once when the drawing path
+        changed.
         """
         font = self.font(family, size)
         if font is None:
             return
-        base = self._imagen_de(draw)
+        base = self._image_from(draw)
         if base is None:
             return
         total = text_width(draw, text, font)
         x = (base.size[0] - total) / 2
         length = len(text)
-        relleno = unsung if alfa >= 255 else unsung + (max(0, int(alfa)),)
-        draw.text((x, center_y), text, font=font, fill=relleno, anchor="lm")
+        fill_color = unsung if alpha >= 255 else unsung + (max(0, int(alpha)),)
+        draw.text((x, center_y), text, font=font, fill=fill_color, anchor="lm")
         if length <= 0:
             return
         amount = max(0.0, min(float(length), amount))
@@ -223,9 +255,9 @@ class ImageRenderer:
         if sung_px <= 0.0:
             return
 
-        # La caja de la línea: sin halo difuminado no hace falta el margen
-        # grande, solo unos píxeles para que el antialiasing del glifo no
-        # quede cortado.
+        # The line's box: without a blurred halo the large margin is not
+        # needed, just a few pixels so the glyph antialiasing is not cut
+        # off.
         left, top, right, bottom = draw.textbbox(
             (x, center_y), text, font=font, anchor="lm"
         )
@@ -241,11 +273,11 @@ class ImageRenderer:
         if width <= 0 or height <= 0:
             return
 
-        # Borde cantado, en píxeles dentro de la caja de la línea.
+        # Sung edge, in pixels inside the line's box.
         limit = max(1, min(width, int(math.ceil(sung_px + x - box[0]))))
 
-        def capa(color):
-            """La frase entera sobre una capa recortada a la línea."""
+        def paint_layer(color):
+            """The whole phrase on a layer cropped to the line."""
             layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
             ImageDraw.Draw(layer).text(
                 (x - box[0], center_y - box[1]),
@@ -254,47 +286,50 @@ class ImageRenderer:
                 fill=color,
                 anchor="lm",
             )
-            if alfa < 255:
-                # La capa hereda la opacidad de la línea: si no, la línea
-                # saliente llegaría opaca al relevo y al cambiar de ruta de
-                # dibujo se volvería translúcida de golpe.
-                factor = max(0.0, min(1.0, alfa / 255.0))
+            if alpha < 255:
+                # The layer inherits the opacity of the line: otherwise the
+                # outgoing line would arrive opaque at the handover and
+                # turn translucent all at once when the drawing path
+                # changed.
+                factor = max(0.0, min(1.0, alpha / 255.0))
                 layer.putalpha(
-                    layer.getchannel("A").point(lambda valor: int(valor * factor))
+                    layer.getchannel("A").point(lambda value: int(value * factor))
                 )
             return layer
 
-        # El trozo cantado se recorta con crop (un píxel más no cambia nada):
-        # así el borde del relleno cae dentro del glifo en curso y el avance
-        # es continuo en vez de saltar de palabra en palabra.
-        corte = (0, 0, limit, height)
-        completa = capa(sung)
-        nitido = completa.crop(corte)
+        # The sung portion is cropped with crop (one extra pixel changes
+        # nothing): this way the edge of the fill falls inside the current
+        # glyph and the progress is continuous instead of jumping from word
+        # to word.
+        clip_box = (0, 0, limit, height)
+        full_image = paint_layer(sung)
+        sharp_image = full_image.crop(clip_box)
 
-        # El brillo de la letra: solo lo cantado, en su color, sin sombra
-        # difuminada alrededor. El halo era una sombra que además costaba
-        # 3,2 ms por cuadro (dos GaussianBlur) y hacía bajar de 60 fps.
-        rampa = max(2, int(size * 0.5))
+        # The brightness of the text: only the sung part, in its color,
+        # without a blurred shadow around it. The halo was a shadow that
+        # also cost 3.2 ms per frame (two GaussianBlur calls) and made it
+        # drop below 60 fps.
+        ramp = max(2, int(size * 0.5))
 
-        # El borde del relleno se suaviza: una rampa de alfa en las últimas
-        # columnas funde la letra cantada con la que todavía no se ha
-        # cantado, en vez de cortar el color en seco (un tajo vertical de
-        # luz). La rampa baja hacia el límite: el color cantado se apaga
-        # al llegar al borde. Con la rampa al revés el rojo se encendía
-        # justo al final y se cortaba en seco.
+        # The edge of the fill is smoothed: an alpha ramp over the last
+        # columns blends the sung text with the part that has not been
+        # sung yet, instead of cutting the color sharply (a vertical
+        # slice of light). The ramp falls off towards the limit: the sung
+        # color fades as it reaches the edge. With the ramp reversed the
+        # red lit up exactly at the end and cut off abruptly.
         if limit > 0:
-            suave = Image.new("L", (limit, height), 255)
-            tramo = min(rampa, limit)
-            valores = [
-                int(255 * (tramo - indice) / float(tramo)) for indice in range(tramo)
+            soft_mask = Image.new("L", (limit, height), 255)
+            ramp_span = min(ramp, limit)
+            ramp_values = [
+                int(255 * (ramp_span - indice) / float(ramp_span)) for indice in range(ramp_span)
             ]
-            columna = Image.new("L", (tramo, 1))
-            columna.putdata(valores)
-            columna = columna.resize((tramo, height), Image.Resampling.NEAREST)
-            suave.paste(columna, (limit - tramo, 0))
-            nitido.putalpha(ImageChops.multiply(nitido.getchannel("A"), suave))
+            ramp_column = Image.new("L", (ramp_span, 1))
+            ramp_column.putdata(ramp_values)
+            ramp_column = ramp_column.resize((ramp_span, height), Image.Resampling.NEAREST)
+            soft_mask.paste(ramp_column, (limit - ramp_span, 0))
+            sharp_image.putalpha(ImageChops.multiply(sharp_image.getchannel("A"), soft_mask))
 
-        base.alpha_composite(nitido, (box[0], box[1]))
+        base.alpha_composite(sharp_image, (box[0], box[1]))
 
     def _draw_left(self, draw, text, x, y, size, color, family, anchor="lm"):
         font = self.font(family, size)
@@ -309,13 +344,14 @@ class ImageRenderer:
         width = text_width(draw, text, font)
         draw.text((right_x - width, y), text, font=font, fill=color, anchor="lm")
 
-    # -- disposición ----------------------------------------------------
+    # -- layout ---------------------------------------------------------
 
     def _layout(self, focus, center_y, size, scale):
-        """Devuelve las posiciones (centro vertical) de las líneas alrededor de focus.
+        """Returns the positions (vertical center) of the lines around focus.
 
-        En sentido "down" las líneas futuras entran por arriba (como en el modo
-        texto) y las pasadas salen por abajo; en "up" al revés.
+        In the "down" direction the upcoming lines enter from the top (as
+        in text mode) and the past ones leave through the bottom; in "up"
+        it is the other way around.
         """
         app = self.app
         above = app.cfg["visible_above"]
@@ -328,7 +364,7 @@ class ImageRenderer:
         positions[focus] = center_y
 
         if down:
-            # Arriba las líneas que vienen, abajo las que ya han pasado.
+            # Upcoming lines go above, lines already passed go below.
             cursor = center_y - big_h / 2 - gap - small_h / 2
             for index in range(focus + 1, focus + 1 + above):
                 positions[index] = cursor
@@ -348,7 +384,7 @@ class ImageRenderer:
                 cursor += small_h + gap
         return positions
 
-    # -- render principal -----------------------------------------------
+    # -- main render ----------------------------------------------------
 
     def render(self):
         app = self.app
@@ -373,14 +409,14 @@ class ImageRenderer:
             return True
         self.last_signature = signature
 
-        # RENDER NATIVO (full resolution): calidad maxima.
-        # Sin visualizer el draw es rapido (~20ms). Sin downscale = nitidez perfecta.
+        # NATIVE RENDER (full resolution): maximum quality.
+        # Without the visualizer the draw is fast (~20ms). No downscale = perfect sharpness.
         image = Image.new("RGBA", (xpix, ypix), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
         self._measure_draw = draw
         background = theme.background
 
-        # -- cabecera
+        # -- header
         top = size * 1.9
         bottom = ypix - size * 1.9
         if cfg["header"]:
@@ -399,14 +435,14 @@ class ImageRenderer:
             )
             top = rule_y + size * 0.9
 
-        # -- letra
+        # -- lyrics
         center_y = (top + bottom) / 2
         if app.state == "lyrics" and app.lines:
             self._draw_lyrics(draw, center_y, size, scale, family, accent, position, top, bottom)
         else:
             self._draw_state(draw, center_y, size, family)
 
-        # -- pie
+        # -- footer
         if cfg["footer"]:
             self._draw_footer(draw, xpix, ypix, size, family, accent, position, duration)
         if cfg["hints"]:
@@ -416,7 +452,7 @@ class ImageRenderer:
         return self.gfx.present(image, cols, rows)
 
     def _frame_signature(self, accent):
-        """Huella del cuadro: si no cambia, no se vuelve a enviar la imagen."""
+        """Frame signature: if it does not change, the image is not sent again."""
         app = self.app
         cfg = app.cfg
         position = app.position()
@@ -426,12 +462,13 @@ class ImageRenderer:
             app.track.artist, int(position) if cfg["footer"] else 0,
             accent, cfg["font_family"], cfg["font_size"], cfg["active_scale"],
             cfg["visible_above"], cfg["visible_below"], cfg["direction"],
-            cfg["karaoke"], cfg["marker"], cfg["header"], cfg["footer"],
+            cfg["karaoke"], getattr(app, "karaoke_brain", True), cfg["marker"], cfg["header"], cfg["footer"],
             cfg["hints"], cfg["spacing"], cfg["ghost"],
             round(position * MOTION_FPS),
         ]
-        # El fondo se mueve aunque la letra no cambie: su huella entra en la
-        # del cuadro o la imagen se quedaria congelada entre lineas.
+        # The background moves even when the lyrics do not change: its
+        # signature is part of the frame signature, otherwise the image
+        # would stay frozen between lines.
         visualizer = getattr(app, "visualizer", None)
         if visualizer is not None:
             parts.append(visualizer.signature())
@@ -443,25 +480,27 @@ class ImageRenderer:
         background = theme.background
         index, focus, progress = app.scroll_state(position)
         lines = app.lines
+        karaoke_enabled = bool(app.karaoke and app.cfg.get("karaoke"))
+        brain_on = bool(getattr(app, "karaoke_brain", True))
 
         pos_a = self._layout(index, center_y, size, scale)
         pos_b = self._layout(focus, center_y, size, scale)
 
         visible = set(pos_a) | set(pos_b)
-        # Líneas que salen (están en pos_a pero no en pos_b)
+        # Lines leaving (present in pos_a but not in pos_b)
         leaving = set(pos_a.keys()) - set(pos_b.keys())
-        # Líneas que entran (están en pos_b pero no en pos_a)
+        # Lines entering (present in pos_b but not in pos_a)
         entering = set(pos_b.keys()) - set(pos_a.keys())
-        # Margen extra para no cortar texto a medio pintar: la altura de
-        # línea máxima (con scale) más el gap.
+        # Extra margin to avoid cutting text in the middle of painting: the
+        # maximum line height (with scale) plus the gap.
         max_line_h = size * scale * 1.32
         gap = size * 0.30 * max(1, app.cfg["spacing"])
         margin = max_line_h + gap
-        # Posiciones off-screen para entrada/salida suave
+        # Off-screen positions for smooth entering/leaving
         off_top = area_top - max_line_h - gap
         off_bottom = area_bottom + max_line_h + gap
         down = app.cfg["direction"] == "down"
-        # Escala interpolada: la línea que sale encoge, la que entra crece.
+        # Interpolated scale: the leaving line shrinks, the entering one grows.
         for line_index in sorted(visible):
             if line_index < 0 or line_index >= len(lines):
                 continue
@@ -469,32 +508,32 @@ class ImageRenderer:
             y_a = pos_a.get(line_index)
             y_b = pos_b.get(line_index)
             if y_a is None:
-                # Línea que ENTRA: viene de off-screen
+                # Line ENTERING: comes from off-screen
                 if down:
-                    y_a = off_top  # En "down", vienen de ARRIBA
+                    y_a = off_top  # In "down", they come from ABOVE
                 else:
-                    y_a = off_bottom  # En "up", vienen de ABAJO
+                    y_a = off_bottom  # In "up", they come from BELOW
                 y = y_a + (pos_b[line_index] - y_a) * progress
             elif y_b is None:
-                # Línea que SALE: se va hacia off-screen
+                # Line LEAVING: moves towards off-screen
                 if down:
-                    y_b = off_bottom  # En "down", se van ABAJO
+                    y_b = off_bottom  # In "down", they go BELOW
                 else:
-                    y_b = off_top  # En "up", se van ARRIBA
+                    y_b = off_top  # In "up", they go ABOVE
                 y = pos_a[line_index] + (y_b - pos_a[line_index]) * progress
             else:
-                # Línea en ambos: interpolación normal
+                # Line in both: normal interpolation
                 y = y_a + (y_b - y_a) * progress
-            # Recorte al área visible: no pintar líneas que queden fuera.
+            # Clip to the visible area: do not paint lines that fall outside.
             if y + margin < area_top or y - margin > area_bottom:
                 continue
 
             if line_index == index:
                 factor = 1.0 + (scale - 1.0) * (1.0 - progress)
-                # La que deja de ser principal: se encoge hasta su tamaño normal.
+                # The one that stops being the main line: it shrinks back to its normal size.
             elif line_index == focus:
                 factor = 1.0 + (scale - 1.0) * progress
-                # La que va a ser principal: crece hasta el tamaño principal.
+                # The one that is about to become the main line: it grows to the main size.
             else:
                 factor = 1.0
             line_size = size * factor
@@ -502,87 +541,112 @@ class ImageRenderer:
             distance = abs(y - center_y)
             span = max(1.0, (area_bottom - area_top) * 0.5)
             fade = max(0.22, 1.0 - (distance / span) ** 1.0)
-            # Las líneas del borde (las que entran y salen del encuadre) se
-            # desvanecen. Las dos del relevo no: si perdieran el alfa
-            # desaparecerían de golpe al empezar o al terminar la transición.
+            # The lines at the edges (the ones entering and leaving the
+            # frame) fade out. The two handover lines do not: if they lost
+            # their alpha they would vanish abruptly at the start or end
+            # of the transition.
             if line_index in entering and line_index != focus:
                 fade *= progress
             elif line_index in leaving and line_index != index:
                 fade *= 1.0 - progress
-            # El alfa del resto depende solo de la distancia al centro: la
-            # entrante sigue siendo la de antes y la saliente se queda en
-            # su sitio hasta ocupar el hueco de las ya cantadas.
+            # The alpha of the rest depends only on the distance to the
+            # center: the entering line keeps the previous one and the
+            # leaving line stays in place until it fills the slot of the
+            # already sung ones.
             is_sung = line_index == index
             is_focus = line_index == focus
-            if is_sung:
-                # La principal que deja de serlo: del color principal al
-                # color de las líneas ya cantadas.
-                destino = self._mix(theme.past, background, fade)
-                color = self._lerp(accent, destino, progress)
-            elif is_focus:
-                # La que va a ser principal: del blanco que ya tenía al
-                # color principal.
-                inicio = self._mix(theme.foreground, background, fade)
-                color = self._lerp(inicio, accent, progress)
-                if app.karaoke and app.cfg["karaoke"]:
-                    # Con karaoke la línea principal se dibuja en dos tonos:
-                    # lo cantado en el acento y lo que falta, apagado. La
-                    # entrante tiene que llegar ya a ese tono apagado: si
-                    # llega al acento, al volverse principal se oscurece de
-                    # golpe. Por eso, encima de la transición de color, hay
-                    # otra de oscuridad: del nivel que tienen los renglones
-                    # siguientes (sin oscurecer) al tono de lo pendiente.
-                    color = self._lerp(
-                        color, self._karaoke_pendiente(accent, background), progress
-                    )
-            else:
-                base = theme.foreground if line_index > index else theme.past
-                color = self._mix(base, background, fade)
-            # Aplicar alpha de transición al color (RGBA)
-            color = color + (int(fade * 255),)
 
             text = self.fit_text(
                 line.text, draw.im.size[0] - size * 6, size * factor, family
             )
+
+            # Karaoke mode:
+            # Brain on (intelligent): progressive per-char glow only for lines with
+            # valid word timings, like the lyrics plugin. Lines without usable
+            # timings fall back to line-mode (highlighted at once, no progressive
+            # fill/glow sweep).
+            # Brain off (classic/"boring" mode): progressive karaoke for all lines
+            # when karaoke glow is enabled.
+            has_word_timing = line_has_word_timing(line, text)
+            line_karaoke = False
+            if karaoke_enabled:
+                if brain_on:
+                    line_karaoke = has_word_timing
+                else:
+                    line_karaoke = True
+
+            if is_sung:
+                # The main line that stops being it: from the main color to
+                # the color of the already sung lines.
+                target = self._mix(theme.past, background, fade)
+                color = self._lerp(accent, target, progress)
+            elif is_focus:
+                # The one about to become the main line: from the white it
+                # already had to the main color.
+                base_color = self._mix(theme.foreground, background, fade)
+                color = self._lerp(base_color, accent, progress)
+                if line_karaoke:
+                    # With karaoke the main line is drawn in two tones: the
+                    # sung part in the accent color and the missing part
+                    # dimmed. The entering line has to arrive already at
+                    # that dimmed tone: if it arrives at the accent, it
+                    # darkens abruptly once it becomes the main line. That
+                    # is why, on top of the color transition, there is
+                    # another one for darkness: from the level the following
+                    # lines have (without darkening) to the pending tone.
+                    color = self._lerp(
+                        color, self._karaoke_pending(accent, background), progress
+                    )
+            else:
+                base = theme.foreground if line_index > index else theme.past
+                color = self._mix(base, background, fade)
+            # Apply the transition alpha to the color (RGBA)
+            color = color + (int(fade * 255),)
+
             marker = ""
             if app.cfg["marker"] and is_sung:
                 marker = "> "
             if marker:
                 self._draw_marker(draw, text, y, line_size, marker, family, accent)
-            if is_sung and app.karaoke and app.cfg["karaoke"]:
+
+            # Progressive per-char karaoke for the active sung line.
+            if is_sung and line_karaoke:
                 end = line.start + (line.duration or 4.0)
-                siguiente = app.next_timed_start(line_index)
-                if siguiente is not None and siguiente > line.start:
-                    end = siguiente if not line.duration else min(end, siguiente)
-                # El mismo cálculo que el modo texto: si el adaptador da
-                # tiempos por carácter el relleno los respeta, y si no
-                # reparte la duración de la línea entre los caracteres.
+                next_start = app.next_timed_start(line_index)
+                if next_start is not None and next_start > line.start:
+                    end = next_start if not line.duration else min(end, next_start)
                 amount = app.karaoke_amount(line, text, position, end)
-                cantada = accent
-                pendiente = self._karaoke_pendiente(accent, background)
+                sung_text = accent
+                pending_text = self._karaoke_pending(accent, background)
                 if progress > 0.0:
-                    # La línea que deja de ser principal se va apagando
-                    # hacia el color de las ya cantadas: al terminar queda
-                    # igual que sus vecinas, sin un salto de color.
-                    destino = self._mix(theme.past, background, fade)
-                    cantada = self._lerp(accent, destino, progress)
-                    pendiente = self._lerp(pendiente, destino, progress)
+                    # The line that stops being the main one fades towards
+                    # the color of the already sung ones: when it ends it
+                    # looks the same as its neighbours, with no color jump.
+                    target = self._mix(theme.past, background, fade)
+                    sung_text = self._lerp(accent, target, progress)
+                    pending_text = self._lerp(pending_text, target, progress)
                 self._draw_karaoke(
                     draw,
                     text,
                     y,
                     line_size,
-                    cantada,
-                    pendiente,
+                    sung_text,
+                    pending_text,
                     amount,
                     family,
                     int(fade * 255),
                 )
+            elif is_sung and karaoke_enabled and brain_on and not has_word_timing:
+                # Line-mode (no usable word timings): highlight the whole active
+                # line at once, with no progressive glow/fill sweep.
+                solid = self._lerp(accent, self._mix(theme.past, background, fade), progress)
+                solid = solid + (int(fade * 255),)
+                self._draw_centered(draw, text, y, line_size, solid, family)
             else:
                 self._draw_centered(draw, text, y, line_size, color, family)
 
     def _draw_marker(self, draw, text, center_y, size, marker, family, color):
-        """Marca ">" pegada a la izquierda de la línea activa."""
+        """The ">" marker glued to the left of the active line."""
         font = self.font(family, size)
         if font is None:
             return
@@ -644,8 +708,8 @@ class ImageRenderer:
                     break
             else:
                 text = self.fit_text(candidates[0], limit, size * 0.8, family)
-        # La fila entera queda centrada en la ventana: antes empezaba a la
-        # izquierda y el sobrante se acumulaba a la derecha.
+        # The whole row is centered in the window: it used to start on the
+        # left and the leftover piled up on the right.
         self._draw_centered(
             draw, text, y, size * 0.8,
             self._mix(theme.faint, theme.background, 0.7), family,

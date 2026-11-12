@@ -11,6 +11,7 @@
 --   * an `onIpc` handler so other tools can refresh the panel or open a note.
 
 local merge = require("./merge.luau")
+local channel = require("./channel.luau")
 
 local AUTOSAVE_IDLE_TICKS = 2 -- 1s panel ticks with no edits before a flush
 local SCRATCHPAD_BASE = "scratchpad"
@@ -151,23 +152,17 @@ local function refreshFiles()
   end)
 end
 
--- Publica la nota abierta en un fichero del directorio de datos del plugin.
+-- Publica la nota abierta en un fichero dentro de la carpeta de notas.
 --
--- `noctalia.state` esta aislado por plugin: otro plugin no puede leer estas
--- claves. El fichero es el canal entre `faminec/notes` y `faminec/notes-sync`
--- (y sirve de pista para cualquier otra herramienta).
+-- El canal vive en la carpeta de notas (y no en el directorio de datos del
+-- plugin) para que lo pueda leer otro plugin (el puente) y cualquier otra
+-- herramienta: la carpeta de notas ya es el punto de encuentro entre el
+-- computador y el celular. Precedente: el oficial guarda ahí `.pinned.json`.
 local function publishCurrent()
-  local dir = noctalia.pluginDataDir()
-  if dir == nil or dir == "" then
+  if notesDir == "" then
     return
   end
-  -- El directorio de datos puede no existir todavia (o no tener permiso).
-  local created, createError = pcall(noctalia.mkdirAll, dir)
-  if not created or createError == false then
-    noctalia.log("notes: no se pudo preparar el directorio " .. tostring(dir))
-    return
-  end
-  local payload = noctalia.json.encode({
+  local ok = channel.write(notesDir, {
     name = current or lastNote,
     content = current ~= nil and buffer or lastContent,
     -- `open` dice si el panel tiene esa nota abierta ahora mismo. Cuando se
@@ -177,22 +172,8 @@ local function publishCurrent()
     open = current ~= nil,
     at = noctalia.formatTime("%Y-%m-%d %H:%M:%S"),
   })
-  if payload == nil then
-    return
-  end
-  -- Escritura atomica: se escribe a un temporal y se renombra. Si otro
-  -- plugin lee el fichero a mitad de la escritura se encontraria con un
-  -- JSON a medias (y creeria que no hay ninguna nota).
-  local tmp = dir .. "/current.json.tmp"
-  local ok = noctalia.writeFile(tmp, payload)
   if not ok then
     noctalia.log("notes: no se pudo publicar la nota actual")
-    return
-  end
-  local renamed = noctalia.renameFile(tmp, dir .. "/current.json")
-  if not renamed then
-    noctalia.removeFile(tmp)
-    noctalia.log("notes: no se pudo renombrar el fichero de la nota actual")
   end
 end
 

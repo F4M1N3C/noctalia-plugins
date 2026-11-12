@@ -61,7 +61,7 @@ local function publicacionAtomica()
   for _, op in ipairs(bitacora) do
     if op.op == "write" and op.path:match("%.tmp$") then
       tmp = op.path
-    elseif op.op == "rename" and op.to:match("/current%.json$") then
+    elseif op.op == "rename" and op.to:match("/%.current%.json$") then
       if tmp ~= nil and op.from == tmp then
         renombrado = true
       end
@@ -71,7 +71,7 @@ local function publicacionAtomica()
 end
 
 local function current()
-  local raw = mock.readFile(DATA_DIR .. "/current.json")
+  local raw = mock.readFile(DIR .. "/.current.json")
   if raw == nil then
     return nil
   end
@@ -88,12 +88,13 @@ state.open_note = "nota.md"
 pcall(onOpen, {})
 
 local c = current()
-check("current.json existe tras abrir", true, c ~= nil)
+check(".current.json existe tras abrir", true, c ~= nil)
 check("apunta a la nota abierta", "nota.md", c and c.name or nil)
 check("lleva el contenido", "contenido de la nota", c and c.content or nil)
 check("marca que esta abierta", true, c and c.open == true or false)
 check("se publica de forma atomica (temporal + renombrado)", true, publicacionAtomica())
-check("no queda ningun temporal suelto", true, not existe(DATA_DIR .. "/current.json.tmp"))
+check("no queda ningun temporal suelto", true, not existe(DIR .. "/.current.json.tmp"))
+check("el canal esta en la carpeta de notas", true, existe(DIR .. "/.current.json"))
 
 -- Renombrar: el nombre cambia y se vuelve a publicar
 local okR, errR = pcall(onRename, "renombrada")

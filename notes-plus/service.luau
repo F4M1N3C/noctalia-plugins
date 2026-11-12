@@ -27,6 +27,9 @@
 --     checkedAt = "HH:MM:SS", error = string,
 --   }
 
+local dirs = require("./dirs.luau")
+local channel = require("./channel.luau")
+
 local MAX_IN_FLIGHT = 4 -- el host acepta 8; se deja margen para otras acciones
 -- Si el servidor se queda colgado (acepta la conexion pero no contesta), las
 -- peticiones se quedan en vuelo y la cola crece sin limite. Los sondeos viejos
@@ -223,59 +226,29 @@ end
 
 -- ------------------------------------------------- nota abierta (otro plugin)
 --
--- `noctalia.state` esta aislado por plugin: las claves que publica
--- `faminec/notes` no se ven desde aqui. El canal entre plugins es el
--- fichero `current.json` que el plugin de notas escribe en su directorio de
--- datos (~/.local/state/noctalia/plugins/data/<autor>/<plugin>/).
+-- `noctalia.state` esta aislado por plugin: las claves que publica el editor
+-- no se ven desde aqui. El canal entre plugins es el fichero `.current.json`
+-- que el editor escribe DENTRO de la carpeta de notas: asi funciona aunque el
+-- editor y el puente sean plugins distintos (o repos distintos), porque la
+-- carpeta de notas ya es el punto de encuentro entre el computador y el
+-- celular. Precedente: el oficial guarda ahi `.pinned.json`.
+--
+-- La carpeta se resuelve con el mismo modulo que usa el editor (dirs.luau)
+-- para que el panel y el puente apunten al mismo sitio.
 
-local function dataRoot()
-  local dir = noctalia.pluginDataDir() or ""
-  -- La ruta es absoluta: hay que conservar la barra inicial.
-  local absolute = dir:sub(1, 1) == "/"
-  local parts = {}
-  for part in dir:gmatch("[^/]+") do
-    table.insert(parts, part)
-  end
-  while #parts > 0 and parts[#parts] ~= "data" do
-    table.remove(parts)
-  end
-  if #parts == 0 then
-    return ""
-  end
-  return (absolute and "/" or "") .. table.concat(parts, "/")
-end
-
-local function notesCurrentFile()
-  local root = dataRoot()
-  if root == "" then
-    return nil
-  end
-  return root .. "/" .. notesPluginId() .. "/current.json"
+local function notesDir()
+  return dirs.resolveNotesDir()
 end
 
 -- Devuelve {name, content, open} de la ultima nota con la que se trabajo en
 -- el panel de notas, o nil. `open` dice si esa nota esta abierta ahora mismo.
 local function readCurrentNote()
-  local path = notesCurrentFile()
-  if path == nil then
+  local current = channel.read(notesDir())
+  -- Un canal vacio (nombre en blanco) es lo mismo que no hay nota.
+  if current == nil or current.name == "" then
     return nil
   end
-  local raw = noctalia.readFile(path)
-  if raw == nil or raw == "" then
-    return nil
-  end
-  local ok, decoded = pcall(noctalia.json.decode, raw)
-  if not ok or type(decoded) ~= "table" then
-    return nil
-  end
-  if type(decoded.name) ~= "string" or decoded.name == "" then
-    return nil
-  end
-  return {
-    name = decoded.name,
-    content = decoded.content or "",
-    open = decoded.open == true,
-  }
+  return current
 end
 
 -- ------------------------------------------------------------------ estado

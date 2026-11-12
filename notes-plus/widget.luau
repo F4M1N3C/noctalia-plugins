@@ -16,7 +16,7 @@ local function tr(key, params)
 end
 
 local function render()
-  local glyph = noctalia.getConfig("glyph") or "notes"
+  local glyph = noctalia.getConfig("glyph") or "device-mobile"
   barWidget.setGlyph(glyph)
 
   local sync = noctalia.state.get("notes_sync") or {}

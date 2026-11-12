@@ -75,7 +75,9 @@ entry = "widget.luau"
   key = "glyph"
   type = "glyph"
   label_key = "settings.glyph.label"
-  default = "notes"
+  # "device-mobile" y no "notes": el oficial ya usa "notes" para su widget y
+  # en la barra habia dos iconos de notas identicos. Este es el del puente.
+  default = "device-mobile"
 
   [[widget.setting]]
   key = "show_text"

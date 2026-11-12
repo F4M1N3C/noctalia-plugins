@@ -10,6 +10,7 @@
 --     `notes-mobile` server, Syncthing, a text editor, ...);
 --   * an `onIpc` handler so other tools can refresh the panel or open a note.
 
+local dirs = require("./dirs.luau")
 local merge = require("./merge.luau")
 local channel = require("./channel.luau")
 
@@ -48,11 +49,11 @@ local checkExternalChanges -- forward declaration, defined near the bottom
 
 -- Resolve the notes directory as early as possible so the watcher can spot
 -- outside edits even before the panel has been opened for the first time.
+-- `dirs.luau` is the same module the official plugin uses: it understands
+-- "$XDG_DOCUMENTS_DIR/Notes" (the localized Documents folder) and keeps the
+-- old "~/Documents/Notes" when it is the folder that already exists.
 do
-  local dir = noctalia.getConfig("notes_dir")
-  if type(dir) == "string" and dir ~= "" then
-    notesDir = noctalia.expandPath(dir)
-  end
+  notesDir = dirs.resolveNotesDir()
   local extension = noctalia.string.trim(noctalia.getConfig("extension")):gsub("^%.", "")
   if extension ~= "" then
     suffix = "." .. extension
@@ -656,7 +657,7 @@ render = function()
 end
 
 function onOpen(_context)
-  notesDir = noctalia.expandPath(noctalia.getConfig("notes_dir"))
+  notesDir = dirs.resolveNotesDir()
   cornerRadiusScale = noctalia.getSetting("shell.corner_radius_scale")
   closeButton = noctalia.getSetting("shell.show_close_buttons") ~= false
   local extension = noctalia.string.trim(noctalia.getConfig("extension")):gsub("^%.", "")

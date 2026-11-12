@@ -11,12 +11,14 @@ tags = ["productivity", "utility", "launcher"]
 icon = "notes"
 description = "Quick text notes with live sync from mobile app and sync panel integration."
 
+# The notes_dir default is "$XDG_DOCUMENTS_DIR/Notes": the variable stands for the user's localized Documents folder
+# (XDG_DOCUMENTS_DIR from user-dirs.dirs, e.g. ~/Documentos on a Spanish system).
 [[setting]]
 key = "notes_dir"
 type = "folder"
 label_key = "settings.notes_dir.label"
 description_key = "settings.notes_dir.description"
-default = "~/Documents/Notes"
+default = "$XDG_DOCUMENTS_DIR/Notes"
 
 [[setting]]
 key = "extension"

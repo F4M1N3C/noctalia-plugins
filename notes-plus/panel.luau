@@ -10,6 +10,8 @@
 --     `notes-mobile` server, Syncthing, a text editor, ...);
 --   * an `onIpc` handler so other tools can refresh the panel or open a note.
 
+local merge = require("./merge.luau")
+
 local AUTOSAVE_IDLE_TICKS = 2 -- 1s panel ticks with no edits before a flush
 local SCRATCHPAD_BASE = "scratchpad"
 local PANEL_ID = "faminec/notes-plus:panel"
@@ -35,6 +37,9 @@ local hoveredKey = nil
 local cornerRadiusScale = 1.0
 local closeButton = true
 local watchedSignature = nil -- fingerprint of the notes dir, to spot outside edits
+-- Contenido del disco que ya se sabe incompatible con lo que hay en el
+-- editor: evita avisar y copiar el texto una y otra vez.
+local conflictRemote = nil
 
 local render
 local onExternalChange -- forward declaration, defined near the bottom
@@ -191,16 +196,60 @@ local function publishCurrent()
   end
 end
 
+-- Guarda el texto del usuario cuando la nota cambio fuera y las dos versiones
+-- no se pueden combinar. Sin esta copia, al cerrar el panel se perderia lo
+-- que habia escrito: el autoguardado deja de pisar el cambio externo, pero el
+-- texto sigue ahi hasta que se cierre.
+local function conflictCopy(noteName, content)
+  if notesDir == "" then
+    return nil
+  end
+  local dir = notesDir .. "/.conflicts"
+  local ok = noctalia.mkdirAll(dir)
+  if not ok then
+    return nil
+  end
+  local stamp = noctalia.formatTime("%Y%m%d-%H%M%S"):gsub("[^%w%-]", "-")
+  local safe = noteName:gsub("[^%w%._%-]", "_")
+  local path = dir .. "/" .. safe .. "-" .. stamp .. ".md"
+  if not noctalia.writeFile(path, content) then
+    return nil
+  end
+  return path
+end
+
 local function flush()
   if not dirty or current == nil then
     return
   end
-  local ok, err = noctalia.writeFile(notePath(current), buffer)
-  if not ok then
-    noctalia.notifyError(tr("title"), err or tr("save_failed"))
+  -- Antes de guardar se lee lo que hay en disco. Si la nota cambio fuera
+  -- (el movil, una sincronizacion, otro editor), guardar a ciegas pisaria ese
+  -- cambio: se combinan los dos textos cuando se puede y, cuando no, no se
+  -- escribe nada.
+  local remote = noctalia.readFile(notePath(current)) or ""
+  local r = merge.resolve(loadedContent, buffer, remote)
+  if r.status == "conflict" then
+    if conflictRemote ~= remote then
+      conflictRemote = remote
+      local path = conflictCopy(current, buffer)
+      noctalia.notifyError(tr("title"), tr("errors.conflict"))
+      if path ~= nil then
+        noctalia.notifyError(tr("title"), tr("errors.conflict_saved"))
+      end
+    end
     return
   end
-  loadedContent = buffer
+  conflictRemote = nil
+  if r.status == "local" or r.status == "merged" then
+    local ok, err = noctalia.writeFile(notePath(current), r.content)
+    if not ok then
+      noctalia.notifyError(tr("title"), err or tr("save_failed"))
+      return
+    end
+  end
+  -- "same" y "remote": el disco ya tiene lo que toca, solo se adopta.
+  buffer = r.content
+  loadedContent = r.content
   dirty = false
   lastNote = current or lastNote
   lastContent = buffer
@@ -825,20 +874,43 @@ function onExternalChange()
       return
     end
     local contents = noctalia.readFile(notePath(current)) or ""
-    if contents ~= loadedContent then
-      if contents:sub(1, #loadedContent) == loadedContent then
-        buffer = buffer .. contents:sub(#loadedContent + 1)
-      elseif not dirty then
-        buffer = contents
-      end
-      loadedContent = contents
-      dirty = buffer ~= loadedContent
-      idleTicks = 0
-      editorRev += 1
+    if contents ~= loadedContent and contents ~= conflictRemote then
       -- La nota cambio desde fuera (el movil, un editor, una sincronizacion).
-      -- Se vuelve a publicar para que el canal con el otro plugin no se
-      -- quede con una version antigua.
-      publishCurrent()
+      -- Se compara con lo que hay en el editor: si solo cambio fuera, se
+      -- adopta; si los dos anadieron texto, se combinan; si las dos versiones
+      -- son incompatibles, no se pisa nada y el texto del usuario se guarda
+      -- en .conflicts/.
+      local r = merge.resolve(loadedContent, buffer, contents)
+      if r.status == "remote" or r.status == "same" then
+        buffer = r.content
+        loadedContent = r.content
+        dirty = false
+        idleTicks = 0
+        editorRev += 1
+        conflictRemote = nil
+        publishCurrent()
+      elseif r.status == "merged" then
+        local ok = noctalia.writeFile(notePath(current), r.content)
+        if ok then
+          buffer = r.content
+          loadedContent = r.content
+          dirty = false
+          idleTicks = 0
+          editorRev += 1
+          conflictRemote = nil
+          publishCurrent()
+        end
+      else
+        conflictRemote = contents
+        local path = conflictCopy(current, buffer)
+        noctalia.notifyError(tr("title"), tr("errors.conflict"))
+        if path ~= nil then
+          noctalia.notifyError(tr("title"), tr("errors.conflict_saved"))
+        end
+        -- El buffer no se toca: el autoguardado lo intentara otra vez y, si
+        -- el usuario deja de editar, el texto se queda a salvo en la copia.
+        publishCurrent()
+      end
     end
   end
   render()

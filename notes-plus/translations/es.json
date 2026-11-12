@@ -45,5 +45,19 @@
   "tooltip_offline": "Notas: el servidor no responde",
   "tooltip_pending": "Notas: {count} mensaje(s) en cola para el celular",
   "tooltip_online": "Notas: el celular está conectado",
-  "tooltip_disconnected": "Notas: el celular no está conectado"
+  "tooltip_disconnected": "Notas: el celular no está conectado",
+  "errors": {
+    "bad_name": "El nombre de la nota no es válido",
+    "cannot_read": "No se pudo leer la nota",
+    "empty": "La nota está vacía",
+    "no_note_open": "No hay ninguna nota abierta",
+    "note_gone": "La nota ya no existe",
+    "push_failed": "No se pudo enviar al móvil",
+    "queue_full": "La cola de mensajes está llena",
+    "conflict": "La nota cambió fuera mientras la editabas: no se ha sobrescrito",
+    "conflict_saved": "Se guardó una copia de tu texto en la carpeta .conflicts"
+  },
+  "save_failed": "No se pudo guardar",
+  "bad_extension": "La extensión de las notas no es válida",
+  "rename_exists": "Ya existe una nota con ese nombre"
 }

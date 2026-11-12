@@ -171,6 +171,67 @@ check("ni se queda el contenido viejo", "", c and c.content or nil)
 check("y el estado publico tambien se vacia", "", tostring(state.notes_current or ""))
 
 print()
+print("== el autoguardado no pisa cambios externos ==")
+
+-- El movil escribe mientras se esta editando en el PC: el autoguardado no
+-- puede pisar la version del movil.
+limpia()
+escribir(DIR .. "/nota.md", "contenido")
+state.open_note = "nota.md"
+pcall(onOpen, {})
+pcall(onEdited, "mi version local")
+escribir(DIR .. "/nota.md", "version del movil")
+for i in pairs(erroresNotificados) do erroresNotificados[i] = nil end
+-- Tres ticks: el watcher nota el cambio externo y el autoguardado intenta
+-- guardar despues (el umbral de autoguardado son 2 ticks sin escribir).
+pcall(update)
+pcall(update)
+pcall(update)
+check("el autoguardado no pisa un cambio externo", "version del movil", leer(DIR .. "/nota.md"))
+check("con cambios incompatibles se avisa", true, #erroresNotificados >= 1)
+local copias = listar(DIR .. "/.conflicts")
+check("se guarda una copia del texto local", true, #copias >= 1)
+if #copias > 0 then
+  check("la copia tiene el texto local", "mi version local", leer(DIR .. "/.conflicts/" .. copias[1]) or "")
+end
+
+-- Sin cambios externos, el autoguardado sigue guardando.
+limpia()
+escribir(DIR .. "/nota2.md", "base")
+state.open_note = "nota2.md"
+pcall(onOpen, {})
+pcall(onEdited, "base editada")
+pcall(update)
+pcall(update)
+pcall(update)
+check("sin cambios externos, el autoguardado guarda", "base editada", leer(DIR .. "/nota2.md"))
+
+-- Un anadido externo se combina con el texto local: no se pierde nada.
+limpia()
+escribir(DIR .. "/nota3.md", "hola")
+state.open_note = "nota3.md"
+pcall(onOpen, {})
+pcall(onEdited, "hola mundo")
+escribir(DIR .. "/nota3.md", "hola!")
+pcall(update)
+pcall(update)
+pcall(update)
+check("un anadido externo se combina", "hola mundo!", leer(DIR .. "/nota3.md"))
+
+-- Una edicion en medio no se puede combinar: el movil gana (no se pisa) y el
+-- texto local queda a salvo en la copia.
+limpia()
+escribir(DIR .. "/nota4.md", "base")
+state.open_note = "nota4.md"
+pcall(onOpen, {})
+pcall(onEdited, "mi texto")
+escribir(DIR .. "/nota4.md", "otro texto")
+pcall(update)
+pcall(update)
+pcall(update)
+check("una edicion incompatible no se pisa", "otro texto", leer(DIR .. "/nota4.md"))
+
+print()
 print("== el test detecta una regresion ==")
 -- Un test que nunca falla no demuestra nada: se rompe el panel a proposito
 -- (se quita la republicacion al renombrar) y se comprueba que el test lo

@@ -1,3 +1,14 @@
+-- El panel usa require("./merge.luau"): en Lua 5.4 hay que aadir la carpeta
+-- del plugin al package.path para que el modulo se encuentre.
+local function _scriptDir()
+  local src = debug.getinfo(1, "S").source
+  if src:sub(1, 1) == "@" then
+    return src:sub(2):match("^(.*)[/\\][^/\\]*$") or "."
+  end
+  return "."
+end
+package.path = _scriptDir() .. "/?.luau;" .. package.path
+
 -- ------------------------------------------------------------- simulador
 
 -- Carpeta propia de esta ejecucion: con un nombre fijo, dos pruebas a la vez
@@ -148,7 +159,10 @@ local mock = {
   pluginDataDir = function()
     return DATA_DIR
   end,
-  mkdirAll = function()
+  mkdirAll = function(path)
+    -- De verdad crea la carpeta: el panel guarda las copias de conflicto en
+    -- <notesDir>/.conflicts/.
+    os.execute("mkdir -p '" .. tostring(path) .. "'")
     return true
   end,
   readFile = function(path)
@@ -219,6 +233,13 @@ _G.ui = setmetatable({}, {
     end
   end,
 })
+
+-- Los modulos del plugin (merge, dirs, channel) se cargan a mano: el require
+-- de Lua 5.4 convierte los puntos del nombre en carpetas, de modo que
+-- "./merge.luau" no se encuentra solo. El runtime de Noctalia si lo resuelve.
+for _, modName in ipairs({ "merge", "dirs", "channel" }) do
+  package.loaded["./" .. modName .. ".luau"] = dofile(_scriptDir() .. "/" .. modName .. ".luau")
+end
 
 -- ------------------------------------------------------------- cargar
 

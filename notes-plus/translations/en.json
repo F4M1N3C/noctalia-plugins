@@ -45,5 +45,19 @@
   "tooltip_offline": "Notes: the server is not responding",
   "tooltip_pending": "Notes: {count} message(s) queued for the phone",
   "tooltip_online": "Notes: the phone is connected",
-  "tooltip_disconnected": "Notes: the phone is not connected"
+  "tooltip_disconnected": "Notes: the phone is not connected",
+  "errors": {
+    "bad_name": "The note name is not valid",
+    "cannot_read": "The note could not be read",
+    "empty": "The note is empty",
+    "no_note_open": "There is no open note",
+    "note_gone": "The note no longer exists",
+    "push_failed": "It could not be sent to the phone",
+    "queue_full": "The message queue is full",
+    "conflict": "The note changed outside while you were editing it: it was not overwritten",
+    "conflict_saved": "A copy of your text was saved in the .conflicts folder"
+  },
+  "save_failed": "It could not be saved",
+  "bad_extension": "The notes extension is not valid",
+  "rename_exists": "A note with that name already exists"
 }

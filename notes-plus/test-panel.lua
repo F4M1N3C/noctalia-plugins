@@ -233,6 +233,19 @@ pcall(update)
 check("una edicion incompatible no se pisa", "otro texto", leer(DIR .. "/nota4.md"))
 
 print()
+print("== una nota creada en el PC se guarda ==")
+-- El boton "+" del panel crea el fichero, lo abre y lo deja listo para
+-- escribir: lo que se escribe tiene que acabar en el disco, sin tocar el
+-- movil ni el servidor.
+limpia()
+pcall(onNewNote)
+local nueva = state.notes_current
+check("el panel crea una nota nueva", true, type(nueva) == "string" and nueva ~= "")
+pcall(onEdited, "primera linea")
+pcall(onFlushNow, "primera linea")
+check("una nota nueva desde el PC se guarda", "primera linea", leer(DIR .. "/" .. tostring(nueva)) or "")
+
+print()
 print("== el test detecta una regresion ==")
 -- Un test que nunca falla no demuestra nada: se rompe el panel a proposito
 -- (se quita la republicacion al renombrar) y se comprueba que el test lo

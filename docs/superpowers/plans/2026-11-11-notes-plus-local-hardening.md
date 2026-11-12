@@ -82,9 +82,9 @@ docs/superpowers/prs/
   - `channel.read(notesDir: string) -> {name, content, open} | nil`.
   - `test-mock` returns a table `{mock, leer, escribir, existe, listar, json_encode, json_decode, state, botones, bitacora, erroresNotificados, limpia, ...}` so both harnesses share one mock.
 
-- [ ] **Step 1: Write `dirs.luau`** (copiar literalmente `/tmp/opencode/official-plugins/notes/dirs.luau` y añadir la cabecera `-- Ported verbatim from noctalia/notes (MIT). Do not diverge.`). Verificar que el fichero compila con `lua5.4 -e 'dofile("dirs.luau")'` (con un mock mínimo de `noctalia`).
+- [x] **Step 1: Write `dirs.luau`** (copiar literalmente `/tmp/opencode/official-plugins/notes/dirs.luau` y añadir la cabecera `-- Ported verbatim from noctalia/notes (MIT). Do not diverge.`). Verificar que el fichero compila con `lua5.4 -e 'dofile("dirs.luau")'` (con un mock mínimo de `noctalia`).
 
-- [ ] **Step 2: Write `merge.luau`** con esta lógica exacta:
+- [x] **Step 2: Write `merge.luau`** con esta lógica exacta:
 
 ```lua
 local M = {}
@@ -129,7 +129,7 @@ end
 return M
 ```
 
-- [ ] **Step 3: Write `channel.luau`**:
+- [x] **Step 3: Write `channel.luau`**:
 
 ```lua
 local M = {}
@@ -191,9 +191,9 @@ end
 return M
 ```
 
-- [ ] **Step 4: Extract the mock from `test-panel.lua` into `test-mock.luau`**, returning a table with the mock and all helpers. Adjust `test-panel.lua` to do `local M = dofile(scriptDir() .. "/test-mock.luau")` and use `M.mock`, `M.state`, `M.botones`, etc. Run `lua5.4 test-panel.lua` → must print `27` checks passed, 0 failures (the existing count, before the new tests of Task 2).
+- [x] **Step 4: Extract the mock from `test-panel.lua` into `test-mock.luau`**, returning a table with the mock and all helpers. Adjust `test-panel.lua` to do `local M = dofile(scriptDir() .. "/test-mock.luau")` and use `M.mock`, `M.state`, `M.botones`, etc. Run `lua5.4 test-panel.lua` → must print `27` checks passed, 0 failures (the existing count, before the new tests of Task 2).
 
-- [ ] **Step 5: Write `test-units.lua`** with a small mock (getConfig returns `notes_dir = "/tmp/notes-units"` and `XDG_DOCUMENTS_DIR` simulation) and at least these checks:
+- [x] **Step 5: Write `test-units.lua`** with a small mock (getConfig returns `notes_dir = "/tmp/notes-units"` and `XDG_DOCUMENTS_DIR` simulation) and at least these checks:
 
   - `merge`: `"same"` (local==remote), `"local"` (remote==base), `"remote"` (local==base), `"merged"` both-appended, `"merged"` one-is-prefix, `"conflict"` (both edited in the middle), `"conflict"` (base empty, local and remote differ).
   - `channel`: write creates `<dir>/.current.json`; read returns the payload; read of a missing file → nil; read of a corrupt file → nil; write is atomic (tmp + rename recorded in `bitacora`); no temp file left behind.
@@ -201,7 +201,7 @@ return M
 
   Run: `lua5.4 test-units.lua` → expected `N correctos, 0 fallos` with N ≥ 20.
 
-- [ ] **Step 6: Commit** (monorepo, paths only):
+- [x] **Step 6: Commit** (monorepo, paths only):
 
 ```bash
 cd ~/noctalia-plugins
@@ -236,7 +236,7 @@ Behavior of `flush()`:
 - When the open note's content on disk differs from `loadedContent` and the buffer is dirty, use `merge.resolve(loadedContent, buffer, contents)` instead of the current "graft the tail" logic. `"conflict"` → keep the buffer, safety copy, notify once. `"merged"`/`"remote"` → adopt as resolved. `"local"` → the disk is the base, leave the buffer.
 - The safety copy's file name sanitises `/` and `..` and uses `noctalia.formatTime("%Y%m%d-%H%M%S"):gsub("[^%w%-]", "-")`.
 
-- [ ] **Step 1: Write the failing tests** in `test-panel.lua`. New checks (after the existing "un cambio externo se publica" block):
+- [x] **Step 1: Write the failing tests** in `test-panel.lua`. New checks (after the existing "un cambio externo se publica" block):
 
 ```lua
 -- El autoguardado no pisa un cambio externo incompatible.
@@ -274,13 +274,13 @@ pcall(update)
 check("un añadido externo se combina", "hola mundo!", leer(DIR .. "/nota3.md"))
 ```
 
-- [ ] **Step 2: Run the tests to confirm they fail** → `lua5.4 test-panel.lua` must show the new checks as `FALLA`.
+- [x] **Step 2: Run the tests to confirm they fail** → `lua5.4 test-panel.lua` must show the new checks as `FALLA`.
 
-- [ ] **Step 3: Implement the merge in `flush()` and `onExternalChange()`** following the behavior above. Add the helper `local function safetyCopy(name, content)` and the keys `errors.conflict` ("La nota cambió fuera mientras la editabas; no se ha sobrescrito. Tu texto se guardó en .conflicts/.") and `errors.conflict_saved` ("Se guardó una copia de tu texto en .conflicts/.").
+- [x] **Step 3: Implement the merge in `flush()` and `onExternalChange()`** following the behavior above. Add the helper `local function safetyCopy(name, content)` and the keys `errors.conflict` ("La nota cambió fuera mientras la editabas; no se ha sobrescrito. Tu texto se guardó en .conflicts/.") and `errors.conflict_saved` ("Se guardó una copia de tu texto en .conflicts/.").
 
-- [ ] **Step 4: Run the tests** → `lua5.4 test-panel.lua` must show all checks (old + new) as `ok`.
+- [x] **Step 4: Run the tests** → `lua5.4 test-panel.lua` must show all checks (old + new) as `ok`.
 
-- [ ] **Step 5: Commit:**
+- [x] **Step 5: Commit:**
 
 ```bash
 cd ~/noctalia-plugins
@@ -301,9 +301,9 @@ git commit -m "fix(notes-plus): flush() no longer overwrites externally changed 
 - Consumes: `channel.write(notesDir, payload)`, `channel.read(notesDir)`, `dirs.resolveNotesDir()`.
 - Produces: the panel publishes to `<notesDir>/.current.json`; the service reads from there; the old `pluginDataDir()/current.json` is no longer written.
 
-- [ ] **Step 1: Update the panel.** Replace the body of `publishCurrent()` with a call to `channel.write(notesDir, {name = current or lastNote, content = current ~= nil and buffer or lastContent, open = current ~= nil, at = noctalia.formatTime("%Y-%m-%d %H:%M:%S")})`. Drop the now-unused `noctalia.pluginDataDir()`/`mkdirAll` logic.
+- [x] **Step 1: Update the panel.** Replace the body of `publishCurrent()` with a call to `channel.write(notesDir, {name = current or lastNote, content = current ~= nil and buffer or lastContent, open = current ~= nil, at = noctalia.formatTime("%Y-%m-%d %H:%M:%S")})`. Drop the now-unused `noctalia.pluginDataDir()`/`mkdirAll` logic.
 
-- [ ] **Step 2: Update the service.** Replace `dataRoot()`/`notesCurrentFile()` with:
+- [x] **Step 2: Update the service.** Replace `dataRoot()`/`notesCurrentFile()` with:
 
 ```lua
 local function notesDir()
@@ -326,11 +326,11 @@ end
 
   Keep the rest of `readCurrentNote`'s contract (`{name, content, open}` or nil).
 
-- [ ] **Step 3: Update the panel harness.** Change `current()` to read `DIR .. "/.current.json"` and add the check `"el canal esta en la carpeta de notas"` (the file exists at `DIR .. "/.current.json"`).
+- [x] **Step 3: Update the panel harness.** Change `current()` to read `DIR .. "/.current.json"` and add the check `"el canal esta en la carpeta de notas"` (the file exists at `DIR .. "/.current.json"`).
 
-- [ ] **Step 4: Run `lua5.4 test-panel.lua`** → all checks pass.
+- [x] **Step 4: Run `lua5.4 test-panel.lua`** → all checks pass.
 
-- [ ] **Step 5: Commit:**
+- [x] **Step 5: Commit:**
 
 ```bash
 cd ~/noctalia-plugins
@@ -352,7 +352,7 @@ git commit -m "feat(notes-plus): move the open-note channel to <notesDir>/.curre
 **Interfaces:**
 - Produces: `notesDir` in the plugin and `NOTES_DIR` in the server are always the same absolute path for the same settings, including on localized systems (e.g. `~/Documentos/Notes`).
 
-- [ ] **Step 1: Wire `dirs.luau` in the panel.** Replace the `do ... end` block at the top of `panel.luau` with:
+- [x] **Step 1: Wire `dirs.luau` in the panel.** Replace the `do ... end` block at the top of `panel.luau` with:
 
 ```lua
 local dirs = require("./dirs.luau")
@@ -363,11 +363,11 @@ if extension ~= "" then
 end
 ```
 
-- [ ] **Step 2: Wire `dirs.luau` in the launcher.** In `settings()`, replace `noctalia.expandPath(noctalia.getConfig("notes_dir"))` with `dirs.resolveNotesDir()`.
+- [x] **Step 2: Wire `dirs.luau` in the launcher.** In `settings()`, replace `noctalia.expandPath(noctalia.getConfig("notes_dir"))` with `dirs.resolveNotesDir()`.
 
-- [ ] **Step 3: Update `plugin.toml`.** Change `default = "~/Documents/Notes"` to `default = "$XDG_DOCUMENTS_DIR/Notes"`. Add a comment matching the official's.
+- [x] **Step 3: Update `plugin.toml`.** Change `default = "~/Documents/Notes"` to `default = "$XDG_DOCUMENTS_DIR/Notes"`. Add a comment matching the official's.
 
-- [ ] **Step 4: Update `server.js`.** Replace `expandPath` with a version that resolves the `$XDG_DOCUMENTS_DIR` prefix and applies the legacy fallback. Add a `documentsDir()` helper that reads `XDG_DOCUMENTS_DIR` from `~/.config/user-dirs.dirs` (honouring `XDG_CONFIG_HOME`), falling back to `~/Documents`. Apply the legacy fallback only when the configured value is exactly the default.
+- [x] **Step 4: Update `server.js`.** Replace `expandPath` with a version that resolves the `$XDG_DOCUMENTS_DIR` prefix and applies the legacy fallback. Add a `documentsDir()` helper that reads `XDG_DOCUMENTS_DIR` from `~/.config/user-dirs.dirs` (honouring `XDG_CONFIG_HOME`), falling back to `~/Documents`. Apply the legacy fallback only when the configured value is exactly the default.
 
 ```js
 function documentsDir() {
@@ -407,11 +407,11 @@ function expandPath(p) {
 }
 ```
 
-- [ ] **Step 5: Add tests to `test-api.sh`.** Three new checks (mirror the existing style): "el servidor resuelve $XDG_DOCUMENTS_DIR" (temp config with `notes_dir = "$XDG_DOCUMENTS_DIR/Notes"` → `/api/state` dir equals `<documents>/Notes`), "el servidor usa la carpeta legacy si la nueva no existe", "el servidor respeta una ruta absoluta configurada".
+- [x] **Step 5: Add tests to `test-api.sh`.** Three new checks (mirror the existing style): "el servidor resuelve $XDG_DOCUMENTS_DIR" (temp config with `notes_dir = "$XDG_DOCUMENTS_DIR/Notes"` → `/api/state` dir equals `<documents>/Notes`), "el servidor usa la carpeta legacy si la nueva no existe", "el servidor respeta una ruta absoluta configurada".
 
-- [ ] **Step 6: Run `lua5.4 test-panel.lua` and `./test-api.sh`** → both green.
+- [x] **Step 6: Run `lua5.4 test-panel.lua` and `./test-api.sh`** → both green.
 
-- [ ] **Step 7: Commit (monorepo paths only; server repo left uncommitted per the global constraints):**
+- [x] **Step 7: Commit (monorepo paths only; server repo left uncommitted per the global constraints):**
 
 ```bash
 cd ~/noctalia-plugins
@@ -430,13 +430,13 @@ git commit -m "feat(notes-plus): resolve notes_dir via dirs.luau ($XDG_DOCUMENTS
 
 **Interfaces:** none new. Visual result: the bar no longer shows two identical `notes` icons.
 
-- [ ] **Step 1: Edit `plugin.toml`** — `default = "notes"` under `[[widget.setting]] key = "glyph"` → `default = "device-mobile"`.
+- [x] **Step 1: Edit `plugin.toml`** — `default = "notes"` under `[[widget.setting]] key = "glyph"` → `default = "device-mobile"`.
 
-- [ ] **Step 2: Edit `widget.luau`** — `noctalia.getConfig("glyph") or "notes"` → `... or "device-mobile"`.
+- [x] **Step 2: Edit `widget.luau`** — `noctalia.getConfig("glyph") or "notes"` → `... or "device-mobile"`.
 
-- [ ] **Step 3: Deploy and verify visually.** Sync to the installed copy, reload the plugin, then capture the bar region with `grim -g "$(slurp)"` reduced with `magick` and analyse it with the `screen-analysis` skill (subagent with model `nvidia/nvidia/nemotron-3.5-super-vl-120b-a12b`) to confirm there is a single `notes` glyph (the official) and a `device-mobile` glyph (the bridge), not two `notes`.
+- [x] **Step 3: Deploy and verify visually.** Sync to the installed copy, reload the plugin, then capture the bar region with `grim -g "$(slurp)"` reduced with `magick` and analyse it with the `screen-analysis` skill (subagent with model `nvidia/nvidia/nemotron-3.5-super-vl-120b-a12b`) to confirm there is a single `notes` glyph (the official) and a `device-mobile` glyph (the bridge), not two `notes`.
 
-- [ ] **Step 4: Commit:**
+- [x] **Step 4: Commit:**
 
 ```bash
 cd ~/noctalia-plugins
@@ -455,13 +455,13 @@ git commit -m "feat(notes-plus): use device-mobile glyph to avoid collision with
 **Interfaces:**
 - Produces: `NOTES_DIR` tracks the plugin's setting without a server restart; `/api/state` reports `plugin` and `dir`.
 
-- [ ] **Step 1: Make `readPluginSettings()` reusable and mtime-aware.** Refactor so a `reloadPluginSettings()` re-reads `~/.local/state/noctalia/settings.toml` when its mtime changes, re-resolves `NOTES_DIR` and `EXT`, and is called at the start of every request handler (cheap: one `stat`).
+- [x] **Step 1: Make `readPluginSettings()` reusable and mtime-aware.** Refactor so a `reloadPluginSettings()` re-reads `~/.local/state/noctalia/settings.toml` when its mtime changes, re-resolves `NOTES_DIR` and `EXT`, and is called at the start of every request handler (cheap: one `stat`).
 
-- [ ] **Step 2: Add tests to `test-api.sh`:** "el servidor vuelve a leer los ajustes del plugin si cambian" (write a `[plugin_settings."faminec/notes-plus"]` section with a new `notes_dir` into a temp `XDG_STATE_HOME`, hit `/api/state`, assert the new dir), "el servidor reporta el plugin_id correcto" (`plugin` field equals `faminec/notes-plus`).
+- [x] **Step 2: Add tests to `test-api.sh`:** "el servidor vuelve a leer los ajustes del plugin si cambian" (write a `[plugin_settings."faminec/notes-plus"]` section with a new `notes_dir` into a temp `XDG_STATE_HOME`, hit `/api/state`, assert the new dir), "el servidor reporta el plugin_id correcto" (`plugin` field equals `faminec/notes-plus`).
 
-- [ ] **Step 3: Run `./test-api.sh`** → green.
+- [x] **Step 3: Run `./test-api.sh`** → green.
 
-- [ ] **Step 4:** No commit in `~/notes-mobile` (per the global constraints); the change is verified locally.
+- [x] **Step 4:** No commit in `~/notes-mobile` (per the global constraints); the change is verified locally.
 
 ---
 
@@ -476,9 +476,9 @@ git commit -m "feat(notes-plus): use device-mobile glyph to avoid collision with
 - `test-driver.lua` usage: `lua5.4 test-driver.lua --dir <dir> --note <name> --text <text>` → opens the note, sets the buffer to `<text>`, saves (flush), prints `OK` on success and exits 0; exits 1 on failure.
 - `test-roundtrip.sh`: starts a server instance on a free port pointing at a temp dir, writes a note via the API (simulating the phone), runs the panel driver to edit it (simulating the PC), reads it back via the API, asserts the new content. Prints `Resultado: N correctos, 0 fallos`.
 
-- [ ] **Step 1: Write `test-driver.lua`** using `test-mock.luau` (the same mock as the panel harness). It accepts `--dir`, `--note`, `--text`, opens the note with `state.open_note`, calls `onEdited(text)`, then `update()` (autosave) or `onFlushNow()`, and prints `OK` if the file on disk equals `text`.
+- [x] **Step 1: Write `test-driver.lua`** using `test-mock.luau` (the same mock as the panel harness). It accepts `--dir`, `--note`, `--text`, opens the note with `state.open_note`, calls `onEdited(text)`, then `update()` (autosave) or `onFlushNow()`, and prints `OK` if the file on disk equals `text`.
 
-- [ ] **Step 2: Write `test-roundtrip.sh`** mirroring `test-api.sh`'s instance startup (free ports, temp config, isolated `XDG_STATE_HOME`). Steps:
+- [x] **Step 2: Write `test-roundtrip.sh`** mirroring `test-api.sh`'s instance startup (free ports, temp config, isolated `XDG_STATE_HOME`). Steps:
 
 ```bash
 # 1. phone writes
@@ -489,16 +489,16 @@ NOTES_TEST_DIR="$TMP/notes" lua5.4 test-driver.lua --dir "$TMP/notes" --note "ro
 curl .../api/note/roundtrip.md  -> content == "editado en el PC"
 ```
 
-- [ ] **Step 3: Run `./test-roundtrip.sh`** → `0 fallos`.
+- [x] **Step 3: Run `./test-roundtrip.sh`** → `0 fallos`.
 
-- [ ] **Step 4: Run the full local suite** to confirm nothing regressed:
+- [x] **Step 4: Run the full local suite** to confirm nothing regressed:
 
 ```bash
 cd ~/noctalia-plugins/notes-plus && lua5.4 test-panel.lua && lua5.4 test-units.lua
 cd ~/notes-mobile && ./test-api.sh && ./test-roundtrip.sh
 ```
 
-- [ ] **Step 5: Commit (monorepo only):**
+- [x] **Step 5: Commit (monorepo only):**
 
 ```bash
 cd ~/noctalia-plugins
@@ -517,17 +517,17 @@ git commit -m "test(notes-plus): round-trip driver and e2e scenario"
 
 **Interfaces:** none new. Deliverable = two local branches with commits ready to push, plus the PR bodies following the repo's `<!-- noctalia-pr-template:v1 -->` template.
 
-- [ ] **Step 1: Inspect the repo's PR template and CI.** Read `/tmp/opencode/official-plugins/.github/PULL_REQUEST_TEMPLATE.md` and the workflow that validates plugins, to know which translation files must be updated and what the body must contain.
+- [x] **Step 1: Inspect the repo's PR template and CI.** Read `/tmp/opencode/official-plugins/.github/PULL_REQUEST_TEMPLATE.md` and the workflow that validates plugins, to know which translation files must be updated and what the body must contain.
 
-- [ ] **Step 2: Branch PR 1 — `feat/notes-watch-external-changes`.** From `main`, port the fork's `checkExternalChanges()` + `dirSignature()` + the `watch` setting (plugin.toml + translations) into `notes/panel.luau` and `notes/plugin.toml`. Commit with a message like `feat(notes): watch the notes directory for external changes`.
+- [x] **Step 2: Branch PR 1 — `feat/notes-watch-external-changes`.** From `main`, port the fork's `checkExternalChanges()` + `dirSignature()` + the `watch` setting (plugin.toml + translations) into `notes/panel.luau` and `notes/plugin.toml`. Commit with a message like `feat(notes): watch the notes directory for external changes`.
 
-- [ ] **Step 3: Branch PR 2 — `fix/notes-dont-overwrite-external-changes`.** From `main`, inline a minimal `resolve(base, local, remote)` helper into `notes/panel.luau` and make `flush()` refuse to overwrite when the file changed on disk and the buffer is dirty (notify + keep the edits). Commit with `fix(notes): never overwrite a note changed externally`.
+- [x] **Step 3: Branch PR 2 — `fix/notes-dont-overwrite-external-changes`.** From `main`, inline a minimal `resolve(base, local, remote)` helper into `notes/panel.luau` and make `flush()` refuse to overwrite when the file changed on disk and the buffer is dirty (notify + keep the edits). Commit with `fix(notes): never overwrite a note changed externally`.
 
-- [ ] **Step 4: Write the PR bodies** in `~/noctalia-plugins/docs/superpowers/prs/`, following the repo's template: title, summary, what changed, how to test, checklist. Include the reproduction case for the data-loss bug (mobile writes while the panel is dirty → the mobile's version survives).
+- [x] **Step 4: Write the PR bodies** in `~/noctalia-plugins/docs/superpowers/prs/`, following the repo's template: title, summary, what changed, how to test, checklist. Include the reproduction case for the data-loss bug (mobile writes while the panel is dirty → the mobile's version survives).
 
-- [ ] **Step 5: Do not push and do not open the PRs.** Verify with `git -C /tmp/opencode/official-plugins branch` that both branches exist locally with their commits, and `git -C /tmp/opencode/official-plugins log --oneline <branch>` shows them.
+- [x] **Step 5: Do not push and do not open the PRs.** Verify with `git -C /tmp/opencode/official-plugins branch` that both branches exist locally with their commits, and `git -C /tmp/opencode/official-plugins log --oneline <branch>` shows them.
 
-- [ ] **Step 6: Commit the PR bodies to the monorepo:**
+- [x] **Step 6: Commit the PR bodies to the monorepo:**
 
 ```bash
 cd ~/noctalia-plugins

@@ -253,6 +253,25 @@ local mock = {
   end,
 }
 
+-- Estado compartido en memoria (`noctalia.state`), renombrado atómico y tick
+-- del service. `serviceUpdatedMs` es un global del fichero de pruebas: lo lee
+-- la sección del service.
+local sharedState = {}
+mock.state = {
+  get = function(key) return sharedState[key] end,
+  set = function(key, value) sharedState[key] = value end,
+  watch = function(_key, _callback) end,
+}
+mock.renameFile = function(from, to)
+  local content = files[from]
+  if content == nil then return false end
+  files[to] = content
+  files[from] = nil
+  return true
+end
+serviceUpdatedMs = nil
+mock.setUpdateInterval = function(ms) serviceUpdatedMs = ms return true end
+
 local function makeNode(kind)
   return function(props, children)
     return { type = kind, props = props or {}, children = children or {} }
@@ -342,6 +361,34 @@ check("sin tombstone se conserva el default", store.merge({ a = "x" }, {}, {}, {
 check("valor vacío de Ajustes se ignora", store.merge({ a = "x" }, { a = "" }, {}, {}).a, "x")
 check("valor vacío del store se respeta", store.merge({ a = "x" }, {}, { a = "" }, {}).a, "")
 check("el store pisa al default", store.merge({ a = "x" }, {}, { a = "y" }, {}).a, "y")
+
+-- Claves de los nodos del árbol en pre-orden (sirve para comprobar el orden
+-- relativo de las tarjetas al renderizar). Es un global a propósito: la usan
+-- las secciones de más abajo.
+function nodeKeys(tree, out)
+  out = out or {}
+  if type(tree) ~= "table" then return out end
+  if tree.key ~= nil then table.insert(out, tree.key) end
+  for _, child in ipairs(tree.children or {}) do nodeKeys(child, out) end
+  return out
+end
+
+-- --- arnés: estado compartido, renombrado atómico y tick del service ---
+check("noctalia.state escribe y lee", "hola", (function()
+  mock.state.set("k", "hola")
+  return mock.state.get("k")
+end)())
+check("noctalia.state ausente es nil", nil, mock.state.get("no-existe"))
+files["/tmp/a.tmp"] = "contenido"
+check("renameFile devuelve true", true, mock.renameFile("/tmp/a.tmp", "/tmp/a.json"))
+check("renameFile mueve el contenido", "contenido", files["/tmp/a.json"])
+check("renameFile borra el origen", nil, files["/tmp/a.tmp"])
+check("renameFile sin origen devuelve false", false, mock.renameFile("/tmp/nada", "/tmp/otro"))
+check("setUpdateInterval existe", "function", type(mock.setUpdateInterval))
+check("nodeKeys recorre en pre-orden", "raiz/hijo1/hijo2", (function()
+  local tree = { key = "raiz", children = { { key = "hijo1" }, { key = "hijo2" } } }
+  return table.concat(nodeKeys(tree), "/")
+end)())
 
 -- -------------------------------------------------------------- store --
 

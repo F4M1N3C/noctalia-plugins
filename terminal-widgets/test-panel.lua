@@ -803,6 +803,26 @@ local locked = win.rotate(group, "clockwise", false, function() end)
 check("rotación bloqueada mientras gira", false, locked)
 win.rotating = false
 
+-- ------------------------------------------------------------- lib/output.luau --
+
+print("\n== lib/output.luau ==")
+
+local outputLib = loadModule("output.luau")
+local box = outputLib.outputBox({ output = "" })
+check("outputBox: caja del output enfocado", 3440, box.width)
+check("outputBox: alto", 1440, box.height)
+check("outputBox: nombre", "DP-1", box.name)
+check("outputBox: origen", 0, box.x)
+check("outputBox: origen y", 0, box.y)
+check("outputBox: cfg.output manda", "DP-1", outputLib.outputBox({ output = "DP-1" }).name)
+check("outputBox: cfg.output inexistente cae al enfocado", "DP-1", outputLib.outputBox({ output = "HDMI-9" }).name)
+-- caja demasiado pequeña -> respaldo
+local savedOutputs = mock.outputs
+mock.outputs = function() return { { name = "X", width = 100, height = 80, x = 0, y = 0, scale = 1, focused = true } } end
+local tiny = outputLib.outputBox({ output = "" })
+check("outputBox: caja diminuta -> 1920x1080", "1920x1080", tiny.width .. "x" .. tiny.height)
+mock.outputs = savedOutputs
+
 -- -------------------------------------------------------------------- panel --
 
 print("\n== panel ==")

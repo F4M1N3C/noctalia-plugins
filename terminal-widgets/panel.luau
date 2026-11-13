@@ -15,6 +15,7 @@ local storeLib = require("./lib/store.luau")
 local win = require("./lib/windows.luau")
 local preview = require("./lib/preview.luau")
 local gifLib = require("./lib/gif.luau")
+local outputLib = require("./lib/output.luau")
 
 -- Semilla aleatoria inicializada una vez al cargar el plugin.
 math.randomseed(noctalia.nowMs() + (os.time() or 0) * 1000)
@@ -236,31 +237,10 @@ end
 
 -- --------------------------------------------------------------- geometría --
 
+-- Caja del output donde se coloca el widget (una sola fuente: lib/output.luau).
 local function outputGeometry()
-  local outputs = noctalia.outputs() or {}
-  local wanted = cfg.output
-  local chosen = nil
-  local focused = nil
-
-  for _, output in ipairs(outputs) do
-    if output.focused then
-      focused = output
-    end
-    if wanted ~= "" and output.name == wanted then
-      chosen = output
-    end
-  end
-
-  chosen = chosen or focused or outputs[1]
-  if chosen ~= nil then
-    local width = tonumber(chosen.width) or 0
-    local height = tonumber(chosen.height) or 0
-    if width >= 320 and height >= 240 then
-      return math.floor(width), math.floor(height), chosen.name or ""
-    end
-  end
-
-  return 1920, 1080, ""
+  local box = outputLib.outputBox(cfg)
+  return box.width, box.height, box.name
 end
 
 local function resolveGeometry(name)

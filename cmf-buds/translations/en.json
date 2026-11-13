@@ -53,9 +53,12 @@
       "classical": "Classical",
       "custom": "Custom",
       "electronic": "Electronic",
+      "more_bass": "More bass",
+      "more_treble": "More treble",
       "pop": "Pop",
       "rock": "Rock",
-      "vocal": "Vocals"
+      "vocal": "Vocals",
+      "voice": "Voice"
     },
     "title": "Equalizer",
     "treble": "Treble",
@@ -63,10 +66,35 @@
     "ultra_level": "Level"
   },
   "error": {
+    "code": {
+      "action_not_available": "That action is not available for that gesture.",
+      "channel_busy": "The Bluetooth channel is busy. Close Nothing X on the phone or disconnect the phone.",
+      "command_failed": "The command could not be run.",
+      "connect_failed": "Could not connect to the earbuds.",
+      "daemon_failed": "The earbuds daemon failed.",
+      "disconnect_failed": "Could not disconnect the device.",
+      "disconnected": "The earbuds are disconnected. Press Connect.",
+      "engine_unavailable": "The local action engine is not available.",
+      "generic": "The operation could not be completed.",
+      "invalid_action": "That action is not valid.",
+      "invalid_anc": "That noise cancelling level is not valid.",
+      "invalid_gesture": "That gesture is not valid.",
+      "invalid_json": "The request is not valid JSON.",
+      "invalid_preset": "That equalizer preset is not valid.",
+      "invalid_request": "The request is not valid.",
+      "invalid_rule": "The shortcut rule is not valid.",
+      "invalid_side": "That side is not valid.",
+      "link_lost": "The connection to the earbuds was lost.",
+      "missing_command": "No command was given.",
+      "no_sink": "No audio sink is available.",
+      "not_connected": "The earbuds are not connected over RFCOMM.",
+      "not_found": "The earbuds could not be found.",
+      "not_paired": "No paired CMF Buds device was found.",
+      "unknown_command": "Unknown command.",
+      "unknown_setting": "That setting does not exist."
+    },
     "daemon": "Could not start the earbuds daemon.",
-    "generic": "The operation could not be completed.",
-    "no_state": "The daemon has not written any state yet.",
-    "not_connected": "The earbuds are not connected over RFCOMM."
+    "generic": "The operation could not be completed."
   },
   "fit": {
     "bad": "Bad seal",
@@ -133,8 +161,8 @@
       "label": "Volume step"
     },
     "wheel_adjust": {
-      "description": "Adjusts the slider values (volume and EQ) with the mouse wheel. Requires the Noctalia patch that exposes wheelAdjustEnabled on sliders; without it the wheel does nothing.",
-      "label": "Mouse wheel on sliders"
+      "description": "Adjusts the volume by scrolling the mouse wheel over the bar widget. The panel sliders always take the wheel.",
+      "label": "Mouse wheel on the bar widget"
     }
   },
   "shortcut": {
@@ -148,7 +176,7 @@
       "knob": "Press the knob"
     },
     "gesture_label": "Gesture",
-    "hint": "El dial del estuche sendseñala al PC como un cambio de volumen. Aquí decides qué hace esa señal: con SUPER pulsado, por ejemplo, cambiar de workspace en lugar de tocar el volumen. Las pulsaciones repetidas se agrupan para detectar dobles y triples.",
+    "hint": "The case dial sends the PC a volume change signal. Here you decide what that signal does: with SUPER held, for example, switch workspace instead of touching the volume. Repeated presses are grouped so double and triple presses can be detected.",
     "last": "{trigger} x{presses}{modifiers}",
     "last_action_label": "Last action",
     "last_label": "Last event",

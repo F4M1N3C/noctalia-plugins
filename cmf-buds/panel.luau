@@ -1,7 +1,7 @@
 --!nonstrict
--- Panel unico de control de los CMF Buds Pro 2. Las secciones son pestañas
--- internas, asi la posicion del panel se mantiene al cambiar de seccion y hay
--- una sola opcion global de posicion/capa.
+-- Single control panel for the CMF Buds Pro 2. The sections are internal
+-- tabs, so the panel position is kept when switching sections and there is
+-- a single global position/layer option.
 
 local C = require("./lib/common.luau")
 local P = require("./lib/panel_ui.luau")
@@ -9,7 +9,7 @@ local P = require("./lib/panel_ui.luau")
 local PANEL = "faminec/cmf-buds:panel"
 
 function onOpen(context)
-  P.setup(C.last_tab(), PANEL, 1000)
+  P.setup(C.last_tab(), PANEL, 965)
   P.onOpen(context)
 end
 

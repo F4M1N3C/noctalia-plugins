@@ -1,10 +1,11 @@
 --!nonstrict
--- Etiquetas y listas compartidas por el widget y el panel.
+-- Labels and lists shared by the widget and the panel.
 
 local M = {}
 
--- El plugin muestra siempre su propia traducción (español) y usa noctalia.tr
--- como respaldo si falta alguna clave.
+-- The host knows the language of the user: noctalia.tr resolves the dotted
+-- key over the translation file of the current locale. The table loaded
+-- here is only the fallback for a key the host does not know.
 M.t = {}
 
 function M.loadTranslations()
@@ -12,7 +13,9 @@ function M.loadTranslations()
   if dir == nil then
     return M.t
   end
-  for _, lang in ipairs({ "es", "en" }) do
+  -- English is the base translation of the public plugin, so it is the
+  -- fallback of the fallback; Spanish is loaded when English is missing.
+  for _, lang in ipairs({ "en", "es" }) do
     local raw = noctalia.readFile(dir .. "/translations/" .. lang .. ".json")
     if raw ~= nil then
       local ok, data = pcall(noctalia.json.decode, raw)
@@ -25,23 +28,16 @@ function M.loadTranslations()
   return M.t
 end
 
-M.lastTab = "sound"
-
 local PANEL_ID = "faminec/cmf-buds:panel"
 
-local PANEL_IDS = {
-  sound = PANEL_ID,
-  controls = PANEL_ID,
-  actions = PANEL_ID,
-  system = PANEL_ID,
-}
-
-function M.panel_id(tab)
+-- Every tab of the panel is the same panel: the tab is a section of it,
+-- not a different window.
+function M.panel_id()
   return PANEL_ID
 end
 
--- Las entradas (widget, panel, servicio) viven en VMs distintas: el estado
--- compartido se pasa por noctalia.state.
+-- The entry points (widget, panel, service) live in separate VMs: the shared
+-- state is passed through noctalia.state.
 function M.last_tab()
   local value = noctalia.state.get("last_tab")
   if type(value) == "string" and (value == "sound" or value == "controls" or value == "actions" or value == "system") then
@@ -56,27 +52,33 @@ function M.set_last_tab(tab)
   end
 end
 
--- Las traducciones del plugin estan anidadas (como exige la tienda) y las
--- llamadas usan rutas con puntos ("button.refresh"), asi que se resuelve la
--- ruta dentro de la tabla.
-local function _resolver(tabla, ruta)
-  local actual = tabla
-  for parte in string.gmatch(ruta, "[^%.]+") do
-    if type(actual) ~= "table" then
+-- The plugin translations are nested (as the store requires) and the calls
+-- use dotted paths ("button.refresh"), so the path is resolved inside the
+-- table.
+local function _resolve(tbl, path)
+  local current = tbl
+  for part in string.gmatch(path, "[^%.]+") do
+    if type(current) ~= "table" then
       return nil
     end
-    actual = actual[parte]
-    if actual == nil then
+    current = current[part]
+    if current == nil then
       return nil
     end
   end
-  return actual
+  return current
 end
 
 function M.tr(key, args)
-  local out = _resolver(M.t, key)
-  if out == nil then
-    out = noctalia.tr(key, args)
+  -- The host resolves the key in the language of the user; the local table
+  -- is only used when the host does not know the key.
+  local ok, value = pcall(noctalia.tr, key)
+  local out = nil
+  if ok and type(value) == "string" and value ~= "" then
+    out = value
+  end
+  if out == nil or out == key then
+    out = _resolve(M.t, key)
   end
   if out == nil then
     out = key
@@ -93,6 +95,62 @@ function M.tr(key, args)
   return tostring(out)
 end
 
+-- A key that may not exist: the fallback is shown instead of the raw key.
+-- The dynamic keys (the gesture or the modifier of a rule the user wrote
+-- by hand) can name something the translations do not know: showing
+-- "shortcut.gesture.foo" to the user would be worse than showing "foo".
+function M.trOr(key, fallback)
+  local text = M.tr(key)
+  if text == key then
+    return tostring(fallback or "")
+  end
+  return text
+end
+
+-- The daemon sends stable error codes (not sentences): the text is resolved
+-- here with the "error.code.<code>" keys, so the daemon never has to know
+-- the language of the user. The technical detail (the output of an external
+-- command, for example) travels apart and is appended in parentheses.
+function M.error_text(code, detail)
+  local key = "error.generic"
+  if type(code) == "string" and code ~= "" then
+    key = "error.code." .. code
+  end
+  local text = M.tr(key)
+  if text == key then
+    -- An unknown code: the generic message is better than showing the raw
+    -- code to the user.
+    text = M.tr("error.generic")
+  end
+  text = tostring(text)
+  if type(detail) == "string" and detail ~= "" then
+    text = text .. " (" .. detail .. ")"
+  end
+  return text
+end
+
+-- Poll interval of the daemon, in seconds. The range is the same as the
+-- one of the manifest (20-300 s) and the same as the one the daemon
+-- enforces: an out-of-range value is clamped, never ignored.
+M.POLL_MIN = 20
+M.POLL_MAX = 300
+M.POLL_DEFAULT = 20
+
+function M.poll_seconds()
+  local value = tonumber(noctalia.getConfig("poll_seconds"))
+  if value == nil then
+    return M.POLL_DEFAULT
+  end
+  value = math.floor(value)
+  if value < M.POLL_MIN then
+    return M.POLL_MIN
+  end
+  if value > M.POLL_MAX then
+    return M.POLL_MAX
+  end
+  return value
+end
+
 function M.anc_label(mode, level)
   if mode == "off" then
     return M.tr("anc.off")
@@ -105,17 +163,6 @@ function M.anc_label(mode, level)
   return "—"
 end
 
-function M.anc_short(mode)
-  if mode == "anc" then
-    return "ANC"
-  elseif mode == "transparency" then
-    return "TR"
-  elseif mode == "off" then
-    return "OFF"
-  end
-  return ""
-end
-
 function M.eq_label(preset)
   local key = "eq.preset." .. tostring(preset or "balanced")
   local out = M.tr(key)
@@ -123,23 +170,6 @@ function M.eq_label(preset)
     return tostring(preset or "—")
   end
   return out
-end
-
-function M.battery_short(st)
-  if st == nil then
-    return "—"
-  end
-  local b = st.battery or {}
-  local left = b.left
-  local right = b.right
-  local case = b.case
-  if left == nil and right == nil then
-    if b.bluez ~= nil then
-      return tostring(b.bluez) .. "%"
-    end
-    return "—"
-  end
-  return string.format("%s%% / %s%%", left ~= nil and tostring(left) or "—", right ~= nil and tostring(right) or "—")
 end
 
 function M.battery_detail(st)
@@ -208,14 +238,6 @@ function M.action_labels(keys)
   local out = {}
   for _, key in ipairs(keys) do
     table.insert(out, M.tr("action." .. key))
-  end
-  return out
-end
-
-function M.action_label(key)
-  local out = M.tr("action." .. tostring(key or "no_action"))
-  if out == nil then
-    return tostring(key or "—")
   end
   return out
 end

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Control para CMF Buds Pro 2 (B172) en Linux.
+Control for the CMF Buds Pro 2 (B172) on Linux.
 
-Habla el protocolo RFCOMM 0x55 que usa la app Nothing X. El flujo es:
-  Bluetooth clasico conectado (A2DP) -> canal RFCOMM -> handshake -> comandos.
+Speaks the RFCOMM 0x55 protocol used by the Nothing X app. The flow is:
+  classic Bluetooth connected (A2DP) -> RFCOMM channel -> handshake -> commands.
 
-Modos:
-  budsctl.py daemon ...   demonio persistente con socket Unix + state.json
-  budsctl.py rpc '<json>' habla con el demonio
-  budsctl.py status       imprime el estado actual
-  budsctl.py stop         detiene el demonio
+Modes:
+  budsctl.py daemon ...   persistent daemon with a Unix socket + state.json
+  budsctl.py rpc '<json>' talks to the daemon
+  budsctl.py status       prints the current state
+  budsctl.py stop         stops the daemon
 
-El protocolo se basa en el trabajo de:
+The protocol is based on the work of:
   - https://github.com/SoaOaoS/something-x (MIT)
   - https://github.com/maniacx/BudsLink (GPL-3.0)
 """
@@ -23,6 +23,7 @@ import argparse
 import fcntl
 import json
 import os
+import signal
 import socket
 import socketserver
 import struct
@@ -34,10 +35,15 @@ import traceback
 
 try:
     from local_actions import LocalActionEngine
-except Exception:  # pragma: no cover - el motor de atajos es opcional
+except Exception as exc:  # pragma: no cover - the shortcut engine is optional
     LocalActionEngine = None
+    # The reason is kept: without it the daemon would answer
+    # "engine_unavailable" without saying why the engine did not load.
+    LOCAL_ACTIONS_IMPORT_ERROR = exc
+else:
+    LOCAL_ACTIONS_IMPORT_ERROR = None
 
-# ── Protocolo 0x55 ────────────────────────────────────────────────────────────
+# ── 0x55 protocol ────────────────────────────────────────────────────────────
 
 SOF = 0x55
 CTRL_HOST_CRC = 0x0160
@@ -74,7 +80,7 @@ CMD_RING_SET = 0xF002
 CMD_FIT_TEST_SET = 0xF014
 CMD_FIT_TEST_NTFY = 0xE00D
 
-# Notificaciones / respuestas
+# Notifications / responses
 NTFY_BATTERY = 0xE001
 NTFY_ANC = 0xE003
 NTFY_STATUS = 0xE002
@@ -96,7 +102,7 @@ ANC_LEVELS = {
 }
 ANC_LEVEL_NAMES = {v: k for k, v in ANC_LEVELS.items()}
 
-# Ecualización / listening modes del B172
+# Equalizer / listening modes for the B172
 LISTENING_MODES = {
     "balanced": 0,
     "rock": 1,
@@ -108,7 +114,7 @@ LISTENING_MODES = {
 }
 LISTENING_MODE_NAMES = {v: k for k, v in LISTENING_MODES.items()}
 
-# ECU del B172: 3 bandas paramétricas fijas
+# B172 EQ: 3 fixed parametric bands
 CUSTOM_EQ_GAIN_OFFSETS = (6, 19, 32)  # mid, treble, bass
 CUSTOM_EQ_TEMPLATE = bytes(
     [
@@ -120,7 +126,7 @@ CUSTOM_EQ_TEMPLATE = bytes(
     ]
 )
 
-# Gestos del CMF Buds Pro 2 (B172), sacados de BudsLink.
+# Gestures for the CMF Buds Pro 2 (B172), taken from BudsLink.
 GESTURE_SLOTS = [
     # group, device, type, label
     ("left", 0x02, 0x02, "double"),
@@ -192,23 +198,28 @@ def build_frame(cmd: int, payload: bytes = b"", fsn: int = 1) -> bytes:
     return frame + struct.pack("<H", crc16(frame))
 
 
-# Si el buffer de recepcion se pasa de esto, es que se ha perdido el
-# sincronismo de las tramas (una longitud corrupta, por ejemplo): se
-# descarta y se vuelve a buscar el inicio de la siguiente trama. Sin esto
-# el parser se quedaria esperando para siempre y el buffer creeria sin
-# limite.
+# If the receive buffer grows past this, it means frame sync has been
+# lost (a corrupt length, for example): drop it and search for the start
+# of the next frame. Without this the parser would wait forever for data
+# that will never arrive, and the buffer would keep growing without any
+# limit.
 MAX_BUFFER = 8192
 
+# The biggest payload the earbuds send. A frame that claims more than this
+# is corrupt: without the check the parser would wait for thousands of bytes
+# that never arrive and the valid frames behind it would be lost.
+MAX_PAYLOAD = 512
 
-def _acotar_buffer(buf: bytes, limite: int = MAX_BUFFER) -> bytes:
-    """Devuelve el buffer, o vacio si se ha pasado del limite."""
-    if len(buf) > limite:
+
+def _clamp_buffer(buf: bytes, limit: int = MAX_BUFFER) -> bytes:
+    """Return the buffer, or empty if it is past the limit."""
+    if len(buf) > limit:
         return b""
     return buf
 
 
 def parse_frames(buf: bytes):
-    """Devuelve (frames, resto). Cada frame es (cmd_normalizado, payload)."""
+    """Return (frames, remainder). Each frame is (normalized cmd, payload)."""
     frames = []
     i = 0
     n = len(buf)
@@ -220,13 +231,21 @@ def parse_frames(buf: bytes):
             _, ctrl, cmd, length = struct.unpack_from("<BHHH", buf, i)
         except struct.error:
             break
+        if length > MAX_PAYLOAD:
+            # The length is corrupt: the frame cannot be trusted. The parser
+            # resyncs on the next byte instead of waiting for data that will
+            # never arrive (that hid every valid frame behind it).
+            i += 1
+            continue
         crc_len = 2 if (ctrl & 0x20) else 0
         total = 8 + length + crc_len
         if i + total > n:
             break
         payload = buf[i + 8 : i + 8 + length]
-        # No descartamos por CRC: algunos firmwares mandan CRC raro y el
-        # payload sigue siendo válido. Solo lo comprobamos para el log.
+        # Do not drop on CRC: some firmwares send a bad CRC and the
+        # payload is still valid. We only check it for the log.
+        # The mask sets the direction bit (device to host): the earbuds
+        # already set it, but a firmware that forgets it is normalized.
         frames.append((cmd | 0x8000, payload))
         i += total
     return frames, buf[i:]
@@ -292,6 +311,33 @@ def run(cmd, timeout=10):
         return subprocess.CompletedProcess(cmd, 1, "", str(exc))
 
 
+# Poll interval limits. The manifest exposes the same range (20-300 s), so
+# the daemon and the settings panel always agree on what is valid.
+POLL_MIN = 20
+POLL_MAX = 300
+POLL_DEFAULT = 20
+
+# Timeout of the RPC client, in seconds. There is one single budget for
+# the whole chain: the client has to answer before the timeout of the
+# panel (60 s) and the slowest operation of the daemon (a reconnection
+# with the Bluetooth stack) has to fit inside it.
+RPC_TIMEOUT = 55.0
+
+
+def clamp_poll(value):
+    """Poll interval in seconds, clamped to the supported range.
+
+    An invalid value (not a number) falls back to the default instead of
+    breaking the daemon: the poll interval is a convenience, not a
+    requirement.
+    """
+    try:
+        poll = int(value)
+    except (TypeError, ValueError):
+        return POLL_DEFAULT
+    return max(POLL_MIN, min(POLL_MAX, poll))
+
+
 def bt_devices():
     res = run(["bluetoothctl", "devices"], 8)
     out = []
@@ -303,7 +349,9 @@ def bt_devices():
 
 
 def bt_info(mac: str):
-    res = run(["bluetoothctl", "info", mac], 8)
+    # The timeout is short: the device list can have a dozen entries and the
+    # daemon answers the RPC in less than 20 s.
+    res = run(["bluetoothctl", "info", mac], 3)
     info = {"mac": mac, "name": "", "alias": "", "connected": False, "battery": None, "icon": ""}
     for line in (res.stdout or "").splitlines():
         line = line.strip()
@@ -334,19 +382,71 @@ def pick_device(preferred_mac: str = "", preferred_name: str = ""):
     candidates = []
     for dev in devices:
         name = (dev.get("name") or "").lower()
-        info = bt_info(dev["mac"])
-        if preferred_name and preferred_name.lower() in (dev.get("name") or "").lower():
-            candidates.insert(0, info)
+        # The name decides first: "bluetoothctl info" takes seconds and the
+        # paired device list can have a dozen entries.
+        if preferred_name and preferred_name.lower() in name:
+            candidates.insert(0, dev)
             continue
         if any(key in name for key in ("cmf buds", "nothing ear", "cmf headphone", "nothing headphone", "ear (")):
-            candidates.append(info)
+            candidates.append(dev)
     if not candidates:
         return None
-    candidates.sort(key=lambda d: (not d.get("connected"), 0 if "cmf buds pro 2" in d.get("name", "").lower() else 1))
-    return candidates[0]
+    infos = [bt_info(dev["mac"]) for dev in candidates]
+    infos.sort(key=lambda d: (not d.get("connected"), 0 if "cmf buds pro 2" in d.get("name", "").lower() else 1))
+    return infos[0]
 
 
-# ── Enlace RFCOMM ─────────────────────────────────────────────────────────────
+# ── RFCOMM link ─────────────────────────────────────────────────────────────
+
+
+# The error codes the daemon can send. The panel translates them with the
+# "error.code.<code>" keys of the plugin translations, so the daemon never
+# sends a sentence in a fixed language: the code is stable and the technical
+# context travels apart in "error_detail".
+ERROR_CODES = (
+    "not_found",
+    "not_paired",
+    "connect_failed",
+    "disconnect_failed",
+    "disconnected",
+    "channel_busy",
+    "link_lost",
+    "not_connected",
+    "no_sink",
+    "engine_unavailable",
+    "invalid_anc",
+    "invalid_preset",
+    "unknown_setting",
+    "invalid_gesture",
+    "invalid_action",
+    "action_not_available",
+    "invalid_side",
+    "missing_command",
+    "unknown_command",
+    "invalid_rule",
+    "invalid_json",
+    "invalid_request",
+    "command_failed",
+    "daemon_failed",
+    "generic",
+)
+
+
+class UserError(ValueError):
+    """Expected error: the action cannot be done right now.
+
+    This is not a daemon failure (for example, pressing a panel button with the
+    earbuds disconnected). It is logged as a single line instead of a 14-line
+    traceback that buries the log.
+
+    It carries the stable code the panel translates and, when it helps, the
+    technical detail (the output of an external command, for example).
+    """
+
+    def __init__(self, message, code="generic", detail=""):
+        super().__init__(message)
+        self.code = code
+        self.detail = detail
 
 
 class BudsLink:
@@ -359,25 +459,39 @@ class BudsLink:
         self.pending = {}
         self.pending_lock = threading.Lock()
         self.send_lock = threading.Lock()
+        # One lock per command: responses are matched by command (the firmware
+        # does not return the frame sequence number), so two requests for the
+        # same command at once would overwrite each other. Different commands
+        # can still travel in parallel.
+        self._cmd_locks = {}
+        self._cmd_locks_lock = threading.Lock()
+        self._disconnect_lock = threading.Lock()
+        self._disconnect_notified = False
+        self.on_disconnect = None
         self.reader = None
         self.running = False
         self.connected = False
         self.log = log or (lambda *a: None)
 
-    # -- conexión ------------------------------------------------------------
+    # -- connection ------------------------------------------------------------
     def open(self):
         last_exc = None
         for ch in self.PROBE_CHANNELS:
+            # The socket is created inside the try: if the creation itself
+            # fails there is nothing to close and the probe of the next
+            # channel continues.
+            sock = None
             try:
                 sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
                 sock.settimeout(3.5)
                 sock.connect((self.mac, ch))
             except OSError as exc:
                 last_exc = exc
-                try:
-                    sock.close()
-                except Exception:
-                    pass
+                if sock is not None:
+                    try:
+                        sock.close()
+                    except Exception:
+                        pass
                 continue
             try:
                 sock.sendall(build_frame(CMD_PROTOCOL_GET, b"", 1))
@@ -392,7 +506,7 @@ class BudsLink:
                 if not data or data[:1] != b"\x55":
                     sock.close()
                     continue
-                # Handshake: activar protocolo
+                # Handshake: the protocol is activated before anything else.
                 sock.sendall(build_frame(CMD_PROTOCOL_SET, b"", 2))
                 sock.settimeout(1.2)
                 frames, _ = parse_frames(data)
@@ -415,7 +529,8 @@ class BudsLink:
                 self.fsn = 2
                 self.sock = sock
                 self.connected = True
-                self.log(f"RFCOMM conectado en canal {ch} (activado={activated})")
+                self._disconnect_notified = False
+                self.log(f"RFCOMM connected on channel {ch} (activated={activated})")
                 sock.settimeout(1.0)
                 self.running = True
                 self.reader = threading.Thread(target=self._read_loop, name="buds-reader", daemon=True)
@@ -429,36 +544,79 @@ class BudsLink:
                     pass
                 continue
         self.connected = False
-        raise RuntimeError(f"No se pudo abrir RFCOMM: {last_exc}")
+        raise RuntimeError(f"Could not open the RFCOMM link: {last_exc}")
+
+    def _close_socket(self):
+        """Close and release the socket (idempotent)."""
+        sock = self.sock
+        self.sock = None
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
 
     def close(self):
         self.running = False
         self.connected = False
-        if self.sock:
-            try:
-                self.sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            try:
-                self.sock.close()
-            except OSError:
-                pass
-        self.sock = None
+        self._close_socket()
 
-    # -- envío / recepción ---------------------------------------------------
+    def _notify_disconnect(self, reason):
+        """Notify once that the link has gone down."""
+        with self._disconnect_lock:
+            if self._disconnect_notified:
+                return
+            self._disconnect_notified = True
+        cb = getattr(self, "on_disconnect", None)
+        if cb is None:
+            return
+        try:
+            cb(reason)
+        except Exception:
+            self.log("Error in the disconnect notification: " + traceback.format_exc())
+
+    def _abort(self, reason):
+        """Declare the link dead: close the socket and notify the daemon.
+
+        Without this, a socket that is still open but no longer carries
+        anything (Errno 107) left the state at 'connected' forever and the
+        daemon never reconnected.
+        """
+        was_connected = self.connected
+        self.connected = False
+        self.running = False
+        self._close_socket()
+        with self.pending_lock:
+            for wait in self.pending.values():
+                wait["error"] = reason
+                wait["event"].set()
+        if was_connected:
+            self._notify_disconnect(reason)
+
+    # -- send / receive ---------------------------------------------------
     def _read_loop(self):
         buf = b""
-        while self.running and self.sock:
+        while self.running:
+            # The socket is read once per iteration: the disconnect thread
+            # can close it (and set it to None) while the reader waits,
+            # and reading self.sock again would raise AttributeError.
+            sock = self.sock
+            if sock is None:
+                break
             try:
-                chunk = self.sock.recv(4096)
+                chunk = sock.recv(4096)
                 if not chunk:
                     break
                 buf += chunk
-                acotado = _acotar_buffer(buf)
+                acotado = _clamp_buffer(buf)
                 if not acotado:
-                    # Se ha perdido el sincronismo: se descarta el buffer para
-                    # no quedarnos atascados leyendo basura.
-                    self.log("Buffer de RFCOMM desbordado: se resincroniza")
+                    # Sync has been lost: drop the buffer so we do not get
+                    # stuck reading garbage.
+                    self.log("RFCOMM buffer overflow: resynchronizing")
                     buf = b""
                     continue
                 buf = acotado
@@ -470,21 +628,18 @@ class BudsLink:
             except OSError:
                 break
             except Exception:
-                # Un error inesperado deja el enlace en un estado desconocido:
-                # se registra y se cierra el enlace, que el monitor volvera a
-                # abrir. Si se siguiera leyendo, el error se repetiria con
-                # cada trozo recibido y llenaria el log.
-                self.log("Error inesperado en el lector: " + traceback.format_exc())
+                # An unexpected error leaves the link in an unknown state:
+                # log it and close the link, which the monitor will open
+                # again. Reading on would repeat the error on every chunk
+                # received and flood the log.
+                self.log("Unexpected error in the reader: " + traceback.format_exc())
                 break
-        self.connected = False
-        self.log("RFCOMM desconectado")
-        with self.pending_lock:
-            for wait in self.pending.values():
-                wait["event"].set()
-        # El socket se cierra aqui: si se deja abierto, su descriptor se fuga
-        # en cada reconexion y el canal RFCOMM puede quedar ocupado, que es
-        # justo lo que impide volver a conectarse.
-        self.close()
+        self.log("RFCOMM disconnected")
+        # The socket is closed here: leaving it open leaks its descriptor on
+        # every reconnect and the RFCOMM channel can stay busy, which is
+        # exactly what prevents reconnecting. The daemon is also notified so
+        # it marks the state as disconnected and reconnects.
+        self._abort("RFCOMM link lost")
 
     def _handle(self, cmd, payload):
         with self.pending_lock:
@@ -497,29 +652,53 @@ class BudsLink:
             try:
                 self_on_frame(cmd, payload)
             except Exception:
-                self.log("Error en on_frame: " + traceback.format_exc())
+                self.log("Error in on_frame: " + traceback.format_exc())
+
+    def _cmd_lock(self, cmd):
+        """Exclusive lock for one command."""
+        with self._cmd_locks_lock:
+            lock = self._cmd_locks.get(cmd)
+            if lock is None:
+                lock = threading.Lock()
+                self._cmd_locks[cmd] = lock
+            return lock
 
     def request(self, cmd, payload=b"", timeout=1.5):
-        if not self.connected or not self.sock:
-            raise RuntimeError("RFCOMM no conectado")
-        wait = {"event": threading.Event(), "payload": None}
-        with self.pending_lock:
-            self.pending[cmd] = wait
-        self.fsn = (self.fsn + 1) & 0xFF
-        frame = build_frame(cmd, payload, self.fsn)
-        try:
+        """Send a command and wait for its response.
+
+        The response is matched by command (the firmware does not return the
+        frame sequence number), so two requests for the same command in flight
+        would overwrite each other: one of them waits until it expires. That
+        is why each command has its own lock.
+        """
+        with self._cmd_lock(cmd):
+            if not self.connected or not self.sock:
+                raise RuntimeError("the RFCOMM link is not connected")
+            wait = {"event": threading.Event(), "payload": None, "error": None}
+            with self.pending_lock:
+                self.pending[cmd] = wait
             with self.send_lock:
-                self.sock.sendall(frame)
-        except OSError as exc:
+                self.fsn = (self.fsn + 1) & 0xFF
+                frame = build_frame(cmd, payload, self.fsn)
+                try:
+                    self.sock.sendall(frame)
+                except OSError as exc:
+                    with self.pending_lock:
+                        self.pending.pop(cmd, None)
+                    # The socket may still be "open" but without transport
+                    # (Errno 107). If we only raise, the link stays marked as
+                    # connected and the daemon never reconnects: abort the
+                    # link here.
+                    self._abort("Error sending the command: %s" % exc)
+                    raise RuntimeError(f"Error sending the command: {exc}")
+            ok = wait["event"].wait(timeout)
             with self.pending_lock:
                 self.pending.pop(cmd, None)
-            raise RuntimeError(f"Error enviando comando: {exc}")
-        ok = wait["event"].wait(timeout)
-        with self.pending_lock:
-            self.pending.pop(cmd, None)
-        if not ok:
-            raise TimeoutError(f"Sin respuesta para 0x{cmd:04X}")
-        return wait["payload"] or b""
+            if wait.get("error"):
+                raise RuntimeError(wait["error"])
+            if not ok:
+                raise TimeoutError(f"No response for 0x{cmd:04X}")
+            return wait["payload"] or b""
 
     def send(self, cmd, payload=b"", timeout=1.0, ignore_timeout=True):
         try:
@@ -530,7 +709,7 @@ class BudsLink:
             raise
 
 
-# ── Estado ────────────────────────────────────────────────────────────────────
+# ── State ────────────────────────────────────────────────────────────────────
 
 
 def empty_state():
@@ -568,8 +747,51 @@ def empty_state():
         "model": "B172",
         "updated_at": 0,
         "error": "",
+        "error_detail": "",
         "daemon_pid": 0,
     }
+
+
+class RpcHandler(socketserver.StreamRequestHandler):
+    """Reads one RPC request and answers with one line of JSON.
+
+    The socket has a read timeout: a client that opens the connection and
+    never sends anything would keep a thread (and a file descriptor) alive
+    forever.
+    """
+
+    timeout = 10.0
+
+    def handle(self):
+        daemon = getattr(self.server, "daemon", None)
+        if daemon is None:
+            return
+        daemon.last_client = time.time()
+        try:
+            line = self.rfile.readline(65536)
+            if not line:
+                return
+            try:
+                req = json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                resp = daemon._rpc_error(
+                    UserError("invalid JSON request", code="invalid_json", detail=str(exc))
+                )
+            else:
+                if not isinstance(req, dict):
+                    resp = daemon._rpc_error(
+                        UserError(
+                            "the request must be an object", code="invalid_request"
+                        )
+                    )
+                else:
+                    resp = daemon.handle_rpc(req)
+        except Exception as exc:
+            resp = daemon._rpc_error(exc)
+        try:
+            self.wfile.write((json.dumps(resp, ensure_ascii=False) + "\n").encode("utf-8"))
+        except Exception:
+            pass
 
 
 class BudsDaemon:
@@ -578,18 +800,30 @@ class BudsDaemon:
         self.state_path = os.path.abspath(os.path.expanduser(args.state))
         self.socket_path = os.path.abspath(os.path.expanduser(args.socket))
         self.log_path = os.path.abspath(os.path.expanduser(args.log)) if args.log else ""
-        self.poll = max(15, int(args.poll))
+        self.poll = clamp_poll(args.poll)
         self.idle_timeout = max(60, int(args.idle_timeout))
         self.preferred_mac = (args.device_mac or "").strip()
         self.preferred_name = (args.device_name or "").strip()
         self.state = empty_state()
         self.state["daemon_pid"] = os.getpid()
-        # Las claves que gestiona el demonio. El resto del state.json es del
-        # plugin (noctalia.state) y manda siempre lo que haya en el fichero:
-        # si el demonio guardase su propia copia, pisaria los cambios del
-        # plugin (la pestana recordada se perdia al cambiarla).
+        # The keys the daemon owns. The rest of state.json belongs to the
+        # plugin (noctalia.state) and whatever is in the file always wins: if
+        # the daemon saved its own copy it would overwrite the plugin's
+        # changes (the remembered tab was lost whenever it changed).
         self._daemon_keys = set(self.state.keys()) | {"local_actions"}
         self.lock = threading.RLock()
+        # The RFCOMM link is swapped by the monitor thread and closed by the
+        # RPC thread: without a dedicated lock the socket could be closed
+        # twice, or leaked when both threads connected at the same time.
+        self._link_lock = threading.RLock()
+        # The volume is written from several sources at the same time (the
+        # wheel of the widget, the panel slider, a dial gesture): the writes
+        # are serialized so the last one asked for is the last one applied.
+        self._volume_lock = threading.RLock()
+        # The connection is made by the monitor thread and by the user (the
+        # Connect button): the lock keeps the two from opening the same
+        # RFCOMM channel at the same time.
+        self._connect_lock = threading.RLock()
         self.stop_event = threading.Event()
         self.link: BudsLink | None = None
         self.last_client = time.time()
@@ -604,21 +838,33 @@ class BudsDaemon:
         self._started_at = time.time()
         self._save_lock = threading.Lock()
         self.local = None
-        if LocalActionEngine is not None:
+        if LocalActionEngine is None:
+            if LOCAL_ACTIONS_IMPORT_ERROR is not None:
+                # The engine did not load: the reason goes to the log, or the
+                # daemon would answer "engine_unavailable" without saying
+                # why the shortcuts do not work.
+                self.log(
+                    "The local action engine could not be loaded: %s"
+                    % LOCAL_ACTIONS_IMPORT_ERROR
+                )
+        else:
             try:
                 self.local = LocalActionEngine(
                     os.path.dirname(self.state_path), log=self.log
                 )
-                # Cambios de volumen hechos desde el movil o con el dial: el
-                # demonio los publica en state.json para que el panel los vea en
-                # vivo (antes solo se refrescaban al pulsar Actualizar).
+                # Volume changes made from the phone or with the dial: the
+                # daemon publishes them in state.json so the panel sees them
+                # live (before, they only refreshed when pressing Refresh).
                 self.local.on_volume = self._external_volume
-                self.local.on_event = lambda: self.save()
+                self.local.on_event = self._on_local_event
             except Exception as exc:
-                self.log("No se pudo crear el motor de acciones locales: %s" % exc)
+                self.log("Could not create the local action engine: %s" % exc)
 
     # -- logging -------------------------------------------------------------
     def log(self, msg):
+        if not self.log_path:
+            # Logging is optional: without a path there is nowhere to write.
+            return
         line = time.strftime("%Y-%m-%d %H:%M:%S") + " " + str(msg) + "\n"
         try:
             os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
@@ -629,77 +875,77 @@ class BudsDaemon:
         except Exception:
             pass
 
-    # -- persistencia --------------------------------------------------------
+    # -- local action engine -------------------------------------------
+    def _on_local_event(self):
+        """The shortcut engine reports that something changed.
+
+        The engine calls this notification from its own thread while holding
+        its lock. Here we only save the state: we never enter the engine
+        while holding the daemon lock (see save()), so the two threads cannot
+        deadlock each other.
+        """
+        try:
+            self.save()
+        except Exception as exc:
+            self.log("Could not save the local state: %s" % exc)
+
+    # -- persistence --------------------------------------------------------
     def save(self):
-        with self.lock:
-            self.state["updated_at"] = int(time.time() * 1000)
-            self.state["daemon_pid"] = os.getpid()
-            if self.local is not None:
+        # The shortcut engine state is requested BEFORE taking any daemon
+        # lock: the engine calls save() from its own thread while holding its
+        # lock, and if the daemon took its own lock while waiting for the
+        # engine, the two threads would wait for each other (deadlock).
+        local_state = None
+        if self.local is not None:
+            try:
+                local_state = self.local.snapshot()
+            except Exception:
+                local_state = None
+        # The save lock is taken BEFORE the state is read: several threads
+        # (monitor, RPC, RFCOMM reader) may save at once, and without it one
+        # of them could write a snapshot older than the one already on disk.
+        # The order is always save lock -> state lock (never the other way
+        # around), and no caller takes the state lock before saving.
+        with self._save_lock:
+            with self.lock:
+                self.state["updated_at"] = int(time.time() * 1000)
+                self.state["daemon_pid"] = os.getpid()
+                if local_state is not None:
+                    self.state["local_actions"] = local_state
+                # The plugin stores its state (the remembered tab, for example)
+                # in the SAME file, under noctalia.state. If the daemon
+                # overwrote it whole, those keys would be lost on every save and
+                # the plugin would write them again in a loop. Keys the daemon
+                # does not own are preserved.
                 try:
-                    self.state["local_actions"] = self.local.snapshot()
+                    with open(self.state_path, "r", encoding="utf-8") as fh:
+                        previous = json.load(fh)
+                    if isinstance(previous, dict):
+                        # The file wins for the plugin keys, and keys the plugin
+                        # deletes are deleted too.
+                        for key, value in previous.items():
+                            if key not in self._daemon_keys:
+                                self.state[key] = value
+                        for key in list(self.state):
+                            if key not in self._daemon_keys and key not in previous:
+                                self.state.pop(key, None)
                 except Exception:
                     pass
-            # El plugin guarda su estado (la pestana recordada, por ejemplo)
-            # en el MISMO fichero, con noctalia.state. Si el demonio lo
-            # sobrescribe entero, esas claves se pierden en cada guardado y
-            # el plugin las vuelve a escribir en bucle. Se conservan las
-            # claves que el demonio no gestiona.
-            try:
-                with open(self.state_path, "r", encoding="utf-8") as fh:
-                    previo = json.load(fh)
-                if isinstance(previo, dict):
-                    # Lo que haya en el fichero manda para las claves del
-                    # plugin, y las que el plugin borre se borran tambien.
-                    for clave, valor in previo.items():
-                        if clave not in self._daemon_keys:
-                            self.state[clave] = valor
-                    for clave in list(self.state):
-                        if clave not in self._daemon_keys and clave not in previo:
-                            self.state.pop(clave, None)
-            except Exception:
-                pass
-            data = json.dumps(self.state, ensure_ascii=False, separators=(",", ":"))
-        tmp = self.state_path + f".{os.getpid()}.tmp"
-        # Varios hilos (monitor, RPC, lector RFCOMM) pueden guardar a la vez.
-        # Sin este candado, un hilo puede borrar el temporal de otro con el
-        # os.replace y la escritura falla con ENOENT.
-        with self._save_lock:
+                data = json.dumps(self.state, ensure_ascii=False, separators=(",", ":"))
+            tmp = self.state_path + f".{os.getpid()}.tmp"
+            # The temp file has a name of its own: several threads (monitor,
+            # RPC, RFCOMM reader) may save at once. Without the lock above,
+            # one thread can delete another's temp file with os.replace and
+            # the write fails with ENOENT.
             try:
                 os.makedirs(os.path.dirname(self.state_path), exist_ok=True)
                 with open(tmp, "w", encoding="utf-8") as fh:
                     fh.write(data)
                 os.replace(tmp, self.state_path)
             except Exception as exc:
-                self.log(f"No se pudo guardar state: {exc}")
+                self.log(f"Could not save state: {exc}")
 
-    # -- dispositivo ---------------------------------------------------------
-    def _refresh_device_info(self):
-        info = None
-        try:
-            info = pick_device(self.preferred_mac, self.preferred_name)
-        except Exception as exc:
-            self.log(f"pick_device: {exc}")
-        with self.lock:
-            if info is None:
-                self.state["audio_connected"] = False
-                self.state["error"] = "No encuentro los CMF Buds. Empareja/conecta los auriculares."
-                return False
-            dev = self.state["device"]
-            dev["name"] = info.get("name") or dev.get("name") or "CMF Buds Pro 2"
-            dev["alias"] = info.get("alias") or dev["name"]
-            dev["mac"] = info.get("mac") or dev.get("mac")
-            self.state["audio_connected"] = bool(info.get("connected"))
-            if info.get("battery") is not None:
-                self.state["battery"]["bluez"] = info["battery"]
-                if self.state["battery"]["left"] is None:
-                    self.state["battery"]["left"] = info["battery"]
-            # El nombre es más fiable que el serial: la tabla de SKU de
-            # something-x no conoce todos los prefijos del B172.
-            model = model_from_name(dev["name"]) or self.state.get("model") or model_from_serial(dev.get("serial")) or "B172"
-            dev["model"] = model
-            self.state["model"] = model
-            return True
-
+    # -- device ---------------------------------------------------------
     def _external_volume(self, value, sink):
         try:
             with self.lock:
@@ -709,11 +955,14 @@ class BudsDaemon:
                 vol["sink"] = sink
                 vol.setdefault("muted", False)
             if changed:
+                # The cached values are stale now: the next refresh has to
+                # read the sink again or the old value would be published.
+                self._volume_cache = None
                 self.save()
         except Exception as exc:
-            self.log("No se pudo publicar el volumen externo: %s" % exc)
+            self.log("Could not publish the external volume: %s" % exc)
 
-    def _es_dispositivo_nothing(self, name):
+    def _is_nothing_device(self, name):
         n = (name or "").lower()
         return any(
             key in n
@@ -721,83 +970,136 @@ class BudsDaemon:
         )
 
     def list_devices(self):
-        """Dispositivos Nothing/CMF emparejados en el PC.
-        La app Nothing X muestra los dos huecos de la conexion dual. Desde
-        Linux solo podemos ver y conectar los dispositivos que el PC conoce
-        por Bluetooth; el segundo hueco lo gestiona el movil. Se muestran
-        ambos estados para que quede claro quien tiene la conexion.
+        """Nothing/CMF devices paired on the PC.
+        The Nothing X app shows both dual-connection slots. From Linux only
+        the devices the PC knows over Bluetooth can be seen and connected;
+        the second slot is managed by the phone. Both states are shown so it
+        is clear who holds the connection.
         """
-        actual = self.state.get("device", {}).get("mac", "")
-        salida = []
+        current_mac = self.state.get("device", {}).get("mac", "")
+        result = []
         for dev in bt_devices():
-            if not self._es_dispositivo_nothing(dev.get("name")):
+            if not self._is_nothing_device(dev.get("name")):
                 continue
             info = bt_info(dev["mac"])
-            salida.append(
+            result.append(
                 {
                     "mac": dev["mac"],
                     "name": info.get("name") or dev.get("name") or dev["mac"],
                     "connected": bool(info.get("connected")),
                     "battery": info.get("battery"),
-                    "current": dev["mac"] == actual,
+                    "current": dev["mac"] == current_mac,
                 }
             )
-        salida.sort(key=lambda d: (not d["connected"], not d["current"], d["name"]))
-        return salida
+        result.sort(key=lambda d: (not d["connected"], not d["current"], d["name"]))
+        return result
 
     def device_connect(self, mac):
         if not mac:
-            raise ValueError("Falta la dirección del dispositivo")
-        self.log("Conectando dispositivo %s" % mac)
+            raise UserError("missing device address", code="invalid_request")
+        self.log("Connecting device %s" % mac)
         res = run(["bluetoothctl", "connect", mac], 20)
         if res.returncode != 0:
-            msg = (res.stderr or res.stdout or "").strip() or "No se pudo conectar"
-            raise RuntimeError(msg)
+            raise self._bluetooth_error(res, "connect_failed")
         time.sleep(1.0)
         return self.list_devices()
 
     def device_disconnect(self, mac):
         if not mac:
-            raise ValueError("Falta la dirección del dispositivo")
-        self.log("Desconectando dispositivo %s" % mac)
+            raise UserError("missing device address", code="invalid_request")
+        self.log("Disconnecting device %s" % mac)
         res = run(["bluetoothctl", "disconnect", mac], 20)
         if res.returncode != 0:
-            msg = (res.stderr or res.stdout or "").strip() or "No se pudo desconectar"
-            raise RuntimeError(msg)
+            raise self._bluetooth_error(res, "disconnect_failed")
         time.sleep(0.5)
         return self.list_devices()
 
     @staticmethod
-    def _cerrar_enlace_anterior(anterior):
-        """Cierra el enlace anterior al sustituirlo.
+    def _bluetooth_error(res, default_code):
+        """Build the error of a failed bluetoothctl call.
 
-        Si su socket se queda abierto, el descriptor se fuga en cada
-        reconexion y el canal RFCOMM puede quedar ocupado, que es lo que
-        impide volver a conectarse.
+        The message of bluetoothctl is technical and in English, but it is
+        not a sentence of the plugin: it travels as the detail of a stable
+        code, so the panel can show its own text.
         """
-        if anterior is None:
+        msg = (res.stderr or res.stdout or "").strip() or "bluetoothctl failed"
+        lowered = msg.lower()
+        if "not found" in lowered or "no such device" in lowered:
+            code = "not_found"
+        else:
+            code = default_code
+        return UserError(msg, code=code, detail=msg)
+
+    @staticmethod
+    def _close_previous_link(previous):
+        """Close the previous link when replacing it.
+
+        If its socket is left open, the descriptor leaks on every reconnect
+        and the RFCOMM channel can stay busy, which is what prevents
+        reconnecting.
+        """
+        if previous is None:
             return
         try:
-            anterior.close()
+            previous.close()
         except Exception:
             pass
 
-    def connect(self, force_bt=False):
+    def _new_link(self, mac):
+        """Create the RFCOMM link with its notifications wired up.
+
+        The disconnect notification is what lets the state stop saying
+        'connected' as soon as the link dies, without waiting for the next
+        poll.
+        """
+        link = BudsLink(mac, self.log)
+        link.on_frame = self.on_frame
+        link.on_disconnect = self._on_link_disconnect
+        return link
+
+    def _on_link_disconnect(self, reason):
+        """The RFCOMM link has gone down: the state reflects it now."""
+        try:
+            with self.lock:
+                self.state["connected"] = False
+            self._set_error("link_lost", str(reason) if reason else "")
+            self.save()
+        except Exception as exc:
+            self.log("Could not update the state after the disconnect: %s" % exc)
+
+    def connect(self, force_bt=False, user=False):
+        """Open the RFCOMM link.
+
+        The monitor thread and the RPC thread can ask for a connection at the
+        same time. Without a lock both open the channel and the second one
+        fails with "busy", reporting a failure for a link that is already
+        working. The lock makes the second one wait and see the link that
+        the first one opened.
+        """
+        with self._connect_lock:
+            return self._connect(force_bt=force_bt, user=user)
+
+    def _connect(self, force_bt=False, user=False):
         now = time.time()
         if self.link and self.link.connected:
             return True
-        if now - self.last_connect_attempt < self.connect_backoff:
+        if not user and now - self.last_connect_attempt < self.connect_backoff:
             return False
         self.last_connect_attempt = now
-        self.connect_backoff = min(30.0, self.connect_backoff + 5.0)
+        if user:
+            # A manual click must not be blocked by the backoff the monitor
+            # uses to avoid hammering RFCOMM every 3 s.
+            self.connect_backoff = 5.0
+        else:
+            self.connect_backoff = min(30.0, self.connect_backoff + 5.0)
         try:
             info = pick_device(self.preferred_mac, self.preferred_name)
         except Exception:
             info = None
         if info is None:
-            self.log("No hay dispositivo Nothing/CMF emparejado")
+            self.log("No paired Nothing/CMF device")
+            self._set_error("not_paired")
             with self.lock:
-                self.state["error"] = "No encuentro los CMF Buds. Empareja los auriculares primero."
                 self.state["connected"] = False
             self.save()
             return False
@@ -816,51 +1118,80 @@ class BudsDaemon:
             self.state["model"] = model
         if not info.get("connected"):
             if force_bt:
-                self.log(f"Conectando Bluetooth a {mac}")
-                run(["bluetoothctl", "connect", mac], 20)
-                time.sleep(2)
+                self.log(f"Connecting Bluetooth to {mac}")
+                res = run(["bluetoothctl", "connect", mac], 20)
+                # bluetoothctl can return before BlueZ marks the device as
+                # connected; wait a little and check again.
+                deadline = time.time() + 12
                 info = bt_info(mac)
+                while not info.get("connected") and time.time() < deadline:
+                    time.sleep(0.5)
+                    info = bt_info(mac)
+                if not info.get("connected"):
+                    detail = (res.stderr or res.stdout or "").strip()
+                    if detail:
+                        detail = detail.splitlines()[-1]
+                    else:
+                        detail = "timed out"
+                    self.log(f"Bluetooth connect failed: {detail}")
+                    self._set_error("connect_failed", detail)
+                    with self.lock:
+                        self.state["connected"] = False
+                    self.save()
+                    return False
                 with self.lock:
-                    self.state["audio_connected"] = bool(info.get("connected"))
+                    self.state["audio_connected"] = True
             else:
+                self._set_error("disconnected")
                 with self.lock:
                     self.state["connected"] = False
-                    self.state["error"] = "Los auriculares están desconectados. Pulsa Conectar."
                 self.save()
                 return False
         try:
-            link = BudsLink(mac, self.log)
-            link.on_frame = self.on_frame
+            link = self._new_link(mac)
             link.open()
-            anterior = self.link
-            self.link = link
-            self._cerrar_enlace_anterior(anterior)
+            # The swap happens under the lock: the monitor thread and an RPC
+            # thread can connect at the same time, and the old socket has to
+            # be closed exactly once.
+            with self._link_lock:
+                previous = self.link
+                self.link = link
+                self._close_previous_link(previous)
             with self.lock:
                 self.state["connected"] = True
-                self.state["error"] = ""
-            self.log("Enlace listo")
+            self._clear_error()
+            self.log("Link ready")
             self.query_all()
             return True
         except Exception as exc:
             self.log(f"connect: {exc}")
             with self.lock:
-                self.state["connected"] = False
-                msg = str(exc)
-                if "busy" in msg.lower() or "device or resource busy" in msg.lower():
-                    msg = "Canal ocupado. Cierra Nothing X en el teléfono o desconecta el móvil."
-                self.state["error"] = msg
+                # The link may have been opened by another thread while this
+                # one was failing: the state must not say "disconnected" if
+                # there is a working link.
+                if not (self.link and self.link.connected):
+                    self.state["connected"] = False
+            msg = str(exc)
+            if "busy" in msg.lower() or "device or resource busy" in msg.lower():
+                self._set_error("channel_busy")
+            else:
+                self._set_error("connect_failed", msg)
             self.save()
             return False
 
     def disconnect(self):
-        if self.link:
-            self.link.close()
-        self.link = None
+        # The link is taken out of the daemon before closing it: two threads
+        # disconnecting at the same time must not close the same socket twice.
+        with self._link_lock:
+            link = self.link
+            self.link = None
+            if link:
+                link.close()
         with self.lock:
             self.state["connected"] = False
         self.save()
 
-    # -- parseo --------------------------------------------------------------
+    # -- parsing --------------------------------------------------------------
     def on_frame(self, cmd, payload):
         changed = False
         with self.lock:
@@ -884,7 +1215,7 @@ class BudsDaemon:
                             st["battery"]["charging"][key] = charging
                             changed = True
             elif cmd in (CMD_ANC_GET, NTFY_ANC):
-                # payload: tripletes (tipo, valor, pad)
+                # payload: triplets (type, value, pad)
                 for i in range(0, len(payload) - 1, 3):
                     t, val = payload[i], payload[i + 1]
                     if t == 1:
@@ -937,7 +1268,7 @@ class BudsDaemon:
                     changed = True
             elif cmd == CMD_IN_EAR_GET:
                 if len(payload) >= 3:
-                    # BudsLink usa payload[2] para el ajuste.
+                    # BudsLink uses payload[2] for the fit setting.
                     st["in_ear"] = payload[2] == 1
                     changed = True
             elif cmd == CMD_LATENCY_GET:
@@ -957,10 +1288,10 @@ class BudsDaemon:
                         if off + 3 >= len(payload):
                             break
                         dev, btn, typ, action = payload[off : off + 4]
-                        # El estuche manda dos grupos: 04/01 es el dial
-                        # (single, double, triple, hold, rotate) y 04/09 es
-                        # un botón interno que la app no expone. Ignoramos
-                        # el segundo para no pisar los gestos del dial.
+                        # The case sends two groups: 04/01 is the dial
+                        # (single, double, triple, hold, rotate) and 04/09 is
+                        # an internal button the app does not expose. We skip
+                        # the second one so it does not overwrite dial gestures.
                         if dev == 0x04 and btn != 0x01:
                             off += 4
                             continue
@@ -986,7 +1317,7 @@ class BudsDaemon:
                     parts = line.split(",", 2)
                     if len(parts) == 3 and parts[1] == "4" and parts[2].strip():
                         st["device"]["serial"] = parts[2].strip()
-                        # Solo usar el serial si el nombre no identificó ya el modelo.
+                        # Only use the serial if the name did not already identify the model.
                         if not model_from_name(st["device"].get("name")):
                             model = model_from_serial(parts[2].strip())
                             if model:
@@ -1008,12 +1339,12 @@ class BudsDaemon:
                     self.fit_started = 0.0
                     changed = True
             elif cmd == CMD_ANC_SET:
-                # ACK del set; el evento 0xE003 llegará luego
+                # ACK for the set; the 0xE003 event arrives later
                 pass
         if changed:
             self.save()
 
-    # -- comandos ------------------------------------------------------------
+    # -- commands ------------------------------------------------------------
     def query_all(self):
         if not self.link or not self.link.connected:
             return False
@@ -1031,181 +1362,206 @@ class BudsDaemon:
             (CMD_FIRMWARE_GET, b""),
             (CMD_SERIAL_GET, b""),
         ]
+        error = ""
+        timed_out = 0
         for cmd, payload in cmds:
             try:
                 self.link.request(cmd, payload, timeout=1.2)
             except TimeoutError:
-                self.log(f"Timeout consultando 0x{cmd:04X}")
+                timed_out += 1
+                self.log(f"Timeout querying 0x{cmd:04X}")
             except Exception as exc:
                 self.log(f"query 0x{cmd:04X}: {exc}")
+                error = str(exc)
                 break
             time.sleep(0.04)
         with self.lock:
-            self.state["connected"] = bool(self.link and self.link.connected)
-            if self.state["connected"]:
-                self.state["error"] = ""
+            connected = bool(self.link and self.link.connected)
+            self.state["connected"] = connected
+        if connected and timed_out == 0:
+            self._clear_error()
+        elif error:
+            # The link is down: keep the error so the panel shows the problem
+            # instead of a false "connected" state.
+            self._set_error("link_lost", error)
+        elif timed_out:
+            # The link answered but not to everything: the query did not
+            # finish, and the panel has to know about it.
+            detail = "%d of %d commands timed out" % (timed_out, len(cmds))
+            if timed_out == len(cmds):
+                self._set_error("link_lost", detail)
+            else:
+                self._set_error("daemon_failed", detail)
         self.last_full = time.time()
         self.refresh_volume()
         self.save()
-        return True
+        # A query that did not finish is not a success: the caller (the
+        # refresh of the panel) has to report it.
+        return connected and timed_out == 0 and not error
 
     @staticmethod
-    def _comprobar_anc(mode: str, level: str | None = None):
-        """Comprueba el modo y el nivel de ANC y devuelve el valor a enviar."""
+    def _check_anc(mode: str, level: str | None = None):
+        """Validate the ANC mode and level and return the value to send."""
         if mode == "off":
             return ANC_OFF
         if mode == "transparency":
             return ANC_TRANSPARENCY
         if mode == "anc":
-            nivel = level or "high"
-            if nivel not in ANC_LEVELS:
-                # Antes se caia a "strong" en silencio y el estado guardaba
-                # el nivel invalido: el panel y el dispositivo acababan
-                # diciendo cosas distintas.
-                raise ValueError("nivel ANC inválido")
-            return ANC_LEVELS[nivel]
-        raise ValueError("modo ANC inválido")
+            lvl = level or "high"
+            if lvl not in ANC_LEVELS:
+                # Before, it silently fell back to "strong" and the state
+                # kept the invalid level: the panel and the device ended up
+                # disagreeing.
+                raise UserError("invalid ANC level", code="invalid_anc")
+            return ANC_LEVELS[lvl]
+        raise UserError("invalid ANC level", code="invalid_anc")
 
     def set_anc(self, mode: str, level: str | None = None):
-        val = self._comprobar_anc(mode, level)
-        self._require_link()
-        self.link.send(CMD_ANC_SET, bytes([0x01, val, 0x00]), 1.2)
+        val = self._check_anc(mode, level)
+        link = self._require_link()
+        link.send(CMD_ANC_SET, bytes([0x01, val, 0x00]), 1.2)
         with self.lock:
             self.state["anc"]["mode"] = mode
             if mode == "anc" and level:
                 self.state["anc"]["level"] = level
-        # El GET de ANC tarda un poco en reflejar el cambio; si lo consultamos
-        # ya, devuelve el modo anterior y pisa el estado optimista. El evento
-        # 0xE003 llega solo y actualiza el estado real.
+        # The ANC GET takes a moment to reflect the change; querying it right
+        # away returns the previous mode and overwrites the optimistic state.
+        # The 0xE003 event arrives on its own and updates the real state.
         self.save()
-        return self.state
+        return self.snapshot()
 
     def set_eq(self, preset: str):
-        self._require_link()
         if preset not in LISTENING_MODES:
-            raise ValueError("preset inválido")
+            raise UserError("invalid preset", code="invalid_preset")
+        link = self._require_link()
         idx = LISTENING_MODES[preset]
-        self.link.send(CMD_LISTENING_MODE_SET, bytes([idx, 0x00]), 1.2)
+        link.send(CMD_LISTENING_MODE_SET, bytes([idx, 0x00]), 1.2)
         with self.lock:
             self.state["eq"]["preset"] = preset
             self.state["eq"]["preset_index"] = idx
         time.sleep(0.2)
         try:
-            self.link.request(CMD_CUSTOM_EQ_GET, b"", 1.0)
+            link.request(CMD_CUSTOM_EQ_GET, b"", 1.0)
         except Exception:
             pass
         self.save()
-        return self.state
+        return self.snapshot()
 
     def set_custom_eq(self, bass: int, mid: int, treble: int):
-        self._require_link()
+        link = self._require_link()
         bass, mid, treble = (max(-6, min(6, int(v))) for v in (bass, mid, treble))
         gains = (mid, treble, bass)
         buf = bytearray(CUSTOM_EQ_TEMPLATE)
         buf[1:5] = eq_float_encode(-max(gains), preamp=True)
         for off, gain in zip(CUSTOM_EQ_GAIN_OFFSETS, gains):
             buf[off : off + 4] = eq_float_encode(float(gain))
-        self.link.send(CMD_CUSTOM_EQ_SET, bytes(buf), 1.4)
-        # La app escribe la curva y después activa el modo "Custom"; si no,
-        # el firmware guarda los valores pero sigue sonando el preset actual.
-        self.link.send(CMD_LISTENING_MODE_SET, bytes([LISTENING_MODES["custom"], 0x00]), 1.2)
+        link.send(CMD_CUSTOM_EQ_SET, bytes(buf), 1.4)
+        # The app writes the curve and then enables "Custom" mode; otherwise
+        # the firmware stores the values but the current preset keeps playing.
+        link.send(CMD_LISTENING_MODE_SET, bytes([LISTENING_MODES["custom"], 0x00]), 1.2)
         with self.lock:
             self.state["eq"]["custom"] = {"bass": bass, "mid": mid, "treble": treble}
             self.state["eq"]["preset"] = "custom"
             self.state["eq"]["preset_index"] = LISTENING_MODES["custom"]
         self.save()
-        return self.state
+        return self.snapshot()
 
     def set_bass(self, enabled: bool, level: int | None = None):
-        self._require_link()
+        link = self._require_link()
         level = max(1, min(5, int(level if level is not None else self.state["bass"]["level"])))
-        self.link.send(CMD_BASS_SET, bytes([1 if enabled else 0, level * 2]), 1.2)
+        link.send(CMD_BASS_SET, bytes([1 if enabled else 0, level * 2]), 1.2)
         with self.lock:
             self.state["bass"]["enabled"] = bool(enabled)
             self.state["bass"]["level"] = level
         self.save()
-        return self.state
+        return self.snapshot()
 
     def set_toggle(self, key: str, value: bool):
-        self._require_link()
+        # The key is checked before the link: otherwise the error would be
+        # "the earbuds are not connected" instead of "that setting does not
+        # exist", and the user could not tell what was wrong.
+        if key not in ("spatial", "in_ear", "low_latency", "dual_connection"):
+            raise UserError("unknown setting", code="unknown_setting")
+        link = self._require_link()
         if key == "spatial":
-            self.link.send(CMD_SPATIAL_SET, bytes([1 if value else 0]), 1.2)
+            link.send(CMD_SPATIAL_SET, bytes([1 if value else 0]), 1.2)
         elif key == "in_ear":
-            self.link.send(CMD_IN_EAR_SET, bytes([0x01, 0x01, 1 if value else 0]), 1.2)
+            link.send(CMD_IN_EAR_SET, bytes([0x01, 0x01, 1 if value else 0]), 1.2)
         elif key == "low_latency":
-            self.link.send(CMD_LATENCY_SET, bytes([0x01 if value else 0x02, 0x00]), 1.2)
-        elif key == "dual_connection":
-            self.link.send(CMD_DUAL_SET, bytes([1 if value else 0]), 1.2)
+            link.send(CMD_LATENCY_SET, bytes([0x01 if value else 0x02, 0x00]), 1.2)
         else:
-            raise ValueError("ajuste desconocido")
+            link.send(CMD_DUAL_SET, bytes([1 if value else 0]), 1.2)
         with self.lock:
             self.state[key] = bool(value)
             if key == "dual_connection":
-                # La app Nothing X avisa de que el cambio no se aplica hasta
-                # reiniciar los auriculares; se recuerda en el estado para que
-                # el panel lo muestre hasta que el usuario los reinicie.
+                # The Nothing X app warns that the change does not apply until
+                # the earbuds restart; it is remembered in the state so the
+                # panel shows it until the user restarts them.
                 self.state["dual_restart_pending"] = True
         time.sleep(0.15)
         self.save()
-        return self.state
+        return self.snapshot()
 
     @staticmethod
-    def _comprobar_gesture(group: str, gesture_type: str, action: str):
-        """Comprueba que el gesto exista y que la accion le quede permitida.
+    def _check_gesture(group: str, gesture_type: str, action: str):
+        """Check that the gesture exists and that the action is allowed on it.
 
-        Sin esta comprobacion, una accion no admitida por ese gesto se
-        enviaba igual y el dispositivo la ignoraba en silencio.
+        Without this check, an action the gesture does not support was sent
+        anyway and the device ignored it silently.
         """
         key = (group, gesture_type)
         if key not in GESTURE_BY_KEY:
-            raise ValueError("gesto inválido")
+            raise UserError("invalid gesture", code="invalid_gesture")
         if action not in GESTURE_ACTIONS:
-            raise ValueError("acción inválida")
-        permitidas = GESTURE_ALLOWED.get(key)
-        if permitidas is None:
-            raise ValueError("gesto inválido")
-        if action not in permitidas:
-            raise ValueError("esa acción no está disponible para ese gesto")
+            raise UserError("invalid action", code="invalid_action")
+        allowed_actions = GESTURE_ALLOWED.get(key)
+        if allowed_actions is None:
+            raise UserError("invalid gesture", code="invalid_gesture")
+        if action not in allowed_actions:
+            raise UserError(
+                "this action is not available for that gesture",
+                code="action_not_available",
+            )
 
     def set_gesture(self, group: str, gesture_type: str, action: str):
-        # La combinacion se comprueba antes que el enlace: si no, el error
-        # seria "no hay enlace" en vez de "esa accion no vale para ese gesto".
-        self._comprobar_gesture(group, gesture_type, action)
-        self._require_link()
+        # The combination is checked before the link: otherwise the error
+        # would be "no link" instead of "that action is not valid for that gesture".
+        self._check_gesture(group, gesture_type, action)
+        link = self._require_link()
         key = (group, gesture_type)
         device, typ = GESTURE_BY_KEY[key]
-        self.link.send(CMD_GESTURES_SET, bytes([0x01, device, 0x01, typ, GESTURE_ACTIONS[action]]), 1.2)
+        link.send(CMD_GESTURES_SET, bytes([0x01, device, 0x01, typ, GESTURE_ACTIONS[action]]), 1.2)
         with self.lock:
             self.state["gestures"][f"{group}.{gesture_type}"] = action
         self.save()
-        return self.state
+        return self.snapshot()
 
     @staticmethod
-    def _comprobar_lado(side: str):
-        """Comprueba el lado del auricular y devuelve su codigo.
+    def _check_side(side: str):
+        """Check the earbud side and return its code.
 
-        Antes, un lado que no fuese "left" se convertia en "right" en
-        silencio (y ademas se guardaba una clave inventada en el estado).
+        Before, any side other than "left" silently became "right" (and it
+        also stored a made-up key in the state).
         """
         if side == "left":
             return 0x02
         if side == "right":
             return 0x03
-        raise ValueError("lado inválido")
+        raise UserError("invalid side", code="invalid_side")
 
     def ring(self, side: str, enabled: bool):
-        device = self._comprobar_lado(side)
-        self._require_link()
-        self.link.send(CMD_RING_SET, bytes([device, 1 if enabled else 0]), 1.2)
+        device = self._check_side(side)
+        link = self._require_link()
+        link.send(CMD_RING_SET, bytes([device, 1 if enabled else 0]), 1.2)
         with self.lock:
             self.state["ring"][side] = bool(enabled)
             self.ring_until[side] = time.time() + 15 if enabled else 0
         self.save()
-        return self.state
+        return self.snapshot()
 
     def fit_test(self, start: bool):
-        self._require_link()
-        self.link.send(CMD_FIT_TEST_SET, bytes([1 if start else 0]), 1.2)
+        link = self._require_link()
+        link.send(CMD_FIT_TEST_SET, bytes([1 if start else 0]), 1.2)
         with self.lock:
             self.state["fit_test"]["running"] = bool(start)
             self.state["fit_test"]["error"] = ""
@@ -1214,14 +1570,14 @@ class BudsDaemon:
                 self.state["fit_test"]["right"] = None
         self.fit_started = time.time() if start else 0.0
         self.save()
-        return self.state
+        return self.snapshot()
 
-    def _apagar_anillos(self, now):
-        """Apaga los anillos que ya han cumplido su tiempo.
+    def _stop_rings(self, now):
+        """Turn off the rings that have reached their time.
 
-        Si no se puede apagar uno, no se da por apagado: se reintentara en el
-        siguiente ciclo (antes se marcaba como apagado igualmente y el anillo
-        se quedaba sonando sin que nadie volviera a intentarlo).
+        If one cannot be turned off it is not marked as off: it is retried on
+        the next cycle (before, it was marked off anyway and the ring kept
+        ringing with nobody trying again).
         """
         for side, until in list(self.ring_until.items()):
             if until and now >= until:
@@ -1232,15 +1588,84 @@ class BudsDaemon:
                 self.ring_until[side] = 0
 
     def _require_link(self):
-        if not self.link or not self.link.connected:
-            raise RuntimeError("Auriculares no conectados por RFCOMM")
+        """Return the RFCOMM link, or fail if there is none.
 
-    # -- volumen -------------------------------------------------------------
+        The link is returned so the caller does not read self.link again: a
+        disconnect in between would leave the caller with None and the
+        command would end with an AttributeError instead of an error the
+        user can understand.
+        """
+        with self._link_lock:
+            link = self.link
+            if not link or not link.connected:
+                raise UserError(
+                    "the earbuds are not connected over RFCOMM", code="not_connected"
+                )
+            return link
+
+    # -- errors ------------------------------------------------------------
+    def _set_error(self, code, detail=""):
+        """Record an error in the state as a stable code.
+
+        The panel translates the code (the "error.code.<code>" keys of the
+        plugin translations) and appends the technical detail, so the daemon
+        never sends a sentence in a fixed language.
+        """
+        if code not in ERROR_CODES:
+            raise ValueError("unknown error code: %s" % code)
+        with self.lock:
+            self.state["error"] = code
+            self.state["error_detail"] = detail
+
+    def _clear_error(self):
+        with self.lock:
+            self.state["error"] = ""
+            self.state["error_detail"] = ""
+
+    def _rpc_error(self, exc):
+        """Response and log entry for an RPC error.
+
+        Expected errors (an action that cannot be done now, or a request
+        with a wrong value) are logged as one line; unexpected ones with
+        their traceback, because they hide a real bug.
+
+        The answer carries the stable code the panel translates and, when
+        there is one, the technical detail of the failure.
+        """
+        if isinstance(exc, (UserError, ValueError)):
+            self.log("rpc: %s" % exc)
+        else:
+            self.log("rpc: " + traceback.format_exc())
+        code = getattr(exc, "code", "") or ""
+        detail = getattr(exc, "detail", "") or ""
+        if not code:
+            detail = detail or str(exc)
+            if isinstance(exc, ValueError):
+                # A plain ValueError comes from a request the daemon cannot
+                # use (a wrong value, a broken payload): the client has to
+                # fix it, not the daemon.
+                code = "invalid_request"
+            else:
+                # An unexpected failure: the panel shows a generic message
+                # and the detail (the text of the exception) tells what
+                # happened.
+                code = "daemon_failed"
+        return {
+            "ok": False,
+            "error": code,
+            "error_detail": detail,
+            "state": self.snapshot(),
+        }
+
+    # -- volume -------------------------------------------------------------
+    SINK_CACHE_TTL = 2.0
+    VOLUME_CACHE_TTL = 2.0
+
     def _buds_sink(self):
-        """Sink Bluetooth de los auriculares, o "" si no estan conectados.
+        """Bluetooth sink of the earbuds, or "" if they are not connected.
 
-        No cae al sink por defecto: el motor de atajos solo debe vigilar el
-        volumen de los auriculares, no el del sistema.
+        It does not fall back to the default sink: the shortcut engine should
+        only watch the earbuds volume, not the system one.
         """
         mac = self.state["device"].get("mac", "").replace(":", "_")
         if not mac:
@@ -1252,21 +1677,59 @@ class BudsDaemon:
                 return parts[1]
         return ""
 
-    def _sink(self):
-        sink = self._buds_sink()
-        if sink:
-            return sink
-        res = run(["pactl", "list", "sinks", "short"], 6)
-        sinks = []
-        for line in (res.stdout or "").splitlines():
-            parts = line.split("\t")
-            if len(parts) >= 2:
-                sinks.append(parts[1])
-        res = run(["pactl", "get-default-sink"], 5)
-        return (res.stdout or "").strip() or (sinks[0] if sinks else "")
+    def _sink(self, force=False):
+        """Current audio sink.
 
-    def refresh_volume(self):
+        With the panel open the state is polled every 500 ms: without a cache
+        every poll made four pactl calls (list sinks, get-default-sink,
+        get-sink-volume and get-sink-mute). The sink almost never changes, so
+        it is cached for a couple of seconds; writes force a refresh so they
+        do not target a sink that no longer exists.
+        """
+        now = time.time()
+        cache = getattr(self, "_sink_cache", None)
+        if not force and cache is not None and now - cache[0] < self.SINK_CACHE_TTL:
+            return cache[1]
+        sink = self._buds_sink()
+        if not sink:
+            res = run(["pactl", "list", "sinks", "short"], 6)
+            sinks = []
+            for line in (res.stdout or "").splitlines():
+                parts = line.split("\t")
+                if len(parts) >= 2:
+                    sinks.append(parts[1])
+            res = run(["pactl", "get-default-sink"], 5)
+            sink = (res.stdout or "").strip() or (sinks[0] if sinks else "")
+        self._sink_cache = (now, sink)
+        return sink
+
+    def refresh_volume(self, force=False):
+        """Read the volume, the mute state and the description of the sink.
+
+        The panel asks for the status twice a second: without a cache every
+        poll started two pactl processes (and the CPU and the battery paid
+        for it). The values are kept for a couple of seconds; the changes of
+        the earbuds arrive at once, through the 'pactl subscribe' watcher of
+        the shortcut engine, so the cache does not hide them.
+        """
         sink = self._sink()
+        now = time.time()
+        cache = getattr(self, "_volume_cache", None)
+        if (
+            not force
+            and cache is not None
+            and cache[0] == sink
+            and now - cache[1] < self.VOLUME_CACHE_TTL
+        ):
+            with self.lock:
+                self.state["volume"] = {
+                    "percent": cache[2],
+                    "muted": cache[3],
+                    "sink": sink,
+                    "description": cache[4],
+                }
+                volume = dict(self.state["volume"])
+            return volume
         pct = None
         muted = False
         desc = ""
@@ -1281,43 +1744,74 @@ class BudsDaemon:
                         pass
             res = run(["pactl", "get-sink-mute", sink], 6)
             muted = "yes" in (res.stdout or "").lower()
-            res = run(["pactl", "list", "sinks"], 6)
-            current = None
-            for line in (res.stdout or "").splitlines():
-                line = line.strip()
-                if line.startswith("Name:"):
-                    current = line.split(":", 1)[1].strip()
-                elif line.startswith("Description:") and current == sink:
-                    desc = line.split(":", 1)[1].strip()
-                    break
+            # The sink description does not change: it is only re-read when
+            # the sink changes (or when there is none yet).
+            desc_cache = getattr(self, "_sink_desc", None)
+            if desc_cache is not None and desc_cache[0] == sink:
+                desc = desc_cache[1]
+            else:
+                res = run(["pactl", "list", "sinks"], 6)
+                current = None
+                for line in (res.stdout or "").splitlines():
+                    line = line.strip()
+                    if line.startswith("Name:"):
+                        current = line.split(":", 1)[1].strip()
+                    elif line.startswith("Description:") and current == sink:
+                        desc = line.split(":", 1)[1].strip()
+                        break
+                self._sink_desc = (sink, desc)
+        self._volume_cache = (sink, now, pct, muted, desc)
         with self.lock:
             self.state["volume"] = {"percent": pct, "muted": muted, "sink": sink, "description": desc}
-        return self.state["volume"]
+            volume = dict(self.state["volume"])
+        return volume
 
     def set_volume(self, percent: int | None = None, mute: str | None = None):
-        sink = self._sink()
-        if not sink:
-            raise RuntimeError("No hay sink de audio")
-        pct = None
-        if percent is not None:
-            pct = max(0, min(150, int(percent)))
-            if self.local is not None:
-                # Se marca el valor que ponemos (ya recortado): el motor lo
-                # usa para distinguir nuestros cambios de los gestos del
-                # auricular. Si se marcara el valor sin recortar, no
-                # coincidiria con el volumen real y el motor creeria que
-                # el cambio era un gesto del usuario.
-                self.local.note_self_change(pct)
-            run(["pactl", "set-sink-volume", sink, f"{pct}%"], 6)
-        if mute == "toggle":
-            run(["pactl", "set-sink-mute", sink, "toggle"], 6)
-        elif mute in ("on", "off"):
-            run(["pactl", "set-sink-mute", sink, "1" if mute == "on" else "0"], 6)
-        self.refresh_volume()
-        self.save()
-        return self.state
+        # The volume writes are serialized: every RPC runs in its own thread
+        # and two writes at the same time (the wheel of the widget sends one
+        # request per event) would end up in an order the user did not ask
+        # for: the last one to reach pactl wins, not the last one asked for.
+        with self._volume_lock:
+            # force=True: when writing, a cached sink is not good enough (it
+            # may have changed just now).
+            sink = self._sink(force=True)
+            if not sink:
+                raise UserError("no audio sink", code="no_sink")
+            pct = None
+            if percent is not None:
+                pct = max(0, min(150, int(percent)))
+                res = run(["pactl", "set-sink-volume", sink, f"{pct}%"], 6)
+                if res.returncode != 0:
+                    # The volume did not change: the engine must not be told
+                    # about a change that did not happen.
+                    raise UserError(
+                        "could not set the volume",
+                        code="daemon_failed",
+                        detail=(res.stderr or res.stdout or "").strip() or "pactl failed",
+                    )
+                if self.local is not None:
+                    # Mark the value we set (already clamped): the engine uses it
+                    # to tell our changes apart from the earbud gestures. If the
+                    # unclamped value were marked, it would not match the real
+                    # volume and the engine would think the change is a user
+                    # gesture.
+                    self.local.note_self_change(pct)
+            mute_res = None
+            if mute == "toggle":
+                mute_res = run(["pactl", "set-sink-mute", sink, "toggle"], 6)
+            elif mute in ("on", "off"):
+                mute_res = run(["pactl", "set-sink-mute", sink, "1" if mute == "on" else "0"], 6)
+            if mute_res is not None and mute_res.returncode != 0:
+                raise UserError(
+                    "could not change the mute state",
+                    code="daemon_failed",
+                    detail=(mute_res.stderr or mute_res.stdout or "").strip() or "pactl failed",
+                )
+            self.refresh_volume(force=True)
+            self.save()
+            return self.snapshot()
 
-    # -- lazo principal ------------------------------------------------------
+    # -- main loop ------------------------------------------------------
     def monitor(self):
         while not self.stop_event.is_set():
             now = time.time()
@@ -1328,40 +1822,41 @@ class BudsDaemon:
                     if now - self.last_full >= self.poll:
                         self.query_all()
                     else:
-                        # El volumen tambien se refresca entre sondeos: los
-                        # cambios hechos desde el movil no siempre generan una
-                        # notificacion RFCOMM. Cada 5 s basta (pactl es caro) y
-                        # el watcher de volumen ya publica los cambios al
-                        # instante.
+                        # Volume is also refreshed between polls: changes made
+                        # from the phone do not always produce an RFCOMM
+                        # notification. Every 5 s is enough (pactl is costly)
+                        # and the volume watcher already publishes changes
+                        # instantly.
                         if not hasattr(self, "_last_volume_check"):
                             self._last_volume_check = 0
                         if now - self._last_volume_check >= 5:
                             self._last_volume_check = now
                             self.refresh_volume()
-                # Test de ajuste que nunca devuelve resultado (auricular mal
-                # puesto, firmware que no notifica): se cierra con un aviso en
-                # vez de quedarse "midiendo" para siempre.
+                # A fit test that never returns a result (earbud badly seated,
+                # firmware that does not notify): close it with a warning
+                # instead of staying "measuring" forever.
                 if self.state["fit_test"].get("running") and self.fit_started:
                     if now - self.fit_started > 30:
                         with self.lock:
                             self.state["fit_test"]["running"] = False
                             self.state["fit_test"]["error"] = "timeout"
                         self.fit_started = 0.0
-                        self.log("Test de ajuste sin respuesta: se cancela")
+                        self.log("Fit test without a response: cancelling")
                         self.save()
-                # apagar anillos automáticamente
-                self._apagar_anillos(now)
+                # turn the rings off automatically
+                self._stop_rings(now)
                 if self.link is None or not self.link.connected:
                     self.refresh_volume()
                     self.save()
             except Exception as exc:
                 self.log("monitor: " + traceback.format_exc())
-                with self.lock:
-                    self.state["error"] = str(exc)
+                self._set_error("daemon_failed", str(exc))
                 self.save()
             if now - self.last_client > self.idle_timeout:
-                self.log("Sin clientes; cerrando demonio")
-                self.stop_event.set()
+                self.log("No clients; shutting down the daemon")
+                # The whole daemon goes down, not only the monitor thread:
+                # the RPC server would keep answering with a stale state.
+                self.shutdown()
                 break
             self.stop_event.wait(1.0 if (self.link and self.link.connected) else 3.0)
 
@@ -1372,18 +1867,32 @@ class BudsDaemon:
         if cmd == "ping":
             return {"ok": True, "state": self.snapshot()}
         if cmd == "configure":
-            # Los ajustes del plugin (sondeo, nombre y MAC) llegan tambien al
-            # demonio ya arrancado: antes solo se aplicaban al crearlo.
+            # The plugin settings (poll, name and MAC) also reach an already
+            # running daemon: before, they were only applied when creating it.
+            # The service sends them on every round, so the daemon always runs
+            # with the user's configuration (when the plugin reloads, the
+            # daemon starts with the default values).
+            changes = []
             poll = req.get("poll")
             if poll is not None:
-                try:
-                    self.poll = max(15, min(3600, int(poll)))
-                except (TypeError, ValueError):
-                    pass
+                # clamp_poll() never raises: an invalid value falls back to
+                # the default.
+                new_poll = clamp_poll(poll)
+                if new_poll != self.poll:
+                    changes.append("poll every %d s" % new_poll)
+                self.poll = new_poll
             if req.get("device_mac") is not None:
-                self.preferred_mac = str(req.get("device_mac") or "").strip()
+                mac = str(req.get("device_mac") or "").strip()
+                if mac != self.preferred_mac:
+                    changes.append("MAC %s" % (mac or "(none)"))
+                self.preferred_mac = mac
             if req.get("device_name") is not None:
-                self.preferred_name = str(req.get("device_name") or "").strip()
+                device_name = str(req.get("device_name") or "").strip()
+                if device_name != self.preferred_name:
+                    changes.append("device %s" % (device_name or "(any)"))
+                self.preferred_name = device_name
+            if changes:
+                self.log("Configuration applied: " + ", ".join(changes))
             return {"ok": True, "state": self.snapshot()}
         if cmd == "devices":
             return {"ok": True, "state": self.snapshot(), "devices": self.list_devices()}
@@ -1403,13 +1912,44 @@ class BudsDaemon:
             return {"ok": True, "state": self.snapshot()}
         if cmd == "refresh":
             if self.link and self.link.connected:
-                self.query_all()
+                ok = self.query_all()
             else:
-                self.connect(force_bt=True)
-            return {"ok": True, "state": self.snapshot()}
+                # user=True: the refresh is a manual action, it must not be
+                # blocked by the backoff of the automatic reconnections.
+                ok = self.connect(force_bt=True, user=True)
+            # The real result is reported: before, the panel always cleared
+            # the error message even when the earbuds were not reachable.
+            with self.lock:
+                error = "" if ok else self.state.get("error", "")
+                error_detail = "" if ok else self.state.get("error_detail", "")
+            return {
+                "ok": bool(ok),
+                "error": error,
+                "error_detail": error_detail,
+                "state": self.snapshot(),
+            }
         if cmd == "connect":
-            self.connect(force_bt=True)
-            return {"ok": True, "state": self.snapshot()}
+            ok = self.connect(force_bt=True, user=True)
+            state = self.snapshot()
+            return {
+                "ok": ok,
+                "error": "" if ok else state.get("error", ""),
+                "error_detail": "" if ok else state.get("error_detail", ""),
+                "state": state,
+            }
+        if cmd == "reconnect":
+            # The link is closed and opened again: the connect command
+            # does nothing when the link is alive, and a half-open link
+            # can only be recovered this way.
+            self.disconnect()
+            ok = self.connect(force_bt=True, user=True)
+            state = self.snapshot()
+            return {
+                "ok": bool(ok),
+                "error": "" if ok else state.get("error", ""),
+                "error_detail": "" if ok else state.get("error_detail", ""),
+                "state": state,
+            }
         if cmd == "anc":
             return {"ok": True, "state": self.set_anc(req.get("mode", "anc"), req.get("level"))}
         if cmd == "eq":
@@ -1432,42 +1972,104 @@ class BudsDaemon:
             return {"ok": True, "state": self.snapshot(), "local_actions": self._local_snapshot()}
         if cmd == "local_rule_set":
             if self.local is None:
-                raise RuntimeError("El motor de acciones locales no está disponible")
+                raise UserError(
+                    "the local action engine is not available",
+                    code="engine_unavailable",
+                )
             rule = req.get("rule") or {}
-            saved = self.local.upsert(dict(rule))
+            if not isinstance(rule, dict):
+                raise UserError("a rule must be an object", code="invalid_rule")
+            try:
+                saved = self.local.upsert(dict(rule))
+            except ValueError as exc:
+                raise UserError(str(exc), code="invalid_rule") from exc
             return {"ok": True, "state": self.snapshot(), "local_actions": self._local_snapshot(), "rule": saved}
         if cmd == "local_rule_delete":
             if self.local is None:
-                raise RuntimeError("El motor de acciones locales no está disponible")
+                raise UserError(
+                    "the local action engine is not available",
+                    code="engine_unavailable",
+                )
             self.local.delete(req.get("id", ""))
             return {"ok": True, "state": self.snapshot(), "local_actions": self._local_snapshot()}
         if cmd == "local_test":
             if self.local is None:
-                raise RuntimeError("El motor de acciones locales no está disponible")
+                raise UserError(
+                    "the local action engine is not available",
+                    code="engine_unavailable",
+                )
             command = (req.get("command") or "").strip()
             if not command:
-                raise ValueError("Falta el comando")
-            ok = self.local.run_command(command)
-            return {"ok": ok, "state": self.snapshot(), "local_actions": self._local_snapshot()}
+                raise UserError("missing command", code="missing_command")
+            # The details tell what happened: the panel shows the exit status
+            # and the output of the command, so the user knows why it failed.
+            details = {}
+            ok = self.local.run_command(command, wait=True, details=details)
+            response = {
+                "ok": bool(ok),
+                "state": self.snapshot(),
+                "local_actions": self._local_snapshot(),
+            }
+            if not ok:
+                detail = str(details.get("stderr") or details.get("stdout") or "").strip()
+                if not detail:
+                    detail = str(details.get("error") or "").strip()
+                status = details.get("returncode")
+                if status is None:
+                    message = detail or "the command failed"
+                elif detail:
+                    message = "exit status %s: %s" % (status, detail)
+                else:
+                    message = "exit status %s" % status
+                response["error"] = "command_failed"
+                response["error_detail"] = message
+            else:
+                response["error"] = ""
+                response["error_detail"] = ""
+            return response
         if cmd == "shutdown":
             threading.Thread(target=self.shutdown, daemon=True).start()
             return {"ok": True, "state": self.snapshot()}
-        raise ValueError("comando desconocido")
+        raise UserError("unknown command", code="unknown_command")
 
     def snapshot(self):
+        # The panel polls `status` twice a second and re-seeds its rule list from
+        # `local_actions`: the cached copy in self.state only refreshes on the
+        # monitor tick, so handing it back reverted every toggle the user had
+        # just flipped. Take a fresh engine snapshot instead.
+        # Lock order is engine -> daemon: the engine snapshot is taken before
+        # the daemon lock, the same order the monitor loop uses.
+        local_state = self._local_snapshot()
         with self.lock:
-            return json.loads(json.dumps(self.state))
+            state = json.loads(json.dumps(self.state))
+        state["local_actions"] = local_state
+        return state
 
     def _local_snapshot(self):
+        # The fallback has the same shape as the engine snapshot: the panel
+        # reads 'last_event' and 'last_action', so a different set of keys
+        # would leave the panel without its last shortcut information.
+        # A fresh dict every time: the panel may modify what it receives and
+        # the next snapshot must not inherit those changes.
         if self.local is None:
-            return {"rules": [], "last": {}, "modifiers": [], "modifiers_available": False}
+            return self._empty_local_snapshot()
         try:
             return self.local.snapshot()
         except Exception as exc:
-            self.log("snapshot local: %s" % exc)
-            return {"rules": [], "last": {}, "modifiers": [], "modifiers_available": False}
+            self.log("local snapshot: %s" % exc)
+            return self._empty_local_snapshot()
 
-    # -- ciclo de vida -------------------------------------------------------
+    @staticmethod
+    def _empty_local_snapshot():
+        return {
+            "rules": [],
+            "last_event": {},
+            "last_action": {},
+            "modifiers": [],
+            "modifiers_available": False,
+        }
+
+    # -- lifecycle -------------------------------------------------------
     def shutdown(self):
         self.stop_event.set()
         self.disconnect()
@@ -1477,20 +2079,35 @@ class BudsDaemon:
             except Exception:
                 pass
 
+    def _load_previous_state(self):
+        """Read the state of the previous run.
+
+        The shortcut engine needs the device MAC from the start, so it does
+        not wait for the RFCOMM link. A broken file (or a 'device' that is
+        not an object) is ignored: the daemon starts with the default state
+        instead of failing.
+        """
+        try:
+            if not os.path.exists(self.state_path):
+                return
+            with open(self.state_path, "r", encoding="utf-8") as fh:
+                saved = json.load(fh)
+            if not isinstance(saved, dict):
+                return
+            device = saved.get("device")
+            if isinstance(device, dict) and device:
+                with self.lock:
+                    self.state["device"] = device
+        except Exception as exc:
+            self.log("Could not read the previous state: %s" % exc)
+
     def run(self):
         os.makedirs(os.path.dirname(self.state_path), exist_ok=True)
         os.makedirs(os.path.dirname(self.socket_path), exist_ok=True)
-        # Cargar el estado previo: asi el motor de atajos conoce la MAC del
-        # dispositivo desde el primer momento y no espera al enlace RFCOMM.
-        try:
-            if os.path.exists(self.state_path):
-                with open(self.state_path, "r", encoding="utf-8") as fh:
-                    saved = json.load(fh)
-                if isinstance(saved, dict) and saved.get("device"):
-                    self.state["device"] = saved["device"]
-        except Exception as exc:
-            self.log("No se pudo leer el estado previo: %s" % exc)
-        # lock exclusivo
+        # Load the previous state: this way the shortcut engine knows the
+        # device MAC from the start and does not wait for the RFCOMM link.
+        self._load_previous_state()
+        # exclusive lock
         lock_path = self.socket_path + ".lock"
         self._lock_file = open(lock_path, "a+")
         try:
@@ -1503,30 +2120,12 @@ class BudsDaemon:
                 os.unlink(self.socket_path)
         except OSError:
             pass
-        daemon = self
-
-        class Handler(socketserver.StreamRequestHandler):
-            def handle(self):
-                daemon.last_client = time.time()
-                try:
-                    line = self.rfile.readline(65536)
-                    if not line:
-                        return
-                    req = json.loads(line.decode("utf-8"))
-                    resp = daemon.handle_rpc(req)
-                except Exception as exc:
-                    daemon.log("rpc: " + traceback.format_exc())
-                    resp = {"ok": False, "error": str(exc), "state": daemon.snapshot()}
-                try:
-                    self.wfile.write((json.dumps(resp, ensure_ascii=False) + "\n").encode("utf-8"))
-                except Exception:
-                    pass
-
         class Server(socketserver.ThreadingUnixStreamServer):
             allow_reuse_address = True
             daemon_threads = True
 
-        self._server = Server(self.socket_path, Handler)
+        self._server = Server(self.socket_path, RpcHandler)
+        self._server.daemon = self
         try:
             os.chmod(self.socket_path, 0o600)
         except OSError:
@@ -1540,13 +2139,13 @@ class BudsDaemon:
         signal.signal(signal.SIGTERM, on_sig)
         signal.signal(signal.SIGINT, on_sig)
 
-        self.log(f"Demonio iniciado (pid {os.getpid()}, socket {self.socket_path})")
+        self.log(f"Daemon started (pid {os.getpid()}, socket {self.socket_path})")
         threading.Thread(target=self.monitor, name="buds-monitor", daemon=True).start()
         if self.local is not None:
             try:
                 self.local.start(self._buds_sink)
             except Exception as exc:
-                self.log("No se pudo iniciar el motor de acciones locales: %s" % exc)
+                self.log("Could not start the local action engine: %s" % exc)
         try:
             self._server.serve_forever(poll_interval=0.5)
         finally:
@@ -1570,11 +2169,17 @@ class BudsDaemon:
                     fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
                 except OSError:
                     pass
-            self.log("Demonio detenido")
+            self.log("Daemon stopped")
         return 0
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
+
+
+# The biggest answer the daemon may send. The state of the earbuds is a few
+# kilobytes: a bigger answer means something is broken, and it must not be
+# read into memory without a limit.
+MAX_RESPONSE = 4 * 1024 * 1024
 
 
 def default_paths():
@@ -1587,18 +2192,30 @@ def default_paths():
     }
 
 
-def rpc_call(socket_path, req, timeout=8.0):
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    sock.connect(socket_path)
-    sock.sendall((json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8"))
-    data = b""
-    while b"\n" not in data:
-        chunk = sock.recv(65536)
-        if not chunk:
-            break
-        data += chunk
-    sock.close()
+def rpc_call(socket_path, req, timeout=RPC_TIMEOUT):
+    """Send one RPC request and return the answer.
+
+    The timeout has to be longer than a full query of the earbuds: the
+    daemon answers 'refresh' only after every command has been sent (that
+    takes about 15 s) and a reconnection can take a minute.
+    """
+    socket_path = os.path.abspath(os.path.expanduser(socket_path))
+    # The socket is closed in every case: a failed call (the daemon is not
+    # running, the answer is not JSON) leaked the file descriptor.
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
+        sock.connect(socket_path)
+        sock.sendall((json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8"))
+        data = b""
+        while b"\n" not in data:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+            if len(data) > MAX_RESPONSE:
+                # A daemon that answers with megabytes is broken: the answer
+                # is not read into memory without a limit.
+                raise RuntimeError("the daemon answer is too large")
     return json.loads(data.decode("utf-8"))
 
 
@@ -1608,7 +2225,7 @@ def ensure_daemon(args, paths):
         return rpc_call(socket_path, {"cmd": "ping"}, 1.0)
     except Exception:
         pass
-    # arrancar en segundo plano
+    # start in the background
     cmd = [
         sys.executable,
         os.path.abspath(__file__),
@@ -1616,7 +2233,7 @@ def ensure_daemon(args, paths):
         "--state", os.path.abspath(os.path.expanduser(args.state or paths["state"])),
         "--socket", socket_path,
         "--log", os.path.abspath(os.path.expanduser(args.log or paths["log"])),
-        "--poll", str(getattr(args, "poll", 60)),
+        "--poll", str(clamp_poll(getattr(args, "poll", POLL_DEFAULT))),
         "--idle-timeout", str(getattr(args, "idle_timeout", 300)),
         "--device-mac", getattr(args, "device_mac", "") or "",
         "--device-name", getattr(args, "device_name", "") or "",
@@ -1624,7 +2241,7 @@ def ensure_daemon(args, paths):
     try:
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError as exc:
-        raise RuntimeError(f"No se pudo iniciar el demonio: {exc}")
+        raise RuntimeError(f"Could not start the daemon: {exc}")
     deadline = time.time() + 4
     last = None
     while time.time() < deadline:
@@ -1633,19 +2250,103 @@ def ensure_daemon(args, paths):
         except Exception as exc:
             last = exc
             time.sleep(0.2)
-    raise RuntimeError(f"El demonio no arrancó: {last}")
+    raise RuntimeError(f"The daemon did not start: {last}")
 
 
-def main(argv=None):
-    paths = default_paths()
-    parser = argparse.ArgumentParser(description="Control de CMF Buds Pro 2")
+def _lock_is_free(lock_path):
+    """Whether nobody holds the lock of the daemon."""
+    try:
+        handle = open(lock_path, "a+")
+    except OSError:
+        return False
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            handle.close()
+        except OSError:
+            pass
+
+
+def wait_for_daemon_exit(socket_path, timeout=5.0):
+    """Wait until the daemon released the socket and its lock.
+
+    The service starts the daemon again after a configuration change: the
+    new daemon would find the lock taken by the old one and quit without
+    doing anything, so the stop has to be finished before the start.
+    """
+    socket_path = os.path.abspath(os.path.expanduser(socket_path))
+    lock_path = socket_path + ".lock"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not os.path.exists(socket_path) and _lock_is_free(lock_path):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def rpc_request(args, paths, req):
+    """Send one request to the daemon, starting it when it is not there.
+
+    A request that times out is not repeated blindly: the daemon may be
+    working on it (a reconnection takes almost a minute) and sending it
+    again would do the work twice. The request is only repeated when a
+    ping proves that the daemon is not running.
+
+    With 'no_autostart' the daemon is never started: the service uses it so
+    a request that is in flight when the plugin is disabled does not bring
+    the daemon back.
+    """
+    socket_path = os.path.abspath(
+        os.path.expanduser(args.socket or paths["socket"])
+    )
+    try:
+        return rpc_call(socket_path, req, RPC_TIMEOUT)
+    except Exception:
+        pass
+    try:
+        rpc_call(socket_path, {"cmd": "ping"}, 2.0)
+    except Exception:
+        if getattr(args, "no_autostart", False):
+            # The daemon must not be started: it would outlive the plugin.
+            return {
+                "ok": False,
+                "error": "daemon_failed",
+                "error_detail": "the daemon is not running",
+            }
+        # The daemon is not running: it is started and the request is
+        # sent again.
+        ensure_daemon(args, paths)
+        return rpc_call(socket_path, req, RPC_TIMEOUT)
+    # The daemon is alive but did not answer in time: the request is not
+    # repeated, because it may still be running there.
+    return {
+        "ok": False,
+        "error": "daemon_failed",
+        "error_detail": "the daemon did not answer in %d s" % int(RPC_TIMEOUT),
+    }
+
+
+def build_parser(paths=None):
+    """Command line parser.
+
+    The poll interval has one single range (20-300 s), the same as the
+    manifest: the daemon and the settings panel always agree.
+    """
+    if paths is None:
+        paths = default_paths()
+    parser = argparse.ArgumentParser(description="Control the CMF Buds Pro 2")
     sub = parser.add_subparsers(dest="command")
 
     p_daemon = sub.add_parser("daemon")
     p_daemon.add_argument("--state", default=paths["state"])
     p_daemon.add_argument("--socket", default=paths["socket"])
     p_daemon.add_argument("--log", default=paths["log"])
-    p_daemon.add_argument("--poll", type=int, default=60)
+    p_daemon.add_argument("--poll", type=int, default=POLL_DEFAULT)
     p_daemon.add_argument("--idle-timeout", type=int, default=300)
     p_daemon.add_argument("--device-mac", default="")
     p_daemon.add_argument("--device-name", default="")
@@ -1656,11 +2357,34 @@ def main(argv=None):
         p.add_argument("--socket", default=paths["socket"])
         p.add_argument("--log", default=paths["log"])
         p.add_argument("payload", nargs="?")
-        p.add_argument("--poll", type=int, default=60)
+        p.add_argument("--poll", type=int, default=POLL_DEFAULT)
         p.add_argument("--idle-timeout", type=int, default=300)
         p.add_argument("--device-mac", default="")
         p.add_argument("--device-name", default="")
+        # The daemon is not started when it is not running: the service uses
+        # it so a request in flight does not bring it back after the plugin
+        # was disabled.
+        p.add_argument("--no-autostart", action="store_true")
 
+    return parser
+
+
+def _cli_error(exc):
+    """JSON answer of the command line when the daemon cannot be reached.
+
+    The command line speaks the same contract as the RPC: a stable code and
+    the technical detail apart.
+    """
+    code = getattr(exc, "code", "") or "daemon_failed"
+    detail = getattr(exc, "detail", "") or str(exc)
+    return json.dumps(
+        {"ok": False, "error": code, "error_detail": detail, "state": None}
+    )
+
+
+def main(argv=None):
+    paths = default_paths()
+    parser = build_parser(paths)
     args = parser.parse_args(argv)
     if args.command == "daemon":
         daemon = BudsDaemon(args)
@@ -1669,39 +2393,53 @@ def main(argv=None):
     if args.command == "stop":
         try:
             rpc_call(args.socket, {"cmd": "shutdown"}, 2.0)
+            # The stop waits for the daemon to release the socket and its
+            # lock: the caller can start it again right away.
+            wait_for_daemon_exit(args.socket, timeout=5.0)
             print(json.dumps({"ok": True}))
         except Exception as exc:
-            print(json.dumps({"ok": False, "error": str(exc)}))
+            print(_cli_error(exc))
         return 0
 
     if args.command == "rpc":
         try:
             req = json.loads(args.payload or "{}")
         except json.JSONDecodeError as exc:
-            print(json.dumps({"ok": False, "error": f"JSON inválido: {exc}"}))
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "invalid_json",
+                        "error_detail": str(exc),
+                    }
+                )
+            )
+            return 2
+        if not isinstance(req, dict):
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "invalid_request",
+                        "error_detail": "the request must be an object",
+                    }
+                )
+            )
             return 2
         try:
-            res = rpc_call(args.socket, req)
-        except Exception:
-            try:
-                ensure_daemon(args, paths)
-                res = rpc_call(args.socket, req)
-            except Exception as exc:
-                print(json.dumps({"ok": False, "error": str(exc), "state": None}))
-                return 1
+            res = rpc_request(args, paths, req)
+        except Exception as exc:
+            print(_cli_error(exc))
+            return 1
         print(json.dumps(res, ensure_ascii=False))
         return 0
 
     # status
     try:
-        res = rpc_call(args.socket, {"cmd": "status"})
-    except Exception:
-        try:
-            ensure_daemon(args, paths)
-            res = rpc_call(args.socket, {"cmd": "status"})
-        except Exception as exc:
-            print(json.dumps({"ok": False, "error": str(exc), "state": None}))
-            return 1
+        res = rpc_request(args, paths, {"cmd": "status"})
+    except Exception as exc:
+        print(_cli_error(exc))
+        return 1
     print(json.dumps(res, ensure_ascii=False))
     return 0
 

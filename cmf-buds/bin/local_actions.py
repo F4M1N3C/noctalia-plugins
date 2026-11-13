@@ -1,52 +1,56 @@
-"""Acciones locales para los CMF Buds.
+"""Local actions for the CMF Buds.
 
-Los auriculares no guardan comandos arbitrarios: el firmware solo acepta una
-lista fija de acciones (reproducir, siguiente, volumen, ANC...). Lo que llega
-al PC es la *accion resultante*, no la pulsacion cruda.
+The earbuds do not store arbitrary commands: the firmware only accepts a
+fixed list of actions (play, next, volume, ANC...). What reaches the PC is
+the *resulting action*, not the raw press.
 
-Por eso las macros se construyen en el PC:
+That is why the macros are built on the PC:
 
-* El daemon vigila el sink de los auriculares con ``pactl subscribe``. Cuando
-  la accion elegida en el auricular es "volumen +/-" (por ejemplo el triple
-  toque del boton del estuche), el PC recibe la tecla AVRCP y el volumen del
-  sink cambia solo -> ese cambio es la senal.
-* Se agrupan las senales en multitactiles (doble, triple...) con una ventana
-  de tiempo.
-* Se consulta el estado de los modificadores (SUPER, CTRL, ALT, SHIFT) leyendo
-  /dev/input/event* directamente, para poder exigir "SUPER mantenido".
-* Si hay una regla que encaja, se ejecuta el comando local.
+* The daemon watches the earbuds' sink with ``pactl subscribe``. When the
+  action picked on the earbud is "volume +/-" (for example the triple tap
+  of the case button), the PC receives the AVRCP key and the sink volume
+  changes on its own -> that change is the signal.
+* The signals are grouped into multi-taps (double, triple...) with a time
+  window.
+* The modifier state (SUPER, CTRL, ALT, SHIFT) is read straight from
+  /dev/input/event* so a rule can require "SUPER held".
+* If a rule matches, the local command runs.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
 import select
+import shlex
+import signal
 import struct
 import subprocess
 import threading
 import time
+import uuid
 
-# Ventana para agrupar varias pulsaciones en una (multitactil).
+# Window used to group several presses into one (multi-tap).
 GROUP_WINDOW = 0.7
-# (Sin ventana temporal: nuestro cambio de volumen se reconoce por el valor
-# que ponemos, no por cuando lo hicimos. Una ventana de tiempo se comia los
-# gestos del usuario que llegaban justo despues de restaurar el volumen.)
-# Red de seguridad minima contra eventos duplicados. La identidad de un
-# evento la da el valor (dos eventos con el mismo volumen son el mismo), asi
-# que esta ventana solo tiene que ser mas pequena que el intervalo entre dos
-# pinchazos reales (100-250 ms): con 200 ms un triple rapido se contaba como
-# un solo gesto; con 60 ms todavia se perdian pinchazos muy juntos.
+# (No time window: our volume change is recognized by the value we set, not
+# by when we set it. A time window swallowed the user's gestures that
+# arrived right after the volume was restored.)
+# Minimal safety net against duplicate events. An event's identity comes
+# from its value (two events with the same volume are the same one), so this
+# window only has to be shorter than the interval between two real taps
+# (100-250 ms): at 200 ms a fast triple counted as a single gesture; at
+# 60 ms very close taps were still lost.
 EVENT_GAP = 0.03
-# Tras disparar un atajo se ignoran los eventos hasta que el volumen se
-# estabiliza: al restaurar el volumen, los auriculares devuelven el suyo y
-# generan un eco que dispararia el atajo otra vez (workspace +1 y -1).
-# Espera antes de restaurar el volumen: PipeWire aplica el volumen con una
-# rampa de ~0.5 s, y un cambio emitido durante la rampa se pierde (el
-# destino de la rampa gana). Hay que esperar a que termine.
+# After firing a shortcut, events are ignored until the volume settles: when
+# the volume is restored the earbuds send theirs back and generate an echo
+# that would fire the shortcut again (workspace +1 and -1).
+# Wait before restoring the volume: PipeWire applies the volume with a
+# ~0.5 s ramp, and a change emitted during the ramp is lost (the ramp
+# target wins). We have to wait for it to finish.
 RESTORE_DELAY = 0.8
-# Reintentos del restore si el volumen no se queda donde debe.
+# Retries for the restore when the volume does not stay where it should.
 RESTORE_ATTEMPTS = 2
 
 MODIFIER_CODES = {
@@ -60,22 +64,21 @@ MODIFIER_CODES = {
     54: "shift",
 }
 
-# Tiempo que vive la marca de "cambio hecho por nosotros". Solo debe
-# absorber el eco del dispositivo: si viviera para siempre, el primer gesto
-# del usuario que cayera dentro de +-1 se tragaria.
+# Lifetime of the "change made by us" mark. It must only absorb the device
+# echo: if it lived forever, the first user gesture landing within +-1 would
+# be swallowed.
 SELF_CHANGE_TTL = 2.0
 
-# Disparadores que el motor puede generar. La UI usa los mismos nombres:
-# si se desincronizasen, las reglas de la UI no se dispararian nunca.
+# Triggers the engine can generate. The UI uses the same names: if they
+# drifted apart, the UI rules would never fire.
 #
-# "knob_press" es una pulsacion del boton del estuche. Los auriculares no
-# mandan la pulsacion cruda: mandan la accion configurada (play/pause,
-# siguiente, anterior). Se detecta por MPRIS (dbus-monitor) y se agrupa con
-# la misma ventana que el dial, asi que sirve para "pulsar el knob 1, 2 o 3
-# veces".
+# "knob_press" is a press of the case button. The earbuds do not send the
+# raw press: they send the configured action (play/pause, next, previous).
+# It is detected through MPRIS (dbus-monitor) and grouped with the same
+# window as the dial, so it serves for "press the knob 1, 2 or 3 times".
 TRIGGERS = ("volume_up", "volume_down", "knob_press")
 
-# Miembros MPRIS que cuentan como una pulsacion del boton del estuche.
+# MPRIS members that count as a press of the case button.
 MEDIA_PRESS_MEMBERS = ("PlayPause", "Play", "Pause", "Next", "Previous", "Stop")
 MEDIA_PRESS_PATTERN = re.compile(r"member=(%s)\b" % "|".join(MEDIA_PRESS_MEMBERS))
 
@@ -86,15 +89,25 @@ MODIFIER_LABELS = {
     "shift": "SHIFT",
 }
 
-# Tamano de struct input_event en Linux x86_64: timeval(16) + u16 + u16 + s32
-INPUT_EVENT_SIZE = 24
+# Layout of struct input_event: timeval(16) + u16 + u16 + s32 on 64-bit.
+# The size is computed from the format so it also fits the 32-bit layout
+# (timeval(8)), where a hardcoded size would misparse every event.
 INPUT_EVENT_FORMAT = "llHHi"
 
-# Linea de 'pactl subscribe' que avisa de un cambio en un sink.
+
+def _input_event_size(fmt=INPUT_EVENT_FORMAT):
+    """Size of an input_event record for the given struct format."""
+    return struct.calcsize(fmt)
+
+
+INPUT_EVENT_SIZE = _input_event_size()
+
+# 'pactl subscribe' line that announces a change on a sink.
 SINK_EVENT_PATTERN = re.compile(r"Event 'change' on sink #(\d+)")
 
-# Tiempo que una suscripcion debe aguantar sin errores para darse por buena.
-# Si se cierra antes, es un fallo mas (si no, se reiniciaria en bucle).
+# How long a subscription must run without errors to be considered healthy.
+# If it closes earlier, that is one more failure (otherwise it would restart
+# in a loop).
 HEALTHY_SECONDS = 5.0
 
 
@@ -112,7 +125,7 @@ def _run(cmd, timeout=6):
 
 
 def _as_int(value, default=None):
-    """Convierte a entero; None si el dato no es un numero valido."""
+    """Converts to int; None when the value is not a valid number."""
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -120,7 +133,7 @@ def _as_int(value, default=None):
 
 
 def _as_list(value):
-    """Devuelve una lista de modificadores aunque el dato venga raro."""
+    """Returns a list of modifiers even when the value comes in odd."""
     if isinstance(value, (list, tuple)):
         return [str(v) for v in value]
     if isinstance(value, str):
@@ -128,23 +141,23 @@ def _as_list(value):
     return []
 
 
-def _debe_restaurar(actual, desde, tolerancia=1):
-    """Si el volumen se puede restituir tras un atajo.
+def _should_restore(current, previous, tolerance=1):
+    """Whether the volume can be restored after a shortcut.
 
-    'actual' es el volumen de ahora y 'desde' el que habia justo despues
-    del gesto. Si son muy distintos, el usuario ha girado el dial otra vez y
-    su cambio se respeta: no se restaura el volumen anterior.
+    'current' is the volume now and 'previous' the one right after the
+    gesture. If they differ a lot, the user turned the dial again and their
+    change is respected: the previous volume is not restored.
     """
-    if actual is None or desde is None:
+    if current is None or previous is None:
         return True
-    return abs(int(actual) - int(desde)) <= tolerancia
+    return abs(int(current) - int(previous)) <= tolerance
 
 
-def _modifier_de_evento(etype, code):
-    """Nombre del modificador de un evento de teclado, o None.
+def _modifier_from_event(etype, code):
+    """Modifier name of a keyboard event, or None.
 
-    Aparte para poder comprobarlo: si un codigo se cambiara, las reglas que
-    exigen SUPER dejarian de dispararse nunca y no habria ningun error.
+    Kept separate so it can be checked: if a code changed, the rules that
+    require SUPER would never fire and there would be no error.
     """
     if etype != 1:  # EV_KEY
         return None
@@ -163,16 +176,19 @@ def _list_event_devices():
 
 
 class ModifierTracker:
-    """Estado de los modificadores del teclado leido de /dev/input/event*."""
+    """Keyboard modifier state read from /dev/input/event*."""
 
     def __init__(self, log=None):
         self.held = set()
         self.available = False
         self.log = log or (lambda msg: None)
-        self._fds = {}       # fd -> ruta
-        self._by_path = {}   # ruta -> fd
+        self._fds = {}       # fd -> path
+        self._by_path = {}   # path -> fd
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        # The descriptors are read by the reader thread and closed by stop():
+        # a dedicated lock keeps the two apart.
+        self._fd_lock = threading.RLock()
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
     def start(self):
@@ -180,83 +196,114 @@ class ModifierTracker:
 
     def stop(self):
         self._stop.set()
-        for fd in list(self._fds.keys()):
+        # The reader thread is waited for before closing the descriptors: it
+        # may be opening the devices right now, and the ones it opens after
+        # this point would stay open forever. Waiting also avoids closing a
+        # descriptor that another thread is about to reuse.
+        if self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+        self._close_devices()
+
+    def _close_devices(self):
+        with self._fd_lock:
+            fds = list(self._fds.keys())
+            self._fds.clear()
+            self._by_path.clear()
+            self.available = False
+        for fd in fds:
             try:
                 os.close(fd)
             except Exception:
                 pass
-        self._fds.clear()
-        self._by_path.clear()
 
     def modifiers(self):
         with self._lock:
             return sorted(self.held)
 
-    def is_held(self, name):
-        with self._lock:
-            return name in self.held
-
     def _open_devices(self):
         for path in sorted(_list_event_devices()):
+            if self._stop.is_set():
+                return
             try:
                 fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
             except Exception:
                 continue
-            self._fds[fd] = path
-            self._by_path[path] = fd
-        self.available = bool(self._fds)
+            with self._fd_lock:
+                self._fds[fd] = path
+                self._by_path[path] = fd
+                self.available = bool(self._fds)
 
     def _refresh_devices(self):
-        """Reescanea /dev/input.
+        """Rescans /dev/input.
 
-        Un nodo puede pasar a apuntar a otro dispositivo (por ejemplo, si se
-        reinicia un teclado virtual: el nodo /dev/input/eventN se recrea). Sin
-        este refresco, el fd antiguo queda colgado al dispositivo borrado y los
-        modificadores dejan de detectarse para siempre.
+        A node can start pointing at another device (for example when a
+        virtual keyboard restarts: the /dev/input/eventN node is recreated).
+        Without this refresh the old fd stays attached to the deleted device
+        and the modifiers are never detected again.
         """
         paths = _list_event_devices()
         current = set(paths)
-        for path in paths:
-            fd = self._by_path.get(path)
-            if fd is not None:
+        changed = False
+        with self._fd_lock:
+            for path in paths:
+                if self._stop.is_set():
+                    return
+                fd = self._by_path.get(path)
+                if fd is not None:
+                    try:
+                        if os.fstat(fd).st_ino == os.stat(path).st_ino:
+                            continue
+                    except OSError:
+                        pass
+                    # the node points at another device: reopen it
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    self._fds.pop(fd, None)
+                    self._by_path.pop(path, None)
+                    changed = True
+                    self.log("Input device recreated, reopened: %s" % path)
                 try:
-                    if os.fstat(fd).st_ino == os.stat(path).st_ino:
-                        continue
+                    nfd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
                 except OSError:
-                    pass
-                # el nodo apunta a otro dispositivo: se reabre
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-                self._fds.pop(fd, None)
-                self._by_path.pop(path, None)
-                self.log("Dispositivo recreado, reabierto: %s" % path)
-            try:
-                nfd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
-            except OSError:
-                continue
-            self._fds[nfd] = path
-            self._by_path[path] = nfd
-        for fd, path in list(self._fds.items()):
-            if path not in current:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-                self._fds.pop(fd, None)
-                self._by_path.pop(path, None)
-        self.available = bool(self._fds)
+                    continue
+                self._fds[nfd] = path
+                self._by_path[path] = nfd
+            for fd, path in list(self._fds.items()):
+                if path not in current:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    self._fds.pop(fd, None)
+                    self._by_path.pop(path, None)
+                    changed = True
+            self.available = bool(self._fds)
+        if changed:
+            # The device that was sending the key-up events is gone: the
+            # modifiers it held would stay pressed forever (every rule would
+            # ask for SUPER and none would ever fire).
+            with self._lock:
+                stuck = sorted(self.held)
+                self.held.clear()
+            if stuck:
+                self.log(
+                    "Input devices changed, releasing the held modifiers: %s"
+                    % ",".join(stuck)
+                )
 
     def _loop(self):
         try:
             self._open_devices()
         except Exception as exc:
-            self.log("No se pudieron abrir los dispositivos de entrada: %s" % exc)
-            return
+            self.log("Could not open the input devices: %s" % exc)
         if not self._fds:
-            self.log("Sin dispositivos de entrada: no se detectaran modificadores")
-            return
+            # Without /dev/input (or without permission) the thread is NOT
+            # abandoned: the loop stays alive and retries opening the devices
+            # every few seconds. The thread used to die here and the modifiers
+            # were never detected again, even if the keyboard showed up later.
+            self.log("No input devices: retrying every 2 s")
         buf_size = INPUT_EVENT_SIZE
         last_refresh = 0.0
         while not self._stop.is_set():
@@ -265,13 +312,21 @@ class ModifierTracker:
                 if now - last_refresh > 2.0:
                     last_refresh = now
                     self._refresh_devices()
-                ready, _, _ = select.select(list(self._fds.keys()), [], [], 0.5)
+                if not self._fds:
+                    self._stop.wait(0.5)
+                    continue
+                with self._fd_lock:
+                    fds = list(self._fds.keys())
+                if not fds:
+                    self._stop.wait(0.5)
+                    continue
+                ready, _, _ = select.select(fds, [], [], 0.5)
                 for fd in ready:
                     try:
                         data = os.read(fd, buf_size * 32)
                     except Exception:
                         continue
-                    # Solo eventos completos: si sobra un resto, se ignora.
+                    # Only complete events: any leftover is ignored.
                     usable = len(data) - (len(data) % buf_size)
                     for off in range(0, usable, buf_size):
                         try:
@@ -280,7 +335,7 @@ class ModifierTracker:
                             )
                         except Exception:
                             continue
-                        name = _modifier_de_evento(etype, code)
+                        name = _modifier_from_event(etype, code)
                         if not name:
                             continue
                         with self._lock:
@@ -289,14 +344,14 @@ class ModifierTracker:
                             elif value == 0:
                                 self.held.discard(name)
             except Exception as exc:
-                # Nunca dejar morir el hilo: si pasara, los modificadores se
-                # quedarian congelados y los atajos dejarian de funcionar.
-                self.log("Lector de modificadores: %s" % exc)
+                # Never let the thread die: if it did, the modifiers would
+                # stay frozen and the shortcuts would stop working.
+                self.log("Modifier reader: %s" % exc)
                 time.sleep(0.1)
 
 
 class VolumeWatcher:
-    """Detecta cambios de volumen del sink de los auriculares."""
+    """Detects volume changes of the earbuds' sink."""
 
     def __init__(self, sink_resolver, on_change, log=None):
         self.sink_resolver = sink_resolver
@@ -319,21 +374,32 @@ class VolumeWatcher:
                 proc.terminate()
             except Exception:
                 pass
+            # The child is reaped: without this it stays as a zombie until
+            # the daemon exits.
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
 
     def _retry_delay(self):
-        """Espera antes del siguiente intento.
+        """Wait before the next attempt.
 
-        Se calcula con el numero de fallos *anteriores*: el primer fallo
-        espera 1 s, el segundo 2 s, el tercero 3 s... hasta un tope de 10 s.
+        It is computed from the number of *previous* failures: the first
+        failure waits 1 s, the second 2 s, the third 3 s... up to a cap of
+        10 s.
         """
         return min(1.0 + self._failures, 10.0)
 
     def _fail(self, message):
-        """Anota un fallo y devuelve cuanto hay que esperar antes de reintentar."""
+        """Records a failure and returns how long to wait before retrying."""
         delay = self._retry_delay()
         self._failures += 1
         self.log(
-            "%s (fallo %d): reintento en %.0f s"
+            "%s (failure %d): retrying in %.0f s"
             % (message, self._failures, delay)
         )
         return delay
@@ -349,28 +415,43 @@ class VolumeWatcher:
         return None
 
     def _handle_line(self, line, sink, sink_id):
-        """Procesa una linea de 'pactl subscribe'.
+        """Processes a 'pactl subscribe' line.
 
-        Devuelve el id del sink vigilado (puede cambiar si los auriculares se
-        reconectan). Un error al procesar el evento se registra y no se propaga:
-        si se propagara, el hilo del watcher moriria y los atajos dejarian de
-        funcionar sin decir nada.
+        Returns the id of the watched sink (it can change when the earbuds
+        reconnect). An error while processing the event is logged and not
+        propagated: if it propagated, the watcher thread would die and the
+        shortcuts would stop working without a word.
         """
         match = SINK_EVENT_PATTERN.search(line or "")
         if not match:
             return sink_id
-        if sink_id and match.group(1) != sink_id:
-            # El sink se recrea cuando los auriculares se reconectan y cambia
-            # su id: se resuelve de nuevo.
+        if not sink_id:
+            # Without an id there is no way to tell whether the event comes
+            # from the watched sink: it is resolved, and if that fails too the
+            # event is ignored (otherwise any system volume change would
+            # count as a gesture).
+            sink_id = self._sink_id(sink)
+            if not sink_id:
+                return None
+        if match.group(1) != sink_id:
+            # The sink is recreated when the earbuds reconnect and its id
+            # changes: it is resolved again. The resolution is throttled:
+            # every unrelated sink change (the laptop volume, another app)
+            # would spawn a blocking 'pactl list' on the thread that reads
+            # the subscription, and the events would pile up behind it.
+            now = time.monotonic()
+            if now - getattr(self, "_last_probe", 0.0) < 1.0:
+                return sink_id
+            self._last_probe = now
             refreshed = self._sink_id(sink)
             if not refreshed or refreshed != match.group(1):
                 return sink_id
-            self.log("Watcher: el sink cambio de id a %s" % refreshed)
+            self.log("Watcher: the sink changed id to %s" % refreshed)
             sink_id = refreshed
         try:
             self.on_change(sink)
         except Exception as exc:
-            self.log("Watcher: error al procesar un cambio: %s" % exc)
+            self.log("Watcher: error while processing a change: %s" % exc)
         return sink_id
 
     def _loop(self):
@@ -378,25 +459,25 @@ class VolumeWatcher:
             try:
                 self._watch()
             except Exception as exc:
-                # Ninguna excepcion puede matar este hilo: si lo hiciera, los
-                # atajos dejarian de funcionar sin decir nada (pasaba con el
-                # resolutor del sink, que estaba fuera de cualquier try).
-                delay = self._fail("Watcher: error inesperado: %s" % exc)
+                # No exception may kill this thread: if it did, the shortcuts
+                # would stop working without a word (that happened with the
+                # sink resolver, which sat outside any try).
+                delay = self._fail("Watcher: unexpected error: %s" % exc)
                 self._stop.wait(delay)
 
     def _watch(self):
-        """Una vuelta del watcher.
+        """One turn of the watcher.
 
-        Va aparte del bucle para que cualquier excepcion se pueda registrar y
-        reintentar, en vez de matar el hilo en silencio.
+        Kept apart from the loop so any exception can be logged and retried
+        instead of killing the thread silently.
         """
         sink = self.sink_resolver()
         if not sink:
-            # Sin auriculares conectados no hay nada que vigilar: se avisa
-            # una sola vez para no llenar el log.
+            # With no earbuds connected there is nothing to watch: it is
+            # reported once so the log does not fill up.
             if self._reported_no_sink != sink:
                 self._reported_no_sink = sink
-                self.log("Watcher: todavia no hay sink de los auriculares")
+                self.log("Watcher: no headphone sink yet")
             self._stop.wait(2.0)
             return
         sink_id = self._sink_id(sink)
@@ -411,14 +492,14 @@ class VolumeWatcher:
                 bufsize=1,
             )
         except Exception as exc:
-            # Sin suscripcion no hay atajos: se avisa y se reintenta con
-            # la espera creciente (1 s, 2 s, 3 s... hasta 10 s).
+            # Without a subscription there are no shortcuts: it is reported
+            # and retried with the growing delay (1 s, 2 s, 3 s... up to 10 s).
             delay = self._fail(
-                "Watcher: no se pudo abrir la suscripcion: %s" % exc
+                "Watcher: could not open the subscription: %s" % exc
             )
             self._stop.wait(delay)
             return
-        self.log("Watcher: vigilando %s (id %s)" % (sink, sink_id))
+        self.log("Watcher: watching %s (id %s)" % (sink, sink_id))
         started = time.monotonic()
         try:
             for line in self._proc.stdout:
@@ -426,28 +507,29 @@ class VolumeWatcher:
                     break
                 sink_id = self._handle_line(line, sink, sink_id)
         except Exception as exc:
-            # Un error aqui aborta la suscripcion. Antes se tragaba en
-            # silencio y el bucle se reiniciaba una y otra vez: con un
-            # fallo persistente los atajos no funcionaban nunca y no
-            # habia ni una linea en el log.
+            # An error here aborts the subscription. It used to be swallowed
+            # in silence while the loop restarted over and over: with a
+            # persistent failure the shortcuts never worked and not a single
+            # line reached the log.
             delay = self._fail(
-                "Watcher: error en la suscripcion: %s" % exc
+                "Watcher: error in the subscription: %s" % exc
             )
         else:
             if self._stop.is_set():
                 delay = 0.0
             elif (time.monotonic() - started) < HEALTHY_SECONDS:
-                # 'pactl subscribe' se cerraria solo: es un fallo mas, no
-                # un reinicio normal (si no, se repetiria en bucle).
+                # 'pactl subscribe' closed on its own: that is one more
+                # failure, not a normal restart (otherwise it would repeat in
+                # a loop).
                 delay = self._fail(
-                    "Watcher: la suscripcion se cerro antes de tiempo"
+                    "Watcher: the subscription closed before time"
                 )
             else:
-                # Solo se da por buena si ha aguantado sin errores: aqui
-                # se reinicia el contador de fallos y el siguiente reintento
-                # vuelve a ser como el primero.
+                # It is only accepted as healthy if it ran without errors:
+                # here the failure counter is reset and the next retry is
+                # like the first one again.
                 if self._failures:
-                    self.log("Watcher: la suscripcion vuelve a funcionar")
+                    self.log("Watcher: the subscription works again")
                 self._failures = 0
                 delay = self._retry_delay()
         finally:
@@ -462,12 +544,12 @@ class VolumeWatcher:
 
 
 class MediaKeyWatcher:
-    """Detecta las pulsaciones del boton del estuche via MPRIS.
+    """Detects case button presses through MPRIS.
 
-    El firmware no manda la pulsacion cruda por RFCOMM: ejecuta la accion
-    configurada y el PC la ve como una llamada MPRIS (PlayPause, Next...).
-    ``dbus-monitor`` es parte de dbus, que ya hace falta para el escritorio,
-    asi que no anade dependencias.
+    The firmware does not send the raw press over RFCOMM: it runs the
+    configured action and the PC sees it as an MPRIS call (PlayPause,
+    Next...). ``dbus-monitor`` is part of dbus, which the desktop already
+    needs, so it adds no dependencies.
     """
 
     def __init__(self, on_press, log=None):
@@ -489,10 +571,20 @@ class MediaKeyWatcher:
                 proc.terminate()
             except Exception:
                 pass
+            # The child is reaped: without this it stays as a zombie until
+            # the daemon exits.
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
 
     @staticmethod
     def parse(line):
-        """Miembro MPRIS de una linea de dbus-monitor, o None."""
+        """MPRIS member of a dbus-monitor line, or None."""
         match = MEDIA_PRESS_PATTERN.search(line or "")
         return match.group(1) if match else None
 
@@ -511,9 +603,11 @@ class MediaKeyWatcher:
                     bufsize=1,
                 )
             except Exception as exc:
-                self._failures += 1
+                # The same back-off as the other watchers: the delay is
+                # computed from the previous failures.
                 delay = min(10.0, 1.0 + self._failures)
-                self.log("Knob: no se pudo abrir dbus-monitor: %s" % exc)
+                self._failures += 1
+                self.log("Knob: could not open dbus-monitor: %s" % exc)
                 self._stop.wait(delay)
                 continue
             started = time.monotonic()
@@ -527,13 +621,15 @@ class MediaKeyWatcher:
                     try:
                         self.on_press(member)
                     except Exception as exc:
-                        self.log("Knob: error al procesar %s: %s" % (member, exc))
+                        self.log("Knob: error while processing %s: %s" % (member, exc))
             except Exception as exc:
-                self.log("Knob: error en la suscripcion: %s" % exc)
+                self.log("Knob: error in the subscription: %s" % exc)
             finally:
                 try:
                     if self._proc:
                         self._proc.kill()
+                        # Reap the child: otherwise it stays as a zombie.
+                        self._proc.wait(timeout=2)
                 except Exception:
                     pass
                 self._proc = None
@@ -541,61 +637,87 @@ class MediaKeyWatcher:
                 return
             if time.monotonic() - started >= HEALTHY_SECONDS:
                 self._failures = 0
+                delay = min(10.0, 1.0 + self._failures)
             else:
+                delay = min(10.0, 1.0 + self._failures)
                 self._failures += 1
-            self._stop.wait(min(10.0, 1.0 + self._failures))
+            self._stop.wait(delay)
 
 
 class LocalActionEngine:
-    """Reglas de atajo: senal de los auriculares + modificadores -> comando."""
+    """Shortcut rules: earbud signal + modifiers -> command."""
 
-    def __init__(self, data_dir, log=None, notify=True):
+    def __init__(self, data_dir, log=None):
         self.data_dir = data_dir
         self.rules_path = os.path.join(data_dir, "local_actions.json")
         self.log = log or (lambda msg: None)
-        self.notify_enabled = notify
         self.rules = []
+        self._doc = {}
         self.last_event = {}
         self.last_action = {}
-        self._pending = None
-        self._timer = None
+        # Every trigger keeps its own open gesture: a volume_down press must
+        # not close the volume_up gesture that was still open.
+        self._pending = {}
+        self._timers = {}
         self._lock = threading.RLock()
         self._self_set_volume = None
         self._self_set_at = 0.0
-        self._last_event = {}
+        # Time of the last event of each trigger (the repeat guard).
+        self._last_trigger_at = {}
+        # Triggers already reported (once per trigger, not once overall).
+        self._no_rule_logged = {}
+        self._shadow_logged = {}
         self.modifiers = ModifierTracker(self.log)
         self.media = MediaKeyWatcher(self._on_media_press, self.log)
         self.watcher = None
         self._sink_provider = None
         self._last_volume = None
-        # Gancho del demonio: asi el panel ve en vivo los cambios de volumen
-        # hechos con el dial o desde la app Nothing.
+        # Daemon hook: this way the panel sees the volume changes made with
+        # the dial or from the Nothing app live.
         self.on_volume = None
-        # Gancho para que el demonio persista cambios de estado (ultimo evento,
-        # ultima accion) en state.json y el panel los vea en vivo.
+        # Hook so the daemon can persist state changes (last event, last
+        # action) in state.json and the panel sees them live.
         self.on_event = None
 
-    # -- persistencia --------------------------------------------------------
+    # -- persistence --------------------------------------------------------
     def load(self):
         try:
             with open(self.rules_path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
-            self.rules = data.get("rules", []) if isinstance(data, dict) else []
+            # The whole document is kept: saving replaces only the rules, so
+            # anything else the file holds (a version marker, notes) survives.
+            self._doc = dict(data) if isinstance(data, dict) else {}
+            rules = data.get("rules", []) if isinstance(data, dict) else []
+            if not isinstance(rules, list):
+                # A hand-edited file can hold 'rules' as an object or as
+                # text. If it were accepted, the engine would iterate over its
+                # keys and adding a rule would blow up with an AttributeError
+                # nobody would see (the panel would only show a generic error).
+                self.log("Rules ignored: 'rules' is not a list")
+                rules = []
+            cleaned = [r for r in rules if isinstance(r, dict)]
+            if len(cleaned) != len(rules):
+                self.log(
+                    "Rules discarded because they are not objects: %d"
+                    % (len(rules) - len(cleaned))
+                )
+            self.rules = cleaned
             try:
                 self._rules_mtime = os.path.getmtime(self.rules_path)
             except OSError:
                 self._rules_mtime = 0.0
         except Exception as exc:
-            self.log("No se pudieron leer las reglas: %s" % exc)
+            self.log("Could not read the rules: %s" % exc)
             self.rules = []
+            self._doc = {}
         return self.rules
 
     def reload_rules_if_changed(self):
-        """Recarga las reglas si el fichero ha cambiado.
+        """Reloads the rules if the file changed.
 
-        El motor no debe decidir sobre una vista obsoleta: si las reglas se
-        editan a mano (o desde otra sesion) fuera del panel, el siguiente
-        gesto tiene que usar ya las reglas nuevas.
+        The engine must not decide on a stale view: if the rules are edited
+        by hand (or from another session) outside the panel, the next gesture
+        has to use the new rules already.
         """
         try:
             mtime = os.path.getmtime(self.rules_path)
@@ -605,30 +727,31 @@ class LocalActionEngine:
             return
         before = len(self.rules)
         self.load()
-        self.log("Reglas recargadas (%d -> %d)" % (before, len(self.rules)))
+        self.log("Rules reloaded (%d -> %d)" % (before, len(self.rules)))
 
     def save(self):
         os.makedirs(self.data_dir, exist_ok=True)
         tmp = self.rules_path + ".tmp"
+        doc = dict(getattr(self, "_doc", {}) or {})
+        doc["rules"] = self.rules
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"rules": self.rules}, fh, ensure_ascii=False, indent=2)
+            json.dump(doc, fh, ensure_ascii=False, indent=2)
         os.replace(tmp, self.rules_path)
-
-    def set_rules(self, rules):
-        with self._lock:
-            self.rules = rules or []
-            self.save()
-        return self.rules
 
     def upsert(self, rule):
         with self._lock:
-            # El fichero es la fuente de verdad: si alguien anadio o cambio
-            # reglas a mano despues de la ultima recarga, hay que volver a
-            # leerlas antes de guardar, o se perderian.
+            if not isinstance(rule, dict):
+                raise ValueError("a rule must be an object")
+            # The file is the source of truth: if someone added or changed
+            # rules by hand after the last reload, they have to be read again
+            # before saving, or they would be lost.
             self.reload_rules_if_changed()
             rid = str(rule.get("id") or "")
             if not rid:
-                rid = "r%d" % (int(time.time() * 1000) % 10000000)
+                # The id has to be unique: a timestamp alone wraps around
+                # every few hours and two rules created in the same
+                # millisecond would overwrite each other.
+                rid = "r" + uuid.uuid4().hex[:10]
                 rule["id"] = rid
             found = False
             for idx, existing in enumerate(self.rules):
@@ -648,56 +771,59 @@ class LocalActionEngine:
             self.save()
         return self.rules
 
-    # -- arranque ------------------------------------------------------------
+    # -- startup ------------------------------------------------------------
     def start(self, sink_provider):
         self._sink_provider = sink_provider
         self.load()
-        # Valor inicial: sin esto el primer cambio no tiene con que restaurar.
+        # Initial value: without it the first change has nothing to restore.
         try:
             sink = sink_provider()
             if sink:
                 self._last_volume = self._read_volume(sink)
         except Exception as exc:
-            # No es critico (el valor inicial solo sirve de referencia), pero
-            # si falla conviene saberlo: sin el, el primer gesto no tendria
-            # contra que restaurar el volumen.
-            self.log("No se pudo leer el volumen inicial: %s" % exc)
+            # It is not critical (the initial value is only a reference), but
+            # it is good to know when it fails: without it the first gesture
+            # would have nothing to restore the volume against.
+            self.log("Could not read the initial volume: %s" % exc)
         self.modifiers.start()
         self.media.start()
         self.watcher = VolumeWatcher(sink_provider, self._on_volume_change, self.log)
         self.watcher.start()
-        self.log("Motor de acciones locales activo")
+        self.log("Local action engine active")
 
     def stop(self):
-        if self._timer:
+        for timer in list(self._timers.values()):
             try:
-                self._timer.cancel()
+                timer.cancel()
             except Exception:
                 pass
+        self._timers.clear()
         if self.watcher:
             self.watcher.stop()
         self.media.stop()
         self.modifiers.stop()
 
-    # -- volumen -------------------------------------------------------------
+    # -- volume -------------------------------------------------------------
     def note_self_change(self, value=None):
-        """Marca un cambio de volumen hecho por nosotros.
+        """Marks a volume change made by us.
 
-        Con 'value' se guarda el volumen que hemos puesto: luego se puede
-        distinguir nuestro cambio (mismo valor) de un gesto del usuario, sin
-        depender de una ventana de tiempo que se comería los gestos.
+        With 'value' the volume we set is stored: later our change (same
+        value) can be told apart from a user gesture, without relying on a
+        time window that would swallow the gestures.
 
-        Ademas se actualiza la referencia del volumen: si no, el siguiente
-        gesto real se calcularia contra una base obsoleta y se dispararia el
-        atajo equivocado (o ninguno) sin decir nada.
+        The volume reference is updated too: otherwise the next real gesture
+        would be computed against a stale baseline and the wrong shortcut
+        (or none at all) would fire without a word.
         """
         if value is not None:
             try:
-                self._self_set_volume = int(value)
-                self._self_set_at = time.time()
-                self._last_volume = self._self_set_volume
+                level = int(value)
             except (TypeError, ValueError):
-                pass
+                return
+            with self._lock:
+                self._self_set_volume = level
+                self._self_set_at = time.time()
+                self._last_volume = level
 
     def _read_volume(self, sink):
         res = _run(["pactl", "get-sink-volume", sink], 6)
@@ -712,49 +838,88 @@ class LocalActionEngine:
         return None
 
     def _on_volume_change(self, sink):
-        now = time.time()
         value = self._read_volume(sink)
         if value is None:
-            # El sink ya no existe (auriculares desconectados): sin referencia
-            # de volumen no se puede calcular ningun cambio.
-            self._last_volume = None
+            # The sink no longer exists (earbuds disconnected): without a
+            # volume reference no change can be computed.
+            with self._lock:
+                self._last_volume = None
             return
-        # Avisar SIEMPRE (tambien de nuestros propios cambios): el panel
-        # necesita ver el volumen real en vivo, no solo cuando hay un atajo.
+        # Always report (including our own changes): the panel needs to see
+        # the real volume live, not only when there is a shortcut.
         if self.on_volume is not None:
             try:
                 self.on_volume(value, sink)
             except Exception as exc:
-                self.log("No se pudo publicar el volumen: %s" % exc)
-        previous = self._last_volume
-        self._last_volume = value
+                self.log("Could not publish the volume: %s" % exc)
+        # The reference and our own mark are shared with the daemon thread
+        # (which sets the volume): they are read and written together so a
+        # gesture is never computed against a half-updated state.
+        with self._lock:
+            previous = self._last_volume
+            self._last_volume = value
+            self_set = self._self_set_volume
+            self_set_at = self._self_set_at
         if previous is None:
-            # Sin referencia no se puede saber cuanto ha cambiado el volumen:
-            # se reinicia la referencia y se avisa (no es un gesto).
+            # Without a reference there is no way to know how much the volume
+            # changed: the reference is reset and it is reported (it is not a
+            # gesture).
             if not getattr(self, "_no_baseline_logged", False):
                 self._no_baseline_logged = True
-                self.log("Sin referencia de volumen: se reinicia la referencia")
+                self.log("No volume reference: resetting the reference")
             return
         self._no_baseline_logged = False
         delta = value - previous
         if delta == 0:
             return
         if (
-            self._self_set_volume is not None
-            and (time.time() - self._self_set_at) <= SELF_CHANGE_TTL
-            and abs(value - self._self_set_volume) <= 1
+            self_set is not None
+            and (time.time() - self_set_at) <= SELF_CHANGE_TTL
+            and abs(value - self_set) <= 1
         ):
-            # Es el valor exacto que pusimos nosotros: se ignora (el evento
-            # que genera nuestra propia escritura).
+            # It is the exact value we set: it is ignored (the event our own
+            # write generates).
             return
-        # Es un cambio de verdad: nuestra marca deja de ser valida.
-        self._self_set_volume = None
-        self._register(TRIGGERS[0] if delta > 0 else TRIGGERS[1], sink, previous)
+        # It is a real change: our mark is no longer valid.
+        with self._lock:
+            self._self_set_volume = None
+        self._register("volume_up" if delta > 0 else "volume_down", sink, previous)
 
     def _on_media_press(self, member):
-        """Una pulsacion del boton del estuche (via MPRIS)."""
+        """A press of the case button (through MPRIS)."""
+        if self._press_from_another_player():
+            # Another player is sending the media key (a video, another music
+            # app): the earbuds are not playing, so it is not their button.
+            return
         self._register("knob_press", None, None)
-        self.log("Knob: pulsacion detectada (%s)" % member)
+        self.log("Knob: press detected (%s)" % member)
+
+    def _press_from_another_player(self):
+        """Whether the media key comes from a player other than the earbuds.
+
+        The case press reaches the desktop as an MPRIS call, and every player
+        sends the same calls: when the earbuds are not the active sink, a
+        media key pressed on another app would fire the earbud shortcuts.
+
+        When it cannot be told (the sink is unknown or pactl does not
+        answer) the press is not discarded: there is no evidence that it
+        comes from another player.
+        """
+        if not self._sink_provider:
+            return False
+        try:
+            sink = self._sink_provider()
+        except Exception:
+            return False
+        if not sink:
+            return False
+        res = _run(["pactl", "get-default-sink"], 6)
+        if not res or res.returncode != 0:
+            return False
+        default = (res.stdout or "").strip()
+        if not default:
+            return False
+        return default != sink
 
     def _publish(self):
         cb = getattr(self, "on_event", None)
@@ -763,53 +928,68 @@ class LocalActionEngine:
         try:
             cb()
         except Exception as exc:
-            self.log("No se pudo publicar el estado local: %s" % exc)
+            self.log("Could not publish the local state: %s" % exc)
 
-    # -- agrupacion de pulsaciones -----------------------------------------
+    # -- press grouping ------------------------------------------------------
     def _register(self, trigger, sink=None, previous_volume=None):
         now = time.time()
         with self._lock:
-            # Una misma tecla puede generar varios eventos: ignorar repetidos.
-            if now - self._last_event.get(trigger, 0.0) < EVENT_GAP:
+            # A single key can generate several events: ignore repeats.
+            if now - self._last_trigger_at.get(trigger, 0.0) < EVENT_GAP:
                 return
-            self._last_event[trigger] = now
+            self._last_trigger_at[trigger] = now
             self.reload_rules_if_changed()
             modifiers = self.modifiers.modifiers()
 
-            # Conteo de pulsaciones del gesto en curso. Un gesto nuevo (han
-            # pasado GROUP_WINDOW desde la ultima pulsacion) empieza de cero,
-            # incluida la marca de "ya disparo".
-            pending = self._pending
-            if (
-                pending
-                and pending["trigger"] == trigger
-                and now - pending["last"] <= GROUP_WINDOW
-            ):
+            # Press count of the gesture in progress. A new gesture (more than
+            # GROUP_WINDOW since the last press) starts from zero, the
+            # "already fired" mark included. The gesture belongs to its own
+            # trigger: another trigger (volume_down after volume_up) opens
+            # its own gesture and does not cancel this one.
+            pending = self._pending.get(trigger)
+            if pending and now - pending["last"] <= GROUP_WINDOW:
                 count = pending["count"] + 1
                 first = pending["first"]
                 already_fired = pending.get("fired", False)
+                # Modifiers and reference volume from the START of the gesture:
+                # they are kept for the gesture close. They are what defines
+                # the gesture: if the user releases the modifier halfway
+                # through, the rule that required it is still the gesture's
+                # rule (and the other way round, pressing a modifier later
+                # does not trigger a rule: the gesture was already done).
+                gesture_modifiers = pending.get("modifiers") or []
+                gesture_volume = pending.get("previous_volume")
             else:
                 count = 1
                 first = now
                 already_fired = False
+                gesture_modifiers = modifiers
+                # Volume before the gesture: that is the one restored when the
+                # rule asks to "restore volume" (not the later one, which
+                # would undo nothing).
+                gesture_volume = previous_volume
             pending = {
                 "trigger": trigger,
                 "count": count,
                 "first": first,
                 "last": now,
-                "modifiers": modifiers,
-                "volume": self._read_volume(sink) if sink else None,
+                "modifiers": gesture_modifiers,
+                "previous_volume": gesture_volume,
                 "fired": already_fired,
             }
-            self._pending = pending
+            self._pending[trigger] = pending
 
-            # Que regla toca con este gesto.
+            # Which rule applies to this gesture. Each event is evaluated
+            # with the modifiers of that instant: that way, pressing the
+            # modifier halfway through the gesture can trigger a rule. The
+            # gesture keeps the ones from the start, which are the ones that
+            # define it when it closes.
             rules = self._applicable_rules(trigger, modifiers)
             exact = [item for item in rules if item[0] == count]
             fallback = [item for item in rules if item[0] == 0]
-            # Una regla de N pulsaciones que aun puede cumplirse hace esperar a
-            # la regla "cualquiera": si no, esta se comeria los eventos y la
-            # de N pulsaciones no llegaria a dispararse nunca.
+            # An N-press rule that can still be met makes the "any" rule
+            # wait: otherwise it would swallow the events and the N-press
+            # rule would never fire.
             blocking = [item for item in rules if item[0] > count]
 
             chosen = None
@@ -822,71 +1002,82 @@ class LocalActionEngine:
                 chosen_presses = 0
 
             if chosen is not None:
-                # Un gesto = una accion. Si hay una regla de N pulsaciones
-                # que aun puede cumplirse, la regla "cualquiera" espera a que
-                # termine el gesto (si no, se comeria las pulsaciones y la
-                # de N nunca se dispararia). Cuando no hay ninguna regla de N
-                # pendiente, "cualquiera" dispara al empezar el gesto. En
-                # ambos casos, el resto de muescas del mismo gesto ya no
-                # repiten la accion: lo que lo decide es el estado del
-                # gesto, no ninguna ventana de tiempo.
+                # One gesture = one action. If there is an N-press rule that
+                # can still be met, the "any" rule waits for the gesture to
+                # finish (otherwise it would swallow the presses and the
+                # N-press rule would never fire). When no N-press rule is
+                # pending, "any" fires at the start of the gesture. In both
+                # cases the rest of the notches of the same gesture do not
+                # repeat the action: the state of the gesture decides it, not
+                # any time window.
                 if pending.get("fired"):
                     return
                 pending["fired"] = True
                 self.last_event = {
                     "trigger": trigger,
                     "presses": count,
+                    # The modifiers the rule was chosen with: those of this
+                    # event.
                     "modifiers": modifiers,
                     "at": int(time.time() * 1000),
                 }
                 self._publish()
-                self._run_rule(chosen, trigger, count, modifiers, previous_volume)
+                self._run_rule(chosen, trigger, count, modifiers, gesture_volume)
+                # The gesture is still open: the timer closes it (and cleans
+                # the pending entry) when the window ends.
+                self._arm_timer(trigger)
                 return
 
-            if not rules and not getattr(self, "_no_rule_logged", None) == trigger:
-                # Habia reglas para este gesto pero ninguna encaja (p.ej. el
-                # modificador no esta pulsado): se avisa una vez para que no
-                # parezca que los atajos estan rotos.
-                self._no_rule_logged = trigger
+            if not rules and not self._no_rule_logged.get(trigger):
+                # There were rules for this gesture but none of them fits
+                # (for example the modifier is not held): it is reported once
+                # per trigger so the shortcuts do not look broken.
+                self._no_rule_logged[trigger] = True
                 self.log(
-                    "El gesto %s no encaja con ninguna regla (modificadores: %s)"
-                    % (trigger, ",".join(sorted(modifiers)) or "ninguno")
+                    "The %s gesture matches no rule (modifiers: %s)"
+                    % (trigger, ",".join(sorted(modifiers)) or "none")
                 )
             elif rules:
-                self._no_rule_logged = None
+                self._no_rule_logged.pop(trigger, None)
 
-            if blocking and not getattr(self, "_shadow_logged", None) == trigger:
-                self._shadow_logged = trigger
+            if blocking and not self._shadow_logged.get(trigger):
+                self._shadow_logged[trigger] = True
                 self.log(
-                    "El gesto %s tiene una regla de %d pulsaciones: la regla "
-                    "'cualquiera' espera a que termine el gesto"
+                    "The %s gesture has a %d-press rule: the 'any' rule "
+                    "waits for the gesture to finish"
                     % (trigger, blocking[0][0])
                 )
             elif not blocking:
-                self._shadow_logged = None
+                self._shadow_logged.pop(trigger, None)
 
-            if self._timer:
-                try:
-                    self._timer.cancel()
-                except Exception:
-                    pass
-            self._timer = threading.Timer(GROUP_WINDOW, self._fire)
-            self._timer.daemon = True
-            self._timer.start()
+            self._arm_timer(trigger)
 
-    # -- evaluacion de reglas ------------------------------------------------
+    def _arm_timer(self, trigger):
+        """(Re)arm the timer that closes the gesture of a trigger."""
+        timer = self._timers.get(trigger)
+        if timer is not None:
+            try:
+                timer.cancel()
+            except Exception:
+                pass
+        timer = threading.Timer(GROUP_WINDOW, self._fire, args=(trigger,))
+        timer.daemon = True
+        self._timers[trigger] = timer
+        timer.start()
+
+    # -- rule evaluation ----------------------------------------------------
     def _applicable_rules(self, trigger, modifiers):
-        """Reglas que pueden aplicarse a este gesto con estos modificadores.
+        """Rules that can apply to this gesture with these modifiers.
 
-        Cada elemento es (presses, especificidad, regla):
-          - presses == 0: regla "cualquiera", que hace de respaldo.
-          - presses  > 0: regla de N pulsaciones.
+        Each element is (presses, specificity, rule):
+          - presses == 0: the "any" rule, used as fallback.
+          - presses  > 0: an N-press rule.
 
-        Se ordenan poniendo delante las de N pulsaciones (y entre ellas, la
-        mas especifica) y la de "cualquiera" al final. Todo se evalua contra
-        el juego de reglas vigente en cada evento, no contra una vista
-        guardada: asi una regla anadida o quitada desde el panel se respeta
-        desde el siguiente gesto.
+        They are sorted with the N-press rules first (and among them the most
+        specific one) and the "any" rule last. Everything is evaluated against
+        the rule set in force at each event, not against a saved view: that
+        way a rule added or removed from the panel is respected from the next
+        gesture.
         """
         out = []
         for rule in self.rules:
@@ -901,24 +1092,24 @@ class LocalActionEngine:
                 forbid = [m for m in _as_list(rule.get("forbid")) if m]
                 presses = _as_int(rule.get("presses"))
                 if presses is None or presses < 0:
-                    # Regla malformada (editada a mano): se ignora entera, para
-                    # que no tape a las reglas bien escritas.
+                    # Malformed rule (hand-edited): it is ignored entirely so
+                    # it does not shadow the well-written rules.
                     self.log(
-                        "Regla ignorada por 'presses' invalido: %s"
+                        "Rule ignored because 'presses' is invalid: %s"
                         % rule.get("presses")
                     )
                     continue
                 for key in ("require", "forbid"):
                     if key in rule and not isinstance(rule[key], (list, tuple, dict)):
-                        self.log("Regla ignorada por '%s' invalido" % key)
+                        self.log("Rule ignored because '%s' is invalid" % key)
                         presses = None
                         break
                 if presses is None:
                     continue
             except Exception as exc:
-                # Una regla malformada (editada a mano) no puede tumbar el
-                # motor: se avisa y se sigue con el resto.
-                self.log("Regla invalida ignorada: %s" % exc)
+                # A malformed rule (hand-edited) must not bring the engine
+                # down: it is reported and the rest keeps going.
+                self.log("Invalid rule ignored: %s" % exc)
                 continue
             if any(m not in modifiers for m in require):
                 continue
@@ -929,10 +1120,10 @@ class LocalActionEngine:
         return out
 
     def _pick_rule(self, rules, count):
-        """Regla que toca para un gesto con 'count' pulsaciones.
+        """The rule that applies to a gesture with 'count' presses.
 
-        Mandan las de N pulsaciones exactas; si no hay ninguna, se usa la de
-        "cualquiera" como respaldo.
+        Exact N-press rules win; if there is none, the "any" rule is used as
+        fallback.
         """
         exact = [item for item in rules if item[0] == count]
         if exact:
@@ -942,29 +1133,41 @@ class LocalActionEngine:
             return fallback[0][2]
         return None
 
-    def _fire(self):
-        """Cierre del gesto: el contador ya no va a crecer.
+    def _fire(self, trigger=None):
+        """Close of the gesture: the counter will not grow anymore.
 
-        Va en un temporizador: si algo falla aqui, el gesto se pierde, y sin
-        esta cubierta nadie se enteraria.
+        It runs on a timer: if something fails here, the gesture is lost, and
+        without this cover nobody would find out.
         """
         try:
-            self._fire_gesture()
+            self._fire_gesture(trigger)
         except Exception as exc:
-            self.log("No se pudo cerrar el gesto: %s" % exc)
+            self.log("Could not close the gesture: %s" % exc)
 
-    def _fire_gesture(self):
+    def _fire_gesture(self, trigger=None):
         with self._lock:
-            pending = self._pending
-            self._pending = None
+            if trigger is None:
+                # No trigger given: every open gesture is closed.
+                pendings = list(self._pending.values())
+                self._pending.clear()
+            else:
+                pending = self._pending.pop(trigger, None)
+                pendings = [pending] if pending else []
+        for pending in pendings:
+            self._close_gesture(pending)
+
+    def _close_gesture(self, pending):
         if not pending:
             return
-        # Los modificadores del principio del gesto: si el usuario los suelta
-        # antes de que se cierre la ventana, la regla sigue acknowledging.
         if pending.get("fired"):
-            # El gesto ya disparo su accion: no hay nada mas que hacer.
+            # The gesture already fired its action: there is nothing left to
+            # do.
             return
-        modifiers = pending.get("modifiers") or self.modifiers.modifiers()
+        # The modifiers the gesture was made with (the ones from the start):
+        # if the user releases them before the window closes, the rule is
+        # still the gesture's rule. And if they press them later, they do
+        # not trigger a rule: the gesture was already done.
+        modifiers = list(pending.get("modifiers") or [])
         rules = self._applicable_rules(pending["trigger"], modifiers)
         rule = self._pick_rule(rules, pending["count"])
         if rule is None:
@@ -977,7 +1180,13 @@ class LocalActionEngine:
             self._publish()
             return
         self._run_rule(
-            rule, pending["trigger"], pending["count"], modifiers, pending.get("volume")
+            rule,
+            pending["trigger"],
+            pending["count"],
+            modifiers,
+            # The volume from BEFORE the gesture: that is the one restored
+            # when the rule asks for it (the later one would undo nothing).
+            pending.get("previous_volume"),
         )
 
     def _run_rule(self, rule, trigger, count, modifiers, previous_volume):
@@ -992,33 +1201,42 @@ class LocalActionEngine:
             "ran": False,
         }
         if command:
-            self.run_command(command)
+            # The command runs in the background: the watcher cannot wait for
+            # it. The real result arrives later and is stored with the action.
+            self.run_command(
+                command, on_result=lambda ok: self._action_finished(info, ok)
+            )
             info["ran"] = True
         if rule.get("restore_volume") and previous_volume is not None:
             self._restore_volume_delayed(previous_volume)
         self.last_action = info
         self._publish()
         self.log(
-            "Accion local: %s | %s | mods=%s | vol=%s | -> %s"
+            "Local action: %s | %s | mods=%s | vol=%s | -> %s"
             % (
                 trigger,
                 "x%d" % count,
                 "+".join(modifiers) if modifiers else "-",
                 self._last_volume,
-                command or "(sin comando)",
+                command or "(no command)",
             )
         )
         if rule.get("notify", True) and command:
             self._notify(info, command)
 
-    def _restore_volume_delayed(self, percent):
-        """Restaura el volumen esperando a que termine la rampa de PipeWire y
-        comprueba que el valor se quedase; si no, reintenta."""
+    def _action_finished(self, info, ok):
+        """Stores the real result of a shortcut that ran in the background."""
+        info["ok"] = bool(ok)
+        self._publish()
 
-        # El volumen que habia justo despues del gesto: si ahora es muy
-        # distinto, el usuario ha girado el dial otra vez y su cambio se
-        # respeta en vez de restituirlos.
-        desde = self._last_volume
+    def _restore_volume_delayed(self, percent):
+        """Restores the volume waiting for the PipeWire ramp to finish and
+        checks that the value stayed; if not, it retries."""
+
+        # The volume right after the gesture: if it is very different now,
+        # the user turned the dial again and their change is respected
+        # instead of being reverted.
+        previous = self._last_volume
 
         def _apply(attempts):
             try:
@@ -1027,11 +1245,11 @@ class LocalActionEngine:
                 sink = self._sink_provider()
                 if not sink:
                     return
-                actual = self._read_volume(sink)
-                if not _debe_restaurar(actual, desde):
+                current = self._read_volume(sink)
+                if not _should_restore(current, previous):
                     self.log(
-                        "El volumen lo ha cambiado el usuario (%s%%): no se restaura"
-                        % actual
+                        "The user changed the volume (%s%%): not restoring"
+                        % current
                     )
                     return
                 self.note_self_change(int(percent))
@@ -1040,7 +1258,7 @@ class LocalActionEngine:
                 )
                 if res is None or res.returncode != 0:
                     self.log(
-                        "No se pudo restaurar el volumen a %d%% en %s (rc=%s)"
+                        "Could not restore the volume to %d%% in %s (rc=%s)"
                         % (int(percent), sink, res.returncode if res else "error")
                     )
                 time.sleep(0.3)
@@ -1052,16 +1270,16 @@ class LocalActionEngine:
                     return
                 if attempts > 0:
                     self.log(
-                        "El volumen no se quedo en %d%% (esta en %s%%): reintento"
+                        "The volume did not stay at %d%% (it is at %s%%): retrying"
                         % (int(percent), current)
                     )
                     time.sleep(RESTORE_DELAY)
                     _apply(attempts - 1)
             except Exception as exc:
-                # Este hilo es un temporizador: si muere en silencio, el
-                # volumen se queda donde no toca y el usuario no sabe por que.
+                # This thread is a timer: if it dies in silence, the volume
+                # stays where it should not and the user does not know why.
                 self.log(
-                    "No se pudo restaurar el volumen a %d%%: %s"
+                    "Could not restore the volume to %d%%: %s"
                     % (int(percent), exc)
                 )
 
@@ -1078,12 +1296,12 @@ class LocalActionEngine:
         self.note_self_change(int(percent))
         res = _run(["pactl", "set-sink-volume", sink, "%d%%" % int(percent)], 6)
         self.log(
-            "Restaurando volumen a %d%% en %s (rc=%s)"
+            "Restoring volume to %d%% in %s (rc=%s)"
             % (int(percent), sink, res.returncode if res else "error")
         )
 
     def _output_name(self):
-        """Nombre del monitor enfocado (para el marcador {output})."""
+        """Name of the focused monitor (for the {output} placeholder)."""
         res = _run(["hyprctl", "-j", "activeworkspace"], 5)
         if res:
             try:
@@ -1102,76 +1320,125 @@ class LocalActionEngine:
                 pass
         return ""
 
-    def run_command(self, command):
-        # Se ejecuta en un hilo aparte: el watcher no debe quedarse bloqueado
-        # esperando al comando, y asi podemos registrar si falla.
+    def run_command(self, command, wait=False, on_result=None, details=None):
+        """Runs the command of a shortcut.
+
+        By default it runs in a separate thread: the watcher must not stay
+        blocked waiting for the command, and that way we can log whether it
+        fails. With 'wait' the command runs in the calling thread and the
+        real result is returned (the panel uses it to tell whether the test
+        button worked). 'on_result' is called with the real result when the
+        command finishes in the background.
+
+        With 'details' the caller gets what happened (the exit status and
+        the output of the command), so it can explain the failure instead of
+        only saying that it failed.
+        """
+
         def _exec():
+            ok = False
             try:
                 cmd = command
+                shell_cmd = command
                 if "{output}" in cmd:
-                    cmd = cmd.replace("{output}", self._output_name())
-                res = subprocess.run(
-                    ["/bin/sh", "-c", cmd],
+                    # The name of the monitor is quoted: a name with spaces
+                    # or shell characters would break the command.
+                    shell_cmd = cmd.replace(
+                        "{output}", shlex.quote(self._output_name())
+                    )
+                proc = subprocess.Popen(
+                    ["/bin/sh", "-c", shell_cmd],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
-                    timeout=5,
+                    # Its own process group: when the command times out, the
+                    # children it started ("app &") are killed too.
+                    start_new_session=True,
                 )
-                err = (res.stderr or "").strip()
-                out = (res.stdout or "").strip()
+                try:
+                    out_raw, err_raw = proc.communicate(timeout=5)
+                    rc = proc.returncode
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    except Exception:
+                        pass
+                    proc.communicate()
+                    raise
+                err = (err_raw or "").strip()
+                out = (out_raw or "").strip()
+                ok = rc == 0
+                if details is not None:
+                    details["returncode"] = rc
+                    details["stdout"] = out
+                    details["stderr"] = err
                 self.log(
-                    "Comando: %s | rc=%s | out=%s | err=%s"
-                    % (cmd, res.returncode, out[:120], err[:200])
+                    "Command: %s | rc=%s | out=%s | err=%s"
+                    % (cmd, rc, out[:120], err[:200])
                 )
             except Exception as exc:
-                self.log("No se pudo ejecutar '%s': %s" % (command, exc))
+                if details is not None:
+                    details["error"] = str(exc)
+                self.log("Could not run '%s': %s" % (command, exc))
+            if on_result is not None:
+                try:
+                    on_result(ok)
+                except Exception as exc:
+                    self.log("Could not report the command result: %s" % exc)
+            return ok
 
+        if wait:
+            return _exec()
         try:
             threading.Thread(target=_exec, daemon=True).start()
             return True
         except Exception as exc:
-            self.log("No se pudo lanzar '%s': %s" % (command, exc))
+            self.log("Could not launch '%s': %s" % (command, exc))
             return False
 
     def _notify(self, info, command):
         mods = " + ".join(MODIFIER_LABELS.get(m, m.upper()) for m in info["modifiers"])
         body = "%s x%d" % (info["trigger"], info["presses"])
         if mods:
-            body += " con " + mods
+            body += " with " + mods
         body += " -> " + command
         try:
-            subprocess.Popen(
+            subprocess.run(
                 [
                     "notify-send",
                     "-a",
                     "Noctalia - CMF Buds",
                     "-i",
-                    # El nombre del tema del sistema es "audio-headphones";
-                    # "headphones" no existe y el toast salía sin icono.
+                    # The system theme name is "audio-headphones";
+                    # "headphones" does not exist and the toast showed no icon.
                     "audio-headphones",
-                    "Atajo de los auriculares",
+                    "Headphone shortcut",
                     body,
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                timeout=5,
                 start_new_session=True,
             )
         except Exception as exc:
-            # El atajo ya se ha ejecutado; solo falla el aviso.
-            self.log("No se pudo mostrar el aviso del atajo: %s" % exc)
+            # The shortcut has already run; only the notification fails.
+            self.log("Could not show the shortcut notification: %s" % exc)
 
-    # -- estado --------------------------------------------------------------
+    # -- state ---------------------------------------------------------------
     def snapshot(self):
-        # El panel tiene que ver el fichero tal y como esta: si las reglas se
-        # han editado a mano (o desde otra sesion), la vista en memoria puede
-        # estar vieja.
+        # The panel has to see the file as it is: if the rules were edited by
+        # hand (or from another session), the in-memory view can be stale.
+        # Copies are returned: the daemon serializes them while the engine
+        # keeps working, and a live reference would be read half-updated.
         with self._lock:
             self.reload_rules_if_changed()
-            rules = list(self.rules)
+            rules = copy.deepcopy(self.rules)
+            last_event = copy.deepcopy(self.last_event)
+            last_action = copy.deepcopy(self.last_action)
         return {
             "rules": rules,
-            "last_event": self.last_event,
-            "last_action": self.last_action,
+            "last_event": last_event,
+            "last_action": last_action,
             "modifiers": self.modifiers.modifiers(),
             "modifiers_available": self.modifiers.available,
         }

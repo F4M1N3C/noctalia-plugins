@@ -1,13 +1,15 @@
 --!nonstrict
--- Servicio headless: arranca y mantiene vivo el demonio de los CMF Buds.
+-- Headless service: starts and keeps the CMF Buds daemon alive.
+
+local C = require("./lib/common.luau")
 
 local statePath = nil
 local socketPath = nil
 local logPath = nil
 local pluginPath = noctalia.pluginDir() or ""
 local started = false
--- Se activa al apagar el plugin: impide que un ping en vuelo (o una
--- reconfiguracion) vuelva a levantar el demonio despues de pararlo.
+-- Set when the plugin shuts down: it stops an in-flight ping (or a
+-- reconfiguration) from bringing the daemon back up after it was stopped.
 local stopped = false
 
 local function ensurePaths()
@@ -27,7 +29,7 @@ local function daemonArgv(extra)
     "--state", statePath,
     "--socket", socketPath,
     "--log", logPath,
-    "--poll", tostring(tonumber(noctalia.getConfig("poll_seconds")) or 60),
+    "--poll", tostring(C.poll_seconds()),
     "--idle-timeout", "300",
     "--device-mac", noctalia.getConfig("device_mac") or "",
     "--device-name", noctalia.getConfig("device_name") or "",
@@ -40,8 +42,48 @@ local function daemonArgv(extra)
   return argv
 end
 
-local function stopDaemon()
+local function jsonString(value)
+  local s = tostring(value or "")
+  s = s:gsub("\\", "\\\\")
+  s = s:gsub('"', '\\"')
+  s = s:gsub("\n", "\\n")
+  s = s:gsub("\r", "\\r")
+  s = s:gsub("\t", "\\t")
+  return s
+end
+
+-- The daemon can start with the factory configuration: when the plugin is
+-- reloaded, the user configuration is not applied yet and the service starts
+-- it with the default values (polling every 20 s instead of what the user
+-- set). Every round passes the current configuration, so the daemon always
+-- works with what the user set (regardless of when it was started).
+local function configureDaemon()
+  if stopped then
+    return
+  end
+  local poll = C.poll_seconds()
+  local payload = '{"cmd":"configure","poll":' .. tostring(poll)
+    .. ',"device_mac":"' .. jsonString(noctalia.getConfig("device_mac")) .. '"'
+    .. ',"device_name":"' .. jsonString(noctalia.getConfig("device_name")) .. '"}'
+  noctalia.runAsync({
+    "python3", pluginPath .. "/bin/budsctl.py", "rpc", payload,
+    "--state", statePath,
+    "--socket", socketPath,
+    "--log", logPath,
+    "--poll", tostring(poll),
+    "--device-mac", noctalia.getConfig("device_mac") or "",
+    "--device-name", noctalia.getConfig("device_name") or "",
+    -- The daemon is never started from here: a request that is in flight
+    -- when the plugin is disabled must not bring it back.
+    "--no-autostart",
+  })
+end
+
+local function stopDaemon(onStopped)
   if statePath == nil then
+    if onStopped ~= nil then
+      onStopped()
+    end
     return
   end
   noctalia.runAsync({
@@ -49,7 +91,13 @@ local function stopDaemon()
     "--state", statePath,
     "--socket", socketPath,
     "--log", logPath,
-  })
+  }, function()
+    -- The stop waits for the daemon to release its lock, so the next one
+    -- can start.
+    if onStopped ~= nil then
+      onStopped()
+    end
+  end)
 end
 
 local function startDaemon()
@@ -60,7 +108,7 @@ local function startDaemon()
   if statePath == nil then
     return
   end
-  -- El demonio tiene flock: si ya hay uno, este intento sale sin hacer nada.
+  -- The daemon uses flock: if one is already running, this attempt exits without doing anything.
   noctalia.runAsync(daemonArgv())
   started = true
 end
@@ -77,9 +125,15 @@ local function ping()
     "--state", statePath,
     "--socket", socketPath,
     "--log", logPath,
+    "--poll", tostring(C.poll_seconds()),
+    "--device-mac", noctalia.getConfig("device_mac") or "",
+    "--device-name", noctalia.getConfig("device_name") or "",
+    -- The daemon is not started from here: it is the job of the service,
+    -- and a ping in flight must not bring it back after a shutdown.
+    "--no-autostart",
   }, function(result)
-    -- Si el demonio murió (por ejemplo tras un crash), hay que relanzarlo.
-    -- Pero si el plugin se ha apagado mientras tanto, no hay que tocar nada.
+    -- If the daemon died (for example after a crash), it has to be relaunched.
+    -- But if the plugin was shut down in the meantime, nothing must be touched.
     if stopped then
       return
     end
@@ -95,6 +149,7 @@ function update()
     startDaemon()
   end
   ping()
+  configureDaemon()
 end
 
 function onEnable()
@@ -103,9 +158,16 @@ function onEnable()
 end
 
 function onConfigChanged()
-  stopDaemon()
+  -- The daemon is stopped first and started when the stop is finished: the
+  -- daemon uses flock, and the new one would quit without doing anything if
+  -- the old one still held the lock.
   started = false
-  startDaemon()
+  stopDaemon(function()
+    if stopped then
+      return
+    end
+    startDaemon()
+  end)
 end
 
 function onExit(_signal, _reason)

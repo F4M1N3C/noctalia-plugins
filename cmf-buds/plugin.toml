@@ -1,18 +1,18 @@
-# Control nativo de los CMF Buds Pro 2 (B172) desde Noctalia.
-# Habla RFCOMM con los auriculares: ANC, volumen, EQ, Ultra Bass, gestos del
-# dial del estuche, audio espacial, detección in-ear, latencia baja, multipunto,
-# batería, ring my buds y test de ajuste.
+# Native control of the CMF Buds Pro 2 (B172) from Noctalia.
+# Speaks RFCOMM with the earbuds: ANC, volume, EQ, Ultra Bass, case-dial
+# gestures, spatial audio, in-ear detection, low latency, multipoint,
+# battery, ring my buds and the fit test.
 
 id = "faminec/cmf-buds"
 name = "CMF Buds"
-version = "1.0.0"
-plugin_api = 34
+version = "1.1.0"
+plugin_api = 43
 author = "faminec"
 license = "MIT"
-dependencies = ["python3", "bluetoothctl", "pactl"]
+dependencies = ["python3", "bluetoothctl", "pactl", "hyprctl", "notify-send", "dbus-monitor"]
 tags = ["audio", "utility", "bar", "panel", "hardware"]
 icon = "headphones"
-description = "Control completo de los CMF Buds Pro 2: ANC, EQ, Ultra Bass, gestos del estuche, audio espacial y más."
+description = "Native control for Nothing CMF Buds Pro 2: ANC, EQ, Ultra Bass, case-dial gestures, spatial audio, and more."
 
 [[setting]]
 key = "device_name"
@@ -33,14 +33,14 @@ key = "glyph"
 type = "glyph"
 label_key = "settings.glyph.label"
 description_key = "settings.glyph.description"
-default = "headphones"
+default = "headphones-filled"
 
 [[setting]]
 key = "volume_step"
 type = "int"
 label_key = "settings.volume_step.label"
 description_key = "settings.volume_step.description"
-default = 5
+default = 1
 min = 1
 max = 25
 
@@ -56,7 +56,7 @@ key = "poll_seconds"
 type = "int"
 label_key = "settings.poll_seconds.label"
 description_key = "settings.poll_seconds.description"
-default = 60
+default = 20
 min = 20
 max = 300
 
@@ -68,9 +68,9 @@ entry = "widget.luau"
 id = "panel"
 entry = "panel.luau"
 width = 600
-height = 1000
-placement = "floating"
-position = "top_center"
+height = 965
+placement = "attached"
+position = "auto"
 layer = "overlay"
 open_near_click = false
 

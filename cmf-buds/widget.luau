@@ -1,6 +1,6 @@
 --!nonstrict
--- Widget de barra para los CMF Buds Pro 2.
--- Click: abre el panel. Rueda: volumen. Click derecho: cicla ANC.
+-- Bar widget for the CMF Buds Pro 2.
+-- Click: opens the panel. Wheel: volume. Right click: cycles ANC.
 
 local C = require("./lib/common.luau")
 
@@ -14,8 +14,6 @@ local pluginPath = noctalia.pluginDir() or ""
 local lastRaw = nil
 local lastState = nil
 
-local dot = nil
-local grotesk = nil
 local render
 
 local function ensurePaths()
@@ -24,15 +22,6 @@ local function ensurePaths()
     statePath = dir .. "/state.json"
     socketPath = dir .. "/daemon.sock"
     logPath = dir .. "/daemon.log"
-  end
-end
-
-local function loadFonts()
-  if dot == nil then
-    dot = noctalia.loadFont("fonts/Doto.ttf")
-  end
-  if grotesk == nil then
-    grotesk = noctalia.loadFont("fonts/SpaceGrotesk.ttf")
   end
 end
 
@@ -56,17 +45,30 @@ local function readState()
   return data
 end
 
+-- The daemon can take a while: a full query of the earbuds is about 15 s
+-- and a reconnection up to a minute (the Bluetooth connect plus the wait
+-- for BlueZ). The host clamps the timeout to 60 s, so the request is not
+-- killed in the middle and the real answer is not lost.
+local RPC_TIMEOUT_MS = 60000
+
 local function rpc(req, cb, silent)
   ensurePaths()
   if statePath == nil then
+    if not silent then
+      noctalia.notifyError(C.tr("title"), C.error_text("daemon_failed"))
+    end
     return false
   end
   local encoded = noctalia.json.encode(req)
   if encoded == nil then
-    noctalia.log("cmf-buds: no se pudo serializar la petición")
-    busy = false
-    loading = false
-    return
+    noctalia.log("cmf-buds: could not serialize the request")
+    if not silent then
+      noctalia.notifyError(C.tr("title"), C.error_text("generic"))
+    end
+    if cb ~= nil then
+      cb(nil)
+    end
+    return false
   end
   local argv = {
     "python3",
@@ -79,40 +81,60 @@ local function rpc(req, cb, silent)
     statePath,
     "--log",
     logPath,
+    -- The same arguments as the panel: if the widget is the one that has
+    -- to start the daemon, it must start it with the settings of the user.
+    "--poll",
+    tostring(C.poll_seconds()),
+    "--device-mac",
+    noctalia.getConfig("device_mac") or "",
+    "--device-name",
+    noctalia.getConfig("device_name") or "",
   }
-  return noctalia.runAsync(argv, function(result)
+  local launched = noctalia.runAsync(argv, function(result)
     local ok, data = pcall(noctalia.json.decode, result.stdout or "")
     if not ok or type(data) ~= "table" then
       if not silent then
-        noctalia.notifyError(C.tr("title"), C.tr("error.generic"))
+        -- An empty answer means the process was killed: the daemon needs
+        -- more time than the host gave it.
+        local detail = ""
+        if result.timedOut then
+          detail = "timeout"
+        else
+          detail = (result.stderr or ""):gsub("%s+$", "")
+        end
+        noctalia.notifyError(C.tr("title"), C.error_text("daemon_failed", detail))
       end
+      if cb ~= nil then
+        cb(nil)
+      end
+      render()
       return
     end
     if data.state ~= nil then
       lastState = data.state
     end
     if data.ok ~= true and not silent then
-      noctalia.notifyError(C.tr("title"), data.error or C.tr("error.generic"))
+      -- The daemon sends a stable code and the technical detail apart:
+      -- the text is resolved here, in the language of the user.
+      noctalia.notifyError(C.tr("title"), C.error_text(data.error, data.error_detail))
     end
     if cb ~= nil then
       cb(data)
     end
     render()
-  end)
-end
-
-local function batteryValue(st)
-  if st == nil then
-    return nil
+  end, RPC_TIMEOUT_MS)
+  if not launched then
+    -- The host did not start the process and never calls the callback: the
+    -- failure has to be reported here or the widget would wait forever.
+    if not silent then
+      noctalia.notifyError(C.tr("title"), C.error_text("daemon_failed"))
+    end
+    if cb ~= nil then
+      cb(nil)
+    end
+    return false
   end
-  local b = st.battery or {}
-  if b.left ~= nil then
-    return b.left
-  end
-  if b.right ~= nil then
-    return b.right
-  end
-  return b.bluez
+  return true
 end
 
 render = function()
@@ -128,18 +150,21 @@ render = function()
     { C.tr("tooltip.volume"), C.volume_text(st) },
   }
   if st ~= nil and st.error ~= nil and st.error ~= "" then
-    table.insert(rows, { C.tr("tooltip.error"), tostring(st.error) })
+    table.insert(rows, {
+      C.tr("tooltip.error"),
+      C.error_text(st.error, st.error_detail),
+    })
   end
 
-  -- El tooltip va en el nodo que hay bajo el puntero: con el arbol
-  -- declarativo, el area-hover es el hijo (no el widget), asi que el
-  -- setTooltip del widget no se veria.
+  -- The tooltip goes on the node under the pointer: with the declarative
+  -- tree, the hover area is the child (not the widget), so the widget's
+  -- setTooltip would not be shown.
   local parts = {}
   for _, row in ipairs(rows) do
     table.insert(parts, tostring(row[1]) .. ": " .. tostring(row[2]))
   end
 
-  -- Solo el icono: hereda el color de la barra (como el resto de widgets).
+  -- Icon only: it inherits the bar color (like the other widgets).
   local container = barWidget.isVertical() and ui.column or ui.row
   barWidget.render(container({
     gap = 0,
@@ -159,7 +184,7 @@ function update()
 end
 
 function onClick()
-  noctalia.togglePanel(C.panel_id(C.last_tab()))
+  noctalia.togglePanel(C.panel_id())
 end
 
 function onRightClick()
@@ -184,8 +209,32 @@ function onRightClick()
   rpc(req, nil, false)
 end
 
+-- The wheel sends one event per notch: sending a request for each of them
+-- would write the volume several times, and the last write to reach the
+-- daemon would not be the last one the user asked for. Only one request is
+-- in flight and the target of the last event wins.
+local volumeInFlight = false
+local pendingVolumeTarget = nil
+
+local function applyVolume(target)
+  pendingVolumeTarget = nil
+  volumeInFlight = true
+  rpc({ cmd = "volume", percent = target, mute = "off" }, function()
+    volumeInFlight = false
+    local next = pendingVolumeTarget
+    if next ~= nil then
+      applyVolume(next)
+    end
+  end, true)
+end
+
 function onScroll(axis, steps)
   if axis ~= "vertical" then
+    return
+  end
+  -- The panel sliders are native controls and always take the wheel; this
+  -- setting is about scrolling the bar widget, so it is read here.
+  if noctalia.getConfig("wheel_adjust") == false then
     return
   end
   local st = lastState
@@ -201,12 +250,17 @@ function onScroll(axis, steps)
     st.volume.muted = false
     render()
   end
-  rpc({ cmd = "volume", percent = target, mute = "off" }, nil, true)
+  if volumeInFlight then
+    -- A request is already running: the target waits for it.
+    pendingVolumeTarget = target
+    return
+  end
+  applyVolume(target)
 end
 
 function onIpc(event, payload)
   if event == "toggle" then
-    noctalia.togglePanel(C.panel_id(C.last_tab()))
+    noctalia.togglePanel(C.panel_id())
   elseif event == "refresh" then
     update()
   elseif event == "anc" then
@@ -225,7 +279,9 @@ function onConfigChanged()
 end
 
 ensurePaths()
-loadFonts()
 C.loadTranslations()
-noctalia.setUpdateInterval(5000)
+-- The panel polls the state every 500 ms and the daemon publishes external
+-- changes (phone volume, ANC, battery) as soon as it sees them: with a 1 s
+-- interval the bar tooltip stays live.
+noctalia.setUpdateInterval(1000)
 update()

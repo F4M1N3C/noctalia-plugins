@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -96,22 +97,22 @@ class ReconnectTests(unittest.TestCase):
         calls = []
         daemon.link = FakeLink()
         daemon.disconnect = lambda: calls.append("disconnect")
-        daemon.connect = lambda force_bt=False, user=False: (
-            calls.append(("connect", force_bt, user)),
+        daemon.connect = lambda force_bt=False, user=False, reactivate=False: (
+            calls.append(("connect", force_bt, user, reactivate)),
             True,
         )[1]
         result = daemon.handle_rpc({"cmd": "reconnect"})
         self.assertTrue(result.get("ok"), "the reconnect did not report success")
         self.assertEqual(
             calls,
-            ["disconnect", ("connect", True, True)],
+            ["disconnect", ("connect", True, True, True)],
             "the link was not closed and opened again",
         )
 
     def test_the_reconnect_command_reports_the_failure(self):
         daemon = make_daemon()
         daemon.disconnect = lambda: None
-        daemon.connect = lambda force_bt=False, user=False: False
+        daemon.connect = lambda force_bt=False, user=False, reactivate=False: False
         daemon.state["error"] = "disconnected"
         daemon.state["error_detail"] = "the phone kept the device"
         result = daemon.handle_rpc({"cmd": "reconnect"})
@@ -122,6 +123,55 @@ class ReconnectTests(unittest.TestCase):
     def test_the_daemon_answers_the_reconnect_command(self):
         source = read("bin", "budsctl.py")
         self.assertTrue('if cmd == "reconnect":' in source)
+
+    def test_the_reconnect_reactivates_bluetooth_when_the_channel_is_refused(self):
+        """After the serial channel is closed the earbuds refuse it again.
+
+        BlueZ only activates the RFCOMM channel again when the Bluetooth
+        link itself is re-established: a reconnect that does not do that
+        fails with "Connection refused" and the panel cannot recover.
+        """
+        daemon = make_daemon()
+        commands = []
+        opens = []
+
+        class RefusingLink(FakeLink):
+            def open(self):
+                opens.append(1)
+                if len(opens) == 1:
+                    raise OSError("[Errno 111] Connection refused")
+                self.connected = True
+
+        def fake_run(cmd, timeout=10):
+            commands.append(cmd)
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        device = {
+            "mac": "AA:BB:CC:DD:EE:FF",
+            "name": "CMF Buds Pro 2",
+            "connected": True,
+            "battery": None,
+        }
+        with mock.patch.object(budsctl, "run", side_effect=fake_run):
+            with mock.patch.object(budsctl, "bt_info", return_value=device):
+                with mock.patch.object(budsctl, "pick_device", return_value=device):
+                    with mock.patch.object(budsctl.time, "sleep"):
+                        daemon._new_link = lambda mac: RefusingLink()
+                        result = daemon.handle_rpc({"cmd": "reconnect"})
+        self.assertTrue(
+            result.get("ok"), "the reconnect did not recover the link: %s" % result
+        )
+        self.assertEqual(len(opens), 2, "the link was not opened again")
+        self.assertIn(
+            ["bluetoothctl", "disconnect", "AA:BB:CC:DD:EE:FF"],
+            commands,
+            "the Bluetooth link was not re-established",
+        )
+        self.assertIn(
+            ["bluetoothctl", "connect", "AA:BB:CC:DD:EE:FF"],
+            commands,
+            "the device was not connected again",
+        )
 
 
 class RpcBudgetTests(unittest.TestCase):

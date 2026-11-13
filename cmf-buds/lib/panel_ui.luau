@@ -1395,11 +1395,12 @@ local function connectionCard()
           connecting = true
           errorText = ""
           render()
-          -- While the link is alive the connect command does nothing: the
-          -- daemon answers at once. The reconnect command closes the
-          -- link and opens it again, which is the only way to recover a
-          -- half-open one.
-          rpc({ cmd = connected and "reconnect" or "connect" }, function()
+          -- The reconnect command closes the link and opens it again: the
+          -- connect command does nothing while the link is alive, and a
+          -- half-open one can only be recovered this way. It also
+          -- re-establishes the Bluetooth link when the serial channel is
+          -- refused, so it is the right command in both cases.
+          rpc({ cmd = "reconnect" }, function()
             connecting = false
           end)
         end,

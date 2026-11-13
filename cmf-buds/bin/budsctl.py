@@ -1067,7 +1067,7 @@ class BudsDaemon:
         except Exception as exc:
             self.log("Could not update the state after the disconnect: %s" % exc)
 
-    def connect(self, force_bt=False, user=False):
+    def connect(self, force_bt=False, user=False, reactivate=False):
         """Open the RFCOMM link.
 
         The monitor thread and the RPC thread can ask for a connection at the
@@ -1075,11 +1075,56 @@ class BudsDaemon:
         fails with "busy", reporting a failure for a link that is already
         working. The lock makes the second one wait and see the link that
         the first one opened.
+
+        With 'reactivate' the Bluetooth link is re-established when the
+        serial channel is refused: only an explicit user action asks for
+        that, because it interrupts the audio for a moment.
         """
         with self._connect_lock:
-            return self._connect(force_bt=force_bt, user=user)
+            return self._connect(
+                force_bt=force_bt, user=user, reactivate=reactivate
+            )
 
-    def _connect(self, force_bt=False, user=False):
+    def _reactivate_bluetooth(self, mac):
+        """Re-establish the Bluetooth link so BlueZ activates the channel.
+
+        After the serial channel has been closed the earbuds refuse new
+        RFCOMM connections ("Connection refused") until the Bluetooth link
+        itself is re-established. Only the explicit reconnect uses it.
+        """
+        self.log("Reactivating the Bluetooth link with %s" % mac)
+        run(["bluetoothctl", "disconnect", mac], 20)
+        time.sleep(1.0)
+        run(["bluetoothctl", "connect", mac], 20)
+        deadline = time.time() + 12
+        info = bt_info(mac)
+        while not info.get("connected") and time.time() < deadline:
+            time.sleep(0.5)
+            info = bt_info(mac)
+        if not info.get("connected"):
+            self.log("The device did not come back over Bluetooth")
+            return False
+        # BlueZ needs a moment to activate the serial channel.
+        time.sleep(1.0)
+        return True
+
+    def _open_link(self, mac, reactivate=False):
+        """Open the serial channel, reactivating Bluetooth when asked."""
+        link = self._new_link(mac)
+        try:
+            link.open()
+            return link
+        except Exception as exc:
+            if not reactivate:
+                raise
+            self.log("The serial channel was refused (%s)" % exc)
+            if not self._reactivate_bluetooth(mac):
+                raise
+            link = self._new_link(mac)
+            link.open()
+            return link
+
+    def _connect(self, force_bt=False, user=False, reactivate=False):
         now = time.time()
         if self.link and self.link.connected:
             return True
@@ -1148,8 +1193,7 @@ class BudsDaemon:
                 self.save()
                 return False
         try:
-            link = self._new_link(mac)
-            link.open()
+            link = self._open_link(mac, reactivate=reactivate)
             # The swap happens under the lock: the monitor thread and an RPC
             # thread can connect at the same time, and the old socket has to
             # be closed exactly once.
@@ -1940,9 +1984,10 @@ class BudsDaemon:
         if cmd == "reconnect":
             # The link is closed and opened again: the connect command
             # does nothing when the link is alive, and a half-open link
-            # can only be recovered this way.
+            # can only be recovered this way. The Bluetooth link is
+            # re-established too when the serial channel is refused.
             self.disconnect()
-            ok = self.connect(force_bt=True, user=True)
+            ok = self.connect(force_bt=True, user=True, reactivate=True)
             state = self.snapshot()
             return {
                 "ok": bool(ok),

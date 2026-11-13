@@ -137,8 +137,12 @@ local function ping()
     if stopped then
       return
     end
-    local code = result.exitCode or 0
-    if code ~= 0 then
+    -- The exit code is not enough: the command always exits with zero when it
+    -- answers, even when the answer says that the daemon is not there. The
+    -- answer itself says whether the daemon answered.
+    local decoded, data = pcall(noctalia.json.decode, result.stdout or "")
+    local answered = decoded and type(data) == "table" and data.ok == true
+    if not answered then
       startDaemon()
     end
   end)

@@ -270,6 +270,21 @@ class LuauContractTests(unittest.TestCase):
             "the service can start a daemon after the plugin was disabled",
         )
 
+    def test_the_service_restarts_the_daemon_when_the_ping_does_not_answer(self):
+        body = function_body(self.service, "ping")
+        self.assertTrue(
+            contains(body, "json.decode"),
+            "the ping does not read the answer of the daemon",
+        )
+        self.assertTrue(
+            contains(body, "data.ok"),
+            "the ping does not check whether the daemon answered",
+        )
+        self.assertFalse(
+            contains(body, "exitCode"),
+            "the ping only checks the exit code, which is always zero",
+        )
+
     def test_the_widget_coalesces_the_volume_of_the_wheel(self):
         self.assertTrue(
             contains(self.widget, "volumeInFlight"),

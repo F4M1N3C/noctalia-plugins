@@ -869,6 +869,56 @@ check("geometryFromMemory: ancho", 802, (brain.geometryFromMemory("bottom-left, 
 check("geometryFromMemory: string inválido", nil, brain.geometryFromMemory("no es un layout", 3440, 1440, 0))
 check("geometryFromMemory: nil", nil, brain.geometryFromMemory(nil, 3440, 1440, 0))
 
+-- Cliente crudo de `hyprctl clients -j`: `at` y `size` son arrays posicionales.
+local function clientAt(class, x, y, w, h)
+  return { class = class, at = { x, y }, size = { w, h }, address = "0x" .. x, monitor = 0 }
+end
+
+-- sondeo 1: nada memorizado, pendiente creado
+local rect = { x = 0, y = 800, w = 802, h = 582 }
+local r1 = brain.capture({ clientAt("noctalia-term-lavat", 0, 800, 802, 582) }, SCREEN, 0, {}, {}, {})
+check("captura: primer sondeo no memoriza", nil, r1.memory["noctalia-term-lavat"])
+check("captura: primer sondeo deja pendiente", 800, (r1.pending["noctalia-term-lavat"] or {}).y)
+check("captura: primer sondeo sin cambios", false, r1.changed)
+
+-- sondeo 2 idéntico: memoriza
+local r2 = brain.capture({ clientAt("noctalia-term-lavat", 0, 800, 802, 582) }, SCREEN, 0, {}, {}, r1.pending)
+check("captura: segundo sondeo memoriza", "bottom-left, 802x582, 0, -58", r2.memory["noctalia-term-lavat"])
+check("captura: segundo sondeo marca cambio", true, r2.changed)
+
+-- rect distinto: reinicia el pendiente y no memoriza
+local r3 = brain.capture({ clientAt("noctalia-term-lavat", 0, 700, 802, 582) }, SCREEN, 0, {}, {}, r2.pending)
+check("captura: rect distinto no memoriza", nil, r3.memory["noctalia-term-lavat"])
+check("captura: rect distinto reinicia pendiente", 700, (r3.pending["noctalia-term-lavat"] or {}).y)
+
+-- imposición reciente y coincidente: suprime y cancela el pendiente
+clock = 10000
+local imposed = { ["noctalia-term-lavat"] = { x = 0, y = 800, w = 802, h = 582, at = 9000 } }
+local r4 = brain.capture({ clientAt("noctalia-term-lavat", 0, 800, 802, 582) }, SCREEN, 0, {}, imposed, r1.pending)
+check("captura: imposición reciente no memoriza", nil, r4.memory["noctalia-term-lavat"])
+check("captura: imposición cancela pendiente", nil, r4.pending["noctalia-term-lavat"])
+check("captura: imposición no marca cambio", false, r4.changed)
+
+-- imposición caducada: ya cuenta como manual
+local old = { ["noctalia-term-lavat"] = { x = 0, y = 800, w = 802, h = 582, at = 1000 } }
+local r5 = brain.capture({ clientAt("noctalia-term-lavat", 0, 800, 802, 582) }, SCREEN, 0, {}, old, r1.pending)
+check("captura: imposición caducada memoriza", "bottom-left, 802x582, 0, -58", r5.memory["noctalia-term-lavat"])
+
+-- ventanas ajenas al plugin
+local r6 = brain.capture({ clientAt("kitty", 0, 0, 100, 100) }, SCREEN, 0, {}, {}, {})
+local foreign = 0
+for _ in pairs(r6.pending) do foreign = foreign + 1 end
+check("captura: ignora ventanas ajenas", 0, foreign)
+
+-- ventana cerrada: su pendiente desaparece
+local r7 = brain.capture({}, SCREEN, 0, {}, {}, r1.pending)
+check("captura: ventana cerrada borra pendiente", nil, r7.pending["noctalia-term-lavat"])
+
+-- sin cambios respecto a la memoria previa: no marca cambio
+local prev = { ["noctalia-term-lavat"] = "bottom-left, 802x582, 0, -58" }
+local r8 = brain.capture({ clientAt("noctalia-term-lavat", 0, 800, 802, 582) }, SCREEN, 0, prev, {}, r1.pending)
+check("captura: memoria igual no marca cambio", false, r8.changed)
+
 -- -------------------------------------------------------------------- panel --
 
 print("\n== panel ==")

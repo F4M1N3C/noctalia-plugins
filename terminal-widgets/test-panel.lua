@@ -982,6 +982,14 @@ local locked = win.rotate(group, "clockwise", false, function() end)
 check("rotación bloqueada mientras gira", false, locked)
 win.rotating = false
 
+-- Enfocar sin recolocar: un solo dispatch de foco, ni resize ni move.
+dispatched = {}
+win.focusOnly("noctalia-term-lavat", function() end)
+check("focusOnly: un solo dispatch", 1, #dispatched)
+check("focusOnly: es un foco", true, dispatched[1]:find("hl.dsp.focus") ~= nil)
+check("focusOnly: no redimensiona", nil, dispatched[1]:find("resize"))
+check("focusOnly: no mueve", nil, dispatched[1]:find("move"))
+
 -- ------------------------------------------------------------- lib/output.luau --
 
 print("\n== lib/output.luau ==")

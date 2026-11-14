@@ -110,6 +110,31 @@ local function jsonEncode(value)
   return "{" .. table.concat(parts, ",") .. "}"
 end
 
+-- JSON de `hyprctl clients -j` a partir de la tabla `clients`. Acepta las dos
+-- formas que usan las secciones: la cruda de hyprctl (`at` y `size` como
+-- arrays posicionales, lo que llega de verdad del compositor) y la normalizada
+-- (`x`, `y`, `w`, `h`). El callback recibe el `CommandResult` real del host:
+-- una sola tabla `{ exitCode, stdout, stderr }`.
+local function clientsJson()
+  local parts = {}
+  for _, client in ipairs(clients) do
+    local at = client.at or { client.x or 0, client.y or 0 }
+    local size = client.size or { client.w or 0, client.h or 0 }
+    parts[#parts + 1] = string.format(
+      '{"address":"%s","class":"%s","title":"%s","at":[%d,%d],"size":[%d,%d],"monitor":"%s"}',
+      client.address or "0x0",
+      client.class or "",
+      client.title or "",
+      math.floor(tonumber(at[1]) or 0),
+      math.floor(tonumber(at[2]) or 0),
+      math.floor(tonumber(size[1]) or 0),
+      math.floor(tonumber(size[2]) or 0),
+      client.monitor or "1"
+    )
+  end
+  return "[" .. table.concat(parts, ",") .. "]"
+end
+
 local mock = {
   getConfig = function(key)
     return config[key]
@@ -350,22 +375,8 @@ local mock = {
   runAsync = function(argv, callback)
     local command = table.concat(argv, " ")
     if command:find("hyprctl clients", 1, true) then
-      local parts = {}
-      for _, client in ipairs(clients) do
-        parts[#parts + 1] = string.format(
-          '{"address":"%s","class":"%s","title":"%s","at":[%d,%d],"size":[%d,%d],"monitor":"%s"}',
-          client.address or "0x0",
-          client.class or "",
-          client.title or "",
-          client.x or 0,
-          client.y or 0,
-          client.w or 0,
-          client.h or 0,
-          client.monitor or "1"
-        )
-      end
       if callback ~= nil then
-        callback({ exitCode = 0, stdout = "[" .. table.concat(parts, ",") .. "]", stderr = "" })
+        callback({ exitCode = 0, stdout = clientsJson(), stderr = "" })
       end
       return true
     end
@@ -834,22 +845,8 @@ mock.runAsync = function(argv, callback)
     dispatched[#dispatched + 1] = argv[3]
   end
   if command:find("hyprctl clients", 1, true) then
-    local parts = {}
-    for _, client in ipairs(clients) do
-      parts[#parts + 1] = string.format(
-        '{"address":"%s","class":"%s","title":"%s","at":[%d,%d],"size":[%d,%d],"monitor":"%s"}',
-        client.address or "0x0",
-        client.class or "",
-        client.title or "",
-        client.x or 0,
-        client.y or 0,
-        client.w or 0,
-        client.h or 0,
-        client.monitor or "1"
-      )
-    end
     if callback ~= nil then
-      callback({ exitCode = 0, stdout = "[" .. table.concat(parts, ",") .. "]", stderr = "" })
+      callback({ exitCode = 0, stdout = clientsJson(), stderr = "" })
     end
     return true
   end
@@ -1764,6 +1761,50 @@ check(
 mock.runAsync = previousRunAsync
 mock.removeFile = previousRemoveFile
 clients = {}
+
+-- ------------------------------------------------------------- service.luau --
+
+print("\n== service.luau ==")
+
+-- El service usa su propio entorno (globals propios) con el mismo `noctalia`.
+local service = {}
+setmetatable(service, { __index = env })
+local chunk = assert(loadfile(DIR .. "service.luau", "t", service))
+chunk()
+check("service: exporta update", "function", type(service.update))
+-- el mock de getConfig debe devolver margin = 0 para que los esperados sean exactos
+check("service: intervalo de sondeo 1 s", true, serviceUpdatedMs == 1000)
+
+-- El string memorizado depende del margen configurado: se fija a 0 para que
+-- los valores esperados de abajo sean exactos (se restaura al salir).
+local savedMargin = config.margin
+config.margin = 0
+
+local callsBefore = #dispatched
+files[storePath] = '{"commands":{},"brain":false,"brainGeometry":{}}'
+service.update()
+check("service: cerebro OFF no consulta hyprctl", callsBefore, #dispatched)
+check("service: cerebro OFF no escribe memoria", nil, storeLib.load().brainGeometry["noctalia-term-lavat"])
+
+-- cerebro ON: dos ticks con la misma ventana memorizan
+files[storePath] = '{"commands":{},"brain":true,"brainGeometry":{}}'
+clients = { { class = "noctalia-term-lavat", at = { 0, 800 }, size = { 802, 582 }, address = "0x1", monitor = 0 } }
+service.update()
+service.update()
+check("service: cerebro ON memoriza tras dos ticks", "bottom-left, 802x582, 0, -58", storeLib.load().brainGeometry["noctalia-term-lavat"])
+clients = {}
+
+-- cerebro ON y rectángulo impuesto reciente: no memoriza
+files[storePath] = '{"commands":{},"brain":true,"brainGeometry":{}}'
+mock.state.set("imposed", { ["noctalia-term-lavat"] = { x = 0, y = 800, w = 802, h = 582, at = clock } })
+clients = { { class = "noctalia-term-lavat", at = { 0, 800 }, size = { 802, 582 }, address = "0x1", monitor = 0 } }
+service.update()
+service.update()
+check("service: respeta la supresión de impuestos", nil, storeLib.load().brainGeometry["noctalia-term-lavat"])
+mock.state.set("imposed", {})
+clients = {}
+
+config.margin = savedMargin
 
 print(string.format("\n%d comprobaciones, %d fallos", PASSED + FAILED, FAILED))
 os.exit(FAILED == 0 and 0 or 1)

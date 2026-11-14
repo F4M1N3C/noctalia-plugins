@@ -87,21 +87,25 @@ local function jsonQuote(value)
   return '"' .. tostring(value):gsub('\\', '\\\\'):gsub('"', '\\"') .. '"'
 end
 
+-- Codificador recursivo (objetos, arrays, booleanos y números) para que el
+-- store pueda guardar mapas dentro del mapa raíz y el interruptor del cerebro.
 local function jsonEncode(value)
-  if type(value) ~= "table" then
+  if type(value) == "string" then
+    return jsonQuote(value)
+  elseif type(value) == "boolean" or type(value) == "number" then
     return tostring(value)
+  elseif type(value) ~= "table" then
+    return "null"
   end
   local parts = {}
-  for key, item in pairs(value) do
-    if type(item) == "table" then
-      local inner = {}
-      for k2, v2 in pairs(item) do
-        inner[#inner + 1] = jsonQuote(k2) .. ":" .. jsonQuote(v2)
-      end
-      parts[#parts + 1] = jsonQuote(key) .. ":{" .. table.concat(inner, ",") .. "}"
-    else
-      parts[#parts + 1] = jsonQuote(key) .. ":" .. jsonQuote(item)
+  if value[1] ~= nil then
+    for _, item in ipairs(value) do
+      parts[#parts + 1] = jsonEncode(item)
     end
+    return "[" .. table.concat(parts, ",") .. "]"
+  end
+  for key, item in pairs(value) do
+    parts[#parts + 1] = jsonQuote(key) .. ":" .. jsonEncode(item)
   end
   return "{" .. table.concat(parts, ",") .. "}"
 end
@@ -178,11 +182,140 @@ local mock = {
         end
         return out
       end
-      local out = {}
-      for key, value in trimmed:gmatch('"([^"]+)":"([^"]*)"') do
-        out[key] = value
+      -- Objetos: con valores anidados (el store guarda mapas dentro del
+      -- mapa raíz) y booleanos. Parser recursivo mínimo.
+      local src = trimmed
+      local pos = 1
+
+      local function skipSpaces()
+        while src:sub(pos, pos):match("%s") do pos = pos + 1 end
       end
-      return out
+
+      local function parseString()
+        pos = pos + 1
+        local out = {}
+        while pos <= #src do
+          local ch = src:sub(pos, pos)
+          if ch == '"' then
+            pos = pos + 1
+            return table.concat(out)
+          elseif ch == "\\" then
+            local esc = src:sub(pos + 1, pos + 1)
+            if esc == "n" then
+              out[#out + 1] = "\n"
+              pos = pos + 2
+            elseif esc == "t" then
+              out[#out + 1] = "\t"
+              pos = pos + 2
+            elseif esc == "r" then
+              out[#out + 1] = "\r"
+              pos = pos + 2
+            elseif esc == "u" then
+              out[#out + 1] = "?"
+              pos = pos + 6
+            elseif esc == "" then
+              pos = pos + 1
+            else
+              out[#out + 1] = esc
+              pos = pos + 2
+            end
+          else
+            out[#out + 1] = ch
+            pos = pos + 1
+          end
+        end
+        return table.concat(out)
+      end
+
+      local parseValue
+
+      local function parseArray()
+        pos = pos + 1
+        local out = {}
+        skipSpaces()
+        if src:sub(pos, pos) == "]" then
+          pos = pos + 1
+          return out
+        end
+        while true do
+          out[#out + 1] = parseValue()
+          skipSpaces()
+          local ch = src:sub(pos, pos)
+          if ch == "," then
+            pos = pos + 1
+          elseif ch == "]" then
+            pos = pos + 1
+            return out
+          else
+            return out
+          end
+        end
+      end
+
+      local function parseObject()
+        pos = pos + 1
+        local out = {}
+        skipSpaces()
+        if src:sub(pos, pos) == "}" then
+          pos = pos + 1
+          return out
+        end
+        while true do
+          skipSpaces()
+          local key = parseString()
+          if key == nil then
+            return out
+          end
+          skipSpaces()
+          if src:sub(pos, pos) == ":" then
+            pos = pos + 1
+          end
+          out[key] = parseValue()
+          skipSpaces()
+          local ch = src:sub(pos, pos)
+          if ch == "," then
+            pos = pos + 1
+          elseif ch == "}" then
+            pos = pos + 1
+            return out
+          else
+            return out
+          end
+        end
+      end
+
+      function parseValue()
+        skipSpaces()
+        local ch = src:sub(pos, pos)
+        if ch == '"' then
+          return parseString()
+        elseif ch == "{" then
+          return parseObject()
+        elseif ch == "[" then
+          return parseArray()
+        elseif src:sub(pos, pos + 4) == "false" then
+          pos = pos + 5
+          return false
+        elseif src:sub(pos, pos + 3) == "true" then
+          pos = pos + 4
+          return true
+        elseif src:sub(pos, pos + 3) == "null" then
+          pos = pos + 4
+          return nil
+        else
+          local from = pos
+          while src:sub(pos, pos):match("[%d%.%+%-eE]") do
+            pos = pos + 1
+          end
+          return tonumber(src:sub(from, pos - 1))
+        end
+      end
+
+      local value = parseValue()
+      if type(value) == "table" then
+        return value
+      end
+      return {}
     end,
   },
   log = function() end,
@@ -408,6 +541,52 @@ store.upsert(stClear, "x", "cmd", "center, 800x400", "/tmp/miniatura.png")
 store.upsert(stClear, "x", nil, "", "")
 check("layout vacío quita la posición", stClear.layouts.x, nil)
 check("thumb vacío quita la miniatura", stClear.thumbs.x, nil)
+
+-- La memoria del cerebro (interruptor y geometrías recordadas) vive en el
+-- mismo store.json: un store antiguo no la tiene y cada escritura parcial
+-- debe conservar la que hay en disco.
+local storeLib = store
+local storePath = storeLib.path()
+
+-- campos nuevos con valor por defecto en un store antiguo
+files[storePath] = '{"commands":{"a":"uno"},"layouts":{"a":"center, 100x100"}}'
+local legacy = storeLib.load()
+check("store: brain por defecto false", false, legacy.brain)
+check("store: brainGeometry por defecto vacío", 0, (function() local n = 0 for _ in pairs(legacy.brainGeometry) do n = n + 1 end return n end)())
+
+-- saveWidgets preserva la memoria del disco
+files[storePath] = '{"commands":{},"layouts":{},"thumbs":{},"removed":{},"brain":true,"brainGeometry":{"noctalia-term-a":"center, 100x100"}}'
+storeLib.saveWidgets({ commands = { a = "uno" }, layouts = {}, thumbs = {}, removed = {} })
+local afterWidgets = storeLib.load()
+check("saveWidgets: escribe commands", "uno", afterWidgets.commands.a)
+check("saveWidgets: preserva brain", true, afterWidgets.brain)
+check("saveWidgets: preserva brainGeometry", "center, 100x100", afterWidgets.brainGeometry["noctalia-term-a"])
+check("saveWidgets: fichero temporal borrado", nil, files[storePath .. ".tmp"])
+
+-- saveBrainToggle preserve los widgets
+storeLib.saveBrainToggle(false)
+local afterToggle = storeLib.load()
+check("saveBrainToggle: apaga", false, afterToggle.brain)
+check("saveBrainToggle: preserva commands", "uno", afterToggle.commands.a)
+
+-- saveBrainGeometry cambia solo lo que recibe
+storeLib.saveBrainGeometry({ ["noctalia-term-b"] = "top-right, 200x200" })
+local afterGeometry = storeLib.load()
+check("saveBrainGeometry: añade", "top-right, 200x200", afterGeometry.brainGeometry["noctalia-term-b"])
+check("saveBrainGeometry: conserva las demás", "center, 100x100", afterGeometry.brainGeometry["noctalia-term-a"])
+check("saveBrainGeometry: conserva brain", false, afterGeometry.brain)
+
+-- saveBrainForget borra una sola
+storeLib.saveBrainForget("noctalia-term-a")
+local afterForget = storeLib.load()
+check("saveBrainForget: borra la pedida", nil, afterForget.brainGeometry["noctalia-term-a"])
+check("saveBrainForget: deja las demás", "top-right, 200x200", afterForget.brainGeometry["noctalia-term-b"])
+
+-- loadBrain relee el disco aunque el state en memoria sea viejo
+files[storePath] = '{"commands":{},"brain":true,"brainGeometry":{"noctalia-term-c":"center, 50x50"}}'
+local fresh = storeLib.loadBrain()
+check("loadBrain: brain del disco", true, fresh.brain)
+check("loadBrain: memoria del disco", "center, 50x50", fresh.brainGeometry["noctalia-term-c"])
 
 -- -------------------------------------------------------------- posiciones --
 
@@ -1500,8 +1679,8 @@ mock.runAsync = function(argv, callback)
       pendingCapture = nil
       local raw = files[batchPath]
       if raw ~= nil then
-        -- El codificador del simulador no produce arrays, así que las rutas
-        -- se leen del texto del lote.
+        -- Las rutas se leen del texto del lote: basta con el texto, no
+        -- hace falta decodificar el JSON del batch.
         for out in raw:gmatch('"out":"([^"]*)"') do
           files[out] = true
           capturedFrames[#capturedFrames + 1] = out

@@ -978,7 +978,7 @@ local function applyWidget(name, command, layout, thumb)
   -- `layout` y `thumb` vacíos SÍ se guardan: significan "quitar el valor"
   -- (volver al layout por defecto / no usar miniatura personalizada).
   storeLib.upsert(state.store, name, command, layout, thumb)
-  local saved, err = storeLib.save(state.store)
+  local saved, err = storeLib.saveWidgets(state.store)
   if not saved then
     return false, tr("save_failed", { detail = tostring(err or "") })
   end
@@ -1004,7 +1004,7 @@ local function removeWidget(name)
   end
 
   storeLib.remove(state.store, name)
-  local saved, err = storeLib.save(state.store)
+  local saved, err = storeLib.saveWidgets(state.store)
   if not saved then
     return false, tr("save_failed", { detail = tostring(err or "") })
   end

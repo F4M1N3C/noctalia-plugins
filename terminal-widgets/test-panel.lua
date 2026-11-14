@@ -823,6 +823,52 @@ local tiny = outputLib.outputBox({ output = "" })
 check("outputBox: caja diminuta -> 1920x1080", "1920x1080", tiny.width .. "x" .. tiny.height)
 mock.outputs = savedOutputs
 
+-- --------------------------------------------------------------- lib/brain.luau --
+
+print("\n== lib/brain.luau ==")
+
+local layoutLib = loadModule("layout.luau")
+local brain = loadModule("brain.luau")
+local SCREEN = { x = 0, y = 0, width = 3440, height = 1440, name = "DP-1" }
+
+local function anchorOf(x, y, w, h)
+  return brain.anchorFromRect({ x = x, y = y, w = w, h = h }, SCREEN, 0).anchor
+end
+check("ancla: esquina inferior izquierda", "bottom-left", anchorOf(0, 800, 802, 582))
+check("ancla: esquina superior derecha", "top-right", anchorOf(2400, 0, 802, 582))
+check("ancla: centro exacto", "center", anchorOf(1319, 429, 802, 582))
+check("ancla: banda izquierda, fila central", "left-center", anchorOf(10, 429, 802, 582))
+check("ancla: banda derecha, fila central", "right-center", anchorOf(2600, 429, 802, 582))
+check("ancla: banda central, fila superior", "top-center", anchorOf(1319, 10, 802, 582))
+check("ancla: banda central, fila inferior", "bottom-center", anchorOf(1319, 800, 802, 582))
+-- esquinas restantes
+check("ancla: superior izquierda", "top-left", anchorOf(0, 0, 802, 582))
+check("ancla: inferior derecha", "bottom-right", anchorOf(2600, 800, 802, 582))
+
+-- ida y vuelta: reconstruir devuelve la posición exacta (relativa a la caja)
+local function roundTrip(rect, screen, margin)
+  local memory = brain.anchorFromRect(rect, screen, margin)
+  local baseX, baseY = layoutLib.anchorPosition(memory.anchor, memory.width, memory.height, screen.width, screen.height, margin)
+  return (baseX + memory.dx) .. "," .. (baseY + memory.dy)
+end
+check("ida y vuelta: bottom-left", "0,800", roundTrip({ x = 0, y = 800, w = 802, h = 582 }, SCREEN, 0))
+check("ida y vuelta: centro", "1319,429", roundTrip({ x = 1319, y = 429, w = 802, h = 582 }, SCREEN, 0))
+check("ida y vuelta: con margen 24", "24,24", roundTrip({ x = 24, y = 24, w = 802, h = 582 }, SCREEN, 24))
+-- caja con origen desplazado (segundo monitor): el desfase es relativo a la caja
+local OFFSET = { x = 1920, y = 0, width = 1920, height = 1080, name = "DP-2" }
+check("ida y vuelta: caja desplazada", "0,0", roundTrip({ x = 1920, y = 0, w = 600, h = 400 }, OFFSET, 0))
+
+check("layoutString: formato exacto", "bottom-left, 802x582, 0, -58", brain.layoutString({ x = 0, y = 800, w = 802, h = 582 }, SCREEN, 0))
+-- desfase positivo: ventana a 100 px del borde izquierdo y a la altura de la base inferior
+local shifted = brain.anchorFromRect({ x = 100, y = 800, w = 802, h = 582 }, SCREEN, 0)
+check("layoutString: desfase en x", 100, shifted.dx)
+check("layoutString: desfase en y", -58, shifted.dy)
+check("layoutString: string con desfase", "bottom-left, 802x582, 100, -58", brain.layoutString({ x = 100, y = 800, w = 802, h = 582 }, SCREEN, 0))
+check("geometryFromMemory: reconstruye", 800, (brain.geometryFromMemory("bottom-left, 802x582, 0, -58", 3440, 1440, 0) or {}).y)
+check("geometryFromMemory: ancho", 802, (brain.geometryFromMemory("bottom-left, 802x582, 0, -58", 3440, 1440, 0) or {}).width)
+check("geometryFromMemory: string inválido", nil, brain.geometryFromMemory("no es un layout", 3440, 1440, 0))
+check("geometryFromMemory: nil", nil, brain.geometryFromMemory(nil, 3440, 1440, 0))
+
 -- -------------------------------------------------------------------- panel --
 
 print("\n== panel ==")

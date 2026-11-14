@@ -71,7 +71,7 @@ def rule(rid, trigger, presses, modifier, command):
     }
 
 
-def esperar(cond, timeout=10.0, paso=0.02):
+def wait_until(cond, timeout=10.0, step=0.02):
     """
     Wait until the condition is met.
 
@@ -83,7 +83,7 @@ def esperar(cond, timeout=10.0, paso=0.02):
     while time.monotonic() < fin:
         if cond():
             return True
-        time.sleep(paso)
+        time.sleep(step)
     return bool(cond())
 
 
@@ -92,7 +92,7 @@ class Runner:
         self.engine = FakeEngine(rules)
         self.failures = 0
 
-    def evento(self, volume, modifiers, gap=0.16):
+    def push_event(self, volume, modifiers, gap=0.16):
         """
         A click of the dial.
 
@@ -104,9 +104,9 @@ class Runner:
         self.engine._on_volume_change("fake")
         time.sleep(gap)
 
-    def varios(self, volumes, modifiers, gap=0.16):
+    def push_events(self, volumes, modifiers, gap=0.16):
         for v in volumes:
-            self.evento(v, modifiers, gap)
+            self.push_event(v, modifiers, gap)
 
     def check(self, name, condition, detail=""):
         if condition:
@@ -115,13 +115,13 @@ class Runner:
             print('  FAIL %s %s' % (name, detail))
             self.failures += 1
 
-    def calmarse(self):
+    def settle(self):
         # Allow the cooldown window to expire (after the restore echo)
         time.sleep(1.6)
         self.engine.fired.clear()
 
 
-def _pactl_falso(llamadas, motor):
+def _fake_pactl(calls, engine):
     """
     Simulated 'pactl': records the calls and applies the volume to the engine.
 
@@ -131,10 +131,10 @@ def _pactl_falso(llamadas, motor):
     """
 
     def fake_run(cmd, timeout=6):
-        llamadas.append(list(cmd))
+        calls.append(list(cmd))
         if "set-sink-volume" in cmd:
             try:
-                motor.volume = int(str(cmd[-1]).rstrip("%"))
+                engine.volume = int(str(cmd[-1]).rstrip("%"))
             except ValueError:
                 pass
 
@@ -147,28 +147,28 @@ def _pactl_falso(llamadas, motor):
     return fake_run
 
 
-def _esperar_restore(motor, destino, timeout=8.0):
+def _esperar_restore(engine, destino, timeout=8.0):
     """Wait for the restore to finish (and not leak into the next test)."""
-    esperar(lambda: motor.volume == destino, timeout=timeout)
+    wait_until(lambda: engine.volume == destino, timeout=timeout)
     # The restore performs one more check after applying the volume.
     time.sleep(0.6)
 
 
-def test_regla_cualquiera_sola():
+def test_any_rule_alone():
     print("1) only an 'any' rule exists (it fires immediately)")
     r = Runner([rule("a", "volume_up", 0, "super", "SUPER")])
-    r.evento(60, ["super"])
+    r.push_event(60, ["super"])
     # Without an N-press rule, "any" fires as soon as the gesture starts.
     time.sleep(0.2)
     r.check('runs with SUPER', r.engine.fired == ["SUPER"], r.engine.fired)
-    r.calmarse()
-    r.evento(70, [])
+    r.settle()
+    r.push_event(70, [])
     time.sleep(0.2)
     r.check('does not run without the modifier', r.engine.fired == [], r.engine.fired)
     return r.failures
 
 
-def test_contador_manda():
+def test_count_wins():
     print("2) 'any' + 3 presses: the 3-press rule wins, and the other serves as the fallback")
     r = Runner(
         [
@@ -177,7 +177,7 @@ def test_contador_manda():
         ]
     )
     # A single click: the 3-press rule is not reached, so "any" acts as the fallback.
-    r.evento(60, ["super"])
+    r.push_event(60, ["super"])
     # With an N-press rule pending, the fallback waits for the gesture to
     # end (otherwise it would consume the presses).
     time.sleep(0.2)
@@ -188,11 +188,11 @@ def test_contador_manda():
     )
     time.sleep(1.0)
     r.check("a single click triggers the 'any' fallback", r.engine.fired == ["CUALQUIERA"], r.engine.fired)
-    r.calmarse()
+    r.settle()
     # Three clicks: the 3-press rule wins.
-    r.evento(65, ["super"], 0.15)
-    r.evento(70, ["super"], 0.15)
-    r.evento(75, ["super"], 0.05)
+    r.push_event(65, ["super"], 0.15)
+    r.push_event(70, ["super"], 0.15)
+    r.push_event(75, ["super"], 0.05)
     time.sleep(0.3)
     r.check('three clicks trigger the 3-press rule', r.engine.fired == ["TRES"], r.engine.fired)
     time.sleep(1.5)
@@ -200,80 +200,80 @@ def test_contador_manda():
     return r.failures
 
 
-def test_modificadores_distintos():
+def test_different_modifiers():
     print('3) rules with different modifiers do not overlap')
     r = Runner(
         [
-            rule("sin", "volume_up", 0, None, "SIN"),
-            rule("con", "volume_up", 3, "super", "CON_SUPER"),
+            rule("without", "volume_up", 0, None, "SIN"),
+            rule("with", "volume_up", 3, "super", "CON_SUPER"),
         ]
     )
-    r.evento(60, [])
+    r.push_event(60, [])
     time.sleep(0.2)
     r.check('no modifier triggers its own rule', r.engine.fired == ["SIN"], r.engine.fired)
-    r.calmarse()
-    r.evento(65, ["super"], 0.15)
-    r.evento(70, ["super"], 0.15)
-    r.evento(75, ["super"], 0.05)
+    r.settle()
+    r.push_event(65, ["super"], 0.15)
+    r.push_event(70, ["super"], 0.15)
+    r.push_event(75, ["super"], 0.05)
     time.sleep(0.3)
     r.check('with SUPER, it waits for 3 presses', r.engine.fired == ["CON_SUPER"], r.engine.fired)
     return r.failures
 
 
-def test_especificidad():
+def test_specificity():
     print("4) with two 'any' rules, the more specific one wins")
     r = Runner(
         [
-            rule("sin", "volume_up", 0, None, "SIN"),
-            rule("con", "volume_up", 0, "super", "CON_SUPER"),
+            rule("without", "volume_up", 0, None, "SIN"),
+            rule("with", "volume_up", 0, "super", "CON_SUPER"),
         ]
     )
-    r.evento(60, ["super"])
+    r.push_event(60, ["super"])
     time.sleep(0.2)
     r.check('with SUPER, the SUPER rule wins', r.engine.fired == ["CON_SUPER"], r.engine.fired)
-    r.calmarse()
-    r.evento(75, [])
+    r.settle()
+    r.push_event(75, [])
     time.sleep(0.2)
     r.check('without a modifier, the rule without a modifier wins', r.engine.fired == ["SIN"], r.engine.fired)
     return r.failures
 
 
-def test_comando_vacio():
+def test_empty_command():
     print('5) rule with an empty command')
     r = Runner([rule("vacia", "volume_down", 0, "super", "")])
-    r.evento(40, ["super"])
+    r.push_event(40, ["super"])
     time.sleep(0.2)
     r.check('runs nothing', r.engine.fired == [], r.engine.fired)
     r.check('but records the event', r.engine.last_event is not None)
     return r.failures
 
 
-def test_rafaga():
+def test_burst():
     print('6) burst of changes = a single gesture')
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
-    r.varios([60, 65, 70, 75, 80], ["super"], 0.02)
+    r.push_events([60, 65, 70, 75, 80], ["super"], 0.02)
     time.sleep(0.3)
     r.check('a single execution', r.engine.fired == ["UNO"], r.engine.fired)
     return r.failures
 
 
-def test_gesto_despues_de_restaurar():
+def test_gesture_after_restore():
     print('8) a gesture after restoring the volume is not lost')
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
-    r.evento(60, ["super"])
+    r.push_event(60, ["super"])
     time.sleep(0.2)
     r.check('the first action runs', r.engine.fired == ["UNO"], r.engine.fired)
     # The restore marks the volume: a new gesture must still be detected.
     r.engine._restore_volume(40)
-    r.calmarse()
+    r.settle()
     r.engine.fired.clear()
-    r.evento(45, ["super"])
+    r.push_event(45, ["super"])
     time.sleep(0.2)
     r.check('the next gesture does too', r.engine.fired == ["UNO"], r.engine.fired)
     return r.failures
 
 
-def test_pinchazos_muy_juntos():
+def test_presses_too_close():
     print('9) very closely spaced clicks (50 ms) are counted separately')
     r = Runner(
         [
@@ -281,14 +281,14 @@ def test_pinchazos_muy_juntos():
             rule("dos", "volume_up", 2, "super", "DOS"),
         ]
     )
-    r.evento(60, ["super"], 0.05)
-    r.evento(65, ["super"], 0.05)
+    r.push_event(60, ["super"], 0.05)
+    r.push_event(65, ["super"], 0.05)
     time.sleep(0.3)
     r.check('two quick clicks trigger the 2-press rule', r.engine.fired == ["DOS"], r.engine.fired)
     return r.failures
 
 
-def test_cambio_propio_por_valor():
+def test_own_change_by_value():
     print('10) our volume change is recognized by value, not by time')
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
     r.engine.modifiers.held = {"super"}
@@ -309,32 +309,32 @@ def test_cambio_propio_por_valor():
     return r.failures
 
 
-def test_gestos_separados():
+def test_separate_gestures():
     print('11) separate gestures (outside the window) = one action each')
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
-    r.evento(60, ["super"], 0.9)   # Gesture 1
-    r.evento(65, ["super"], 0.9)   # Gesture 2 (outside gesture 1's window)
+    r.push_event(60, ["super"], 0.9)   # Gesture 1
+    r.push_event(65, ["super"], 0.9)   # Gesture 2 (outside gesture 1's window)
     time.sleep(0.3)
     r.check('two actions', r.engine.fired == ["UNO", "UNO"], r.engine.fired)
     return r.failures
 
 
-def test_regla_malformada():
+def test_malformed_rule():
     print('12) a malformed rule is ignored and does not hide the others')
     r = Runner([rule("ok", "volume_up", 0, "super", "BIEN")])
     r.engine.rules.append({"id": "rota", "trigger": "volume_up", "presses": "abc", "require": 5})
-    r.evento(60, ["super"])
+    r.push_event(60, ["super"])
     time.sleep(0.3)
     r.check('the valid rule runs', r.engine.fired == ["BIEN"], r.engine.fired)
-    r.calmarse()
+    r.settle()
     r.engine.fired.clear()
-    r.evento(70, ["super"])
+    r.push_event(70, ["super"])
     time.sleep(0.3)
     r.check('and keeps working', r.engine.fired == ["BIEN"], r.engine.fired)
     return r.failures
 
 
-def test_watcher_sobrevive():
+def test_watcher_survives():
     print('13) the watcher survives a transient error and logs it')
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
     calls = {"n": 0}
@@ -343,7 +343,7 @@ def test_watcher_sobrevive():
     def on_change(sink):
         calls["n"] += 1
         if calls["n"] == 1:
-            raise RuntimeError("fallo simulado")
+            raise RuntimeError("simulated failure")
 
     watcher = VolumeWatcher(lambda: "sink-falso", on_change, logs.append)
     # Inject the event manually: without headphones there is no 'pactl subscribe'
@@ -353,18 +353,18 @@ def test_watcher_sobrevive():
         ok = True
     except Exception as exc:
         ok = False
-        logs.append("excepcion: %s" % exc)
+        logs.append("exception: %s" % exc)
     r.check('the error does not propagate', ok, logs)
     r.check(
         'the error is logged',
-        any("fallo simulado" in m for m in logs),
+        any("simulated failure" in m for m in logs),
         logs,
     )
     r.check('the event was attempted', calls["n"] == 1, calls)
     return r.failures
 
 
-def test_watcher_sin_suscripcion():
+def test_watcher_without_subscription():
     print('14) if subscription is unavailable, it reports the error and keeps retrying')
     import local_actions
 
@@ -383,7 +383,7 @@ def test_watcher_sin_suscripcion():
     try:
         watcher = VolumeWatcher(lambda: "sink-falso", lambda sink: None, logs.append)
         watcher.start()
-        esperar(lambda: any("subscription" in m for m in logs))
+        wait_until(lambda: any("subscription" in m for m in logs))
         alive = watcher._thread.is_alive()
         watcher.stop()
     finally:
@@ -438,7 +438,7 @@ class FakeProc:
         self.killed = True
 
 
-def test_espera_creciente():
+def test_growing_wait():
     print('15) the wait increases between retries')
     import local_actions
 
@@ -456,7 +456,7 @@ def test_espera_creciente():
         watcher = VolumeWatcher(lambda: "sink-falso", lambda sink: None, logs.append)
         watcher._stop = FakeStop(stop_after=4)
         watcher.start()
-        esperar(lambda: len(watcher._stop.waits) >= 4)
+        wait_until(lambda: len(watcher._stop.waits) >= 4)
         waits = list(watcher._stop.waits)
         watcher.stop()
     finally:
@@ -480,13 +480,13 @@ def test_espera_creciente():
     return r.failures
 
 
-def test_contador_se_reinicia():
+def test_counter_resets():
     print('16) the failure counter resets when the subscription works')
     import local_actions
 
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
     logs = []
-    llamadas = {"n": 0}
+    calls = {"n": 0}
     original = local_actions.subprocess.Popen
     original_healthy = local_actions.HEALTHY_SECONDS
     local_actions.HEALTHY_SECONDS = 0.05
@@ -494,8 +494,8 @@ def test_contador_se_reinicia():
     def fake_popen(cmd, *args, **kwargs):
         if cmd[:2] != ["pactl", "subscribe"]:
             return original(cmd, *args, **kwargs)
-        llamadas["n"] += 1
-        if llamadas["n"] == 2:
+        calls["n"] += 1
+        if calls["n"] == 2:
             # The second attempt is a healthy subscription: it resets the
             # counter. Without this reset, the next failure would be number 2.
             return FakeProc(["Event 'change' on sink #42\n"], delay=0.15)
@@ -506,7 +506,7 @@ def test_contador_se_reinicia():
         watcher = VolumeWatcher(lambda: "sink-falso", lambda sink: None, logs.append)
         watcher._stop = FakeStop(stop_after=4)
         watcher.start()
-        esperar(lambda: len(watcher._stop.waits) >= 4)
+        wait_until(lambda: len(watcher._stop.waits) >= 4)
         waits = list(watcher._stop.waits)
         watcher.stop()
     finally:
@@ -538,7 +538,7 @@ def test_contador_se_reinicia():
     return r.failures
 
 
-def test_suscripcion_corta():
+def test_short_subscription():
     print('17) a subscription that closes prematurely counts as a failure')
     import local_actions
 
@@ -559,7 +559,7 @@ def test_suscripcion_corta():
         watcher = VolumeWatcher(lambda: "sink-falso", lambda sink: None, logs.append)
         watcher._stop = FakeStop(stop_after=3)
         watcher.start()
-        esperar(lambda: len(watcher._stop.waits) >= 3)
+        wait_until(lambda: len(watcher._stop.waits) >= 3)
         waits = list(watcher._stop.waits)
         watcher.stop()
     finally:
@@ -579,23 +579,23 @@ def test_suscripcion_corta():
     return r.failures
 
 
-def test_watcher_resolutor_falla():
+def test_watcher_resolver_fails():
     print('18) the watcher survives a failing resolver')
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
     logs = []
 
-    def resolver_falla():
-        raise RuntimeError("fallo al resolver el sink")
+    def resolver_fails():
+        raise RuntimeError("failed to resolve the sink")
 
-    watcher = VolumeWatcher(resolver_falla, lambda sink: None, logs.append)
+    watcher = VolumeWatcher(resolver_fails, lambda sink: None, logs.append)
     watcher._stop = FakeStop(stop_after=3)
     watcher.start()
-    esperar(lambda: len(watcher._stop.waits) >= 3)
+    wait_until(lambda: len(watcher._stop.waits) >= 3)
     waits = list(watcher._stop.waits)
     watcher.stop()
     # The thread must exit: wait for it to happen, because checking at
     # the exact moment is a race and fails intermittently.
-    esperar(lambda: not watcher._thread.is_alive(), timeout=5.0)
+    wait_until(lambda: not watcher._thread.is_alive(), timeout=5.0)
     alive = watcher._thread.is_alive()
     r.check(
         'the error is logged',
@@ -609,18 +609,18 @@ def test_watcher_resolutor_falla():
     return r.failures
 
 
-def test_restore_falla_visible():
+def test_restore_failure_visible():
     print('19) if the restore fails, it is logged (it does not fail silently)')
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
     logs = []
     r.engine.log = logs.append
 
     def proveedor_falla():
-        raise RuntimeError("sin sink")
+        raise RuntimeError("no sink")
 
     r.engine._sink_provider = proveedor_falla
     r.engine._restore_volume_delayed(40)
-    esperar(lambda: any("Could not restore" in m for m in logs), timeout=5.0)
+    wait_until(lambda: any("Could not restore" in m for m in logs), timeout=5.0)
     r.check(
         'it is recorded in the log',
         any("Could not restore the volume to 40%" in m for m in logs),
@@ -629,7 +629,7 @@ def test_restore_falla_visible():
     return r.failures
 
 
-def test_no_se_pisan_las_reglas_del_fichero():
+def test_file_rules_are_not_overwritten():
     print("20) saving does not overwrite the file's rules")
     import json
 
@@ -661,7 +661,7 @@ def test_no_se_pisan_las_reglas_del_fichero():
     return r.failures
 
 
-def test_gesto_no_se_pierde():
+def test_gesture_is_not_lost():
     print('21) if closing the gesture fails, it is logged')
     # With a 3-press rule, a single click does NOT fire anything: the
     # action is decided when the gesture closes (by the timer that triggers it).
@@ -672,14 +672,14 @@ def test_gesto_no_se_pierde():
     logs = []
     r.engine.log = logs.append
 
-    def falla():
-        raise RuntimeError("fallo simulado")
+    def fail():
+        raise RuntimeError("simulated failure")
 
     # Deliberately break gesture closure: if it is not protected, the
     # timer thread dies and the gesture is lost without anyone noticing.
-    r.engine._fire_gesture = falla
-    r.evento(60, ["super"])
-    esperar(lambda: any("Could not close the gesture" in m for m in logs), timeout=5.0)
+    r.engine._fire_gesture = fail
+    r.push_event(60, ["super"])
+    wait_until(lambda: any("Could not close the gesture" in m for m in logs), timeout=5.0)
     r.check(
         'it is recorded in the log',
         any("Could not close the gesture" in m for m in logs),
@@ -689,14 +689,14 @@ def test_gesto_no_se_pierde():
     # And the engine keeps working: restore closure and another gesture works.
     r.engine._fire_gesture = LocalActionEngine._fire_gesture.__get__(r.engine)
     r.engine.fired.clear()
-    r.evento(70, ["super"])
-    esperar(lambda: r.engine.fired == [], timeout=0.5)
+    r.push_event(70, ["super"])
+    wait_until(lambda: r.engine.fired == [], timeout=0.5)
     time.sleep(1.2)
     r.check('the engine remains alive', r.engine.fired == ["CUALQUIERA"], r.engine.fired)
     return r.failures
 
 
-def test_lector_cierra_el_socket():
+def test_reader_closes_the_socket():
     print('22) the reader closes the socket when it dies (the descriptor does not leak)')
     import socket as _socket
 
@@ -711,10 +711,10 @@ def test_lector_cierra_el_socket():
     link.log = logs.append
     original = budsctl.parse_frames
 
-    def falla(buf):
-        raise RuntimeError("fallo simulado")
+    def fail(buf):
+        raise RuntimeError("simulated failure")
 
-    budsctl.parse_frames = falla
+    budsctl.parse_frames = fail
     b.sendall(b"\x99\x99\x99\x99")
     try:
         link._read_loop()
@@ -731,7 +731,7 @@ def test_lector_cierra_el_socket():
     return r.failures
 
 
-def test_reconectar_cierra_el_enlace_anterior():
+def test_reconnect_closes_the_previous_link():
     print('23) reconnecting closes the previous link (its socket does not remain open)')
     import socket as _socket
 
@@ -739,18 +739,18 @@ def test_reconectar_cierra_el_enlace_anterior():
 
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
     a, b = _socket.socketpair()
-    anterior = budsctl.BudsLink("00:00:00:00:00:00")
-    anterior.sock = a
-    anterior.connected = True
-    budsctl.BudsDaemon._close_previous_link(anterior)
+    previous = budsctl.BudsLink("00:00:00:00:00:00")
+    previous.sock = a
+    previous.connected = True
+    budsctl.BudsDaemon._close_previous_link(previous)
     r.check("the previous link's socket is closed", a.fileno() == -1, a.fileno())
-    r.check('the previous link is disconnected', not anterior.connected)
+    r.check('the previous link is disconnected', not previous.connected)
     r.check('it does not connect with a null link', budsctl.BudsDaemon._close_previous_link(None) is None)
     b.close()
     return r.failures
 
 
-def test_tramas_rfcmm():
+def test_rfcmm_frames():
     print('24) frames are built and parsed, and garbage does not crash the parser')
     import random
 
@@ -793,18 +793,18 @@ def test_tramas_rfcmm():
     return r.failures
 
 
-def test_ecodec_y_modelo():
+def test_ecodec_and_model():
     print("25) the equalizer's float codec and model detection")
     import budsctl
 
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
-    for valor in (0.0, 1.0, -1.0, 0.5, 12.0, -7.25):
-        codificado = budsctl.eq_float_encode(valor)
+    for value in (0.0, 1.0, -1.0, 0.5, 12.0, -7.25):
+        codificado = budsctl.eq_float_encode(value)
         recuperado = budsctl.eq_float_decode(codificado)
         r.check(
-            "the float %s makes a round trip" % valor,
-            abs(recuperado - valor) < 1e-6,
-            (valor, recuperado),
+            "the float %s makes a round trip" % value,
+            abs(recuperado - value) < 1e-6,
+            (value, recuperado),
         )
     r.check(
         'the preamp has its own encoding',
@@ -836,7 +836,7 @@ def test_ecodec_y_modelo():
     return r.failures
 
 
-def test_codigos_de_modificadores():
+def test_modifier_codes():
     print('26) key codes map to the correct modifier')
     import local_actions
 
@@ -875,7 +875,7 @@ def test_codigos_de_modificadores():
     return r.failures
 
 
-def test_aviso_del_atajo():
+def test_shortcut_notice():
     print('27) the shortcut notification is sent and, if it fails, it is logged')
     import local_actions
 
@@ -883,39 +883,39 @@ def test_aviso_del_atajo():
     r.engine.rules[0]["notify"] = True
     logs = []
     r.engine.log = logs.append
-    llamadas = []
+    calls = []
     original = local_actions.subprocess.Popen
 
     def fake_popen(cmd, *args, **kwargs):
-        llamadas.append(cmd)
+        calls.append(cmd)
         return None
 
     local_actions.subprocess.Popen = fake_popen
     try:
-        r.evento(60, ["super"])
+        r.push_event(60, ["super"])
         time.sleep(0.3)
     finally:
         local_actions.subprocess.Popen = original
     r.check(
         'a notification is sent with notify-send',
-        any(isinstance(c, list) and c and c[0] == "notify-send" for c in llamadas),
-        llamadas,
+        any(isinstance(c, list) and c and c[0] == "notify-send" for c in calls),
+        calls,
     )
     r.check('the shortcut ran', r.engine.fired == ["UNO"], r.engine.fired)
 
     # And if the notification fails, it is not silently lost. First let the
     # gesture window pass, otherwise the second click is part of the
     # first and will not fire again.
-    r.calmarse()
+    r.settle()
     logs.clear()
     r.engine.log = logs.append
 
-    def falla(*args, **kwargs):
-        raise OSError("sin notify-send")
+    def fail(*args, **kwargs):
+        raise OSError("no notify-send")
 
-    local_actions.subprocess.Popen = falla
+    local_actions.subprocess.Popen = fail
     try:
-        r.evento(70, ["super"])
+        r.push_event(70, ["super"])
         time.sleep(0.3)
     finally:
         local_actions.subprocess.Popen = original
@@ -927,7 +927,7 @@ def test_aviso_del_atajo():
     return r.failures
 
 
-def test_contrato_luau_motor():
+def test_luau_engine_contract():
     print('28) the UI and engine use the same names')
     import re
     import tomllib
@@ -991,8 +991,8 @@ def _acciones_permitidas_luau(texto):
     bloque = re.search(r"local ACTION_ALLOWED = \{(.*?)\n\}", texto, re.S)
     if bloque is None:
         return None
-    salida = {}
-    grupo = None
+    output = {}
+    group = None
     for linea in bloque.group(1).splitlines():
         m = re.match(r"\s*(\w+) = \{(.*)$", linea)
         if m is None:
@@ -1000,14 +1000,14 @@ def _acciones_permitidas_luau(texto):
         nombre, resto = m.group(1), m.group(2)
         if resto.strip() in ("", "}"):
             # Group line: opens a table of gestures.
-            grupo = nombre
-            salida[grupo] = {}
-        elif grupo is not None:
-            salida[grupo][nombre] = re.findall(r'"([^"]+)"', resto)
-    return salida
+            group = nombre
+            output[group] = {}
+        elif group is not None:
+            output[group][nombre] = re.findall(r'"([^"]+)"', resto)
+    return output
 
 
-def test_gestos_permitidos():
+def test_allowed_gestures():
     print('29) the allowed action list is the same in the UI and daemon')
     import budsctl
 
@@ -1018,24 +1018,24 @@ def test_gestos_permitidos():
     ui = _acciones_permitidas_luau(comun)
     r.check('the UI list could be read', ui is not None and len(ui) > 0, ui)
     # The daemon indexes by (group, gesture); regroup it for comparison.
-    demonio = {}
-    for (grupo, gesto), acciones in budsctl.GESTURE_ALLOWED.items():
-        demonio.setdefault(grupo, {})[gesto] = set(acciones)
+    daemon = {}
+    for (group, gesture), actions in budsctl.GESTURE_ALLOWED.items():
+        daemon.setdefault(group, {})[gesture] = set(actions)
     r.check(
         'the groups are the same',
-        set(ui or {}) == set(demonio),
-        (sorted((ui or {}).keys()), sorted(demonio.keys())),
+        set(ui or {}) == set(daemon),
+        (sorted((ui or {}).keys()), sorted(daemon.keys())),
     )
-    diferencias = []
-    for grupo, gestos in (ui or {}).items():
-        for gesto, acciones in gestos.items():
-            otras = set(demonio.get(grupo, {}).get(gesto, []))
-            if set(acciones) != otras:
-                diferencias.append((grupo, gesto, sorted(set(acciones) ^ otras)))
+    differences = []
+    for group, ui_gestures in (ui or {}).items():
+        for gesture, actions in ui_gestures.items():
+            other_actions = set(daemon.get(group, {}).get(gesture, []))
+            if set(actions) != other_actions:
+                differences.append((group, gesture, sorted(set(actions) ^ other_actions)))
     r.check(
         'the allowed actions are the same in both places',
-        not diferencias,
-        diferencias,
+        not differences,
+        differences,
     )
     # And the daemon does not accept an action that is not allowed for that gesture.
     permitidas = budsctl.GESTURE_ALLOWED[("left", "double")]
@@ -1093,7 +1093,7 @@ def test_gestos_permitidos():
     return r.failures
 
 
-def test_ajustes_invalidos():
+def test_invalid_settings():
     print('30) invalid settings are rejected rather than silently changed')
     import budsctl
 
@@ -1124,37 +1124,37 @@ def test_ajustes_invalidos():
     return r.failures
 
 
-def test_apagado_de_anillos():
+def test_ring_shutdown():
     print('31) a ring that cannot be turned off is retried')
     import budsctl
 
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
-    demonio = budsctl.BudsDaemon.__new__(budsctl.BudsDaemon)
-    demonio.ring_until = {"left": 10.0, "right": 0}
+    daemon = budsctl.BudsDaemon.__new__(budsctl.BudsDaemon)
+    daemon.ring_until = {"left": 10.0, "right": 0}
     intentos = []
 
-    def falla(side, enabled):
+    def fail(side, enabled):
         intentos.append((side, enabled))
-        raise RuntimeError("sin enlace")
+        raise RuntimeError("no link")
 
-    demonio.ring = falla
-    demonio._stop_rings(100.0)
+    daemon.ring = fail
+    daemon._stop_rings(100.0)
     r.check('it tries to turn off the applicable ring', intentos == [("left", False)], intentos)
     r.check(
         'if it fails, it is not considered off (it will be retried)',
-        demonio.ring_until.get("left") == 10.0,
-        demonio.ring_until,
+        daemon.ring_until.get("left") == 10.0,
+        daemon.ring_until,
     )
-    r.check('the other ring is left unchanged', demonio.ring_until.get("right") == 0)
+    r.check('the other ring is left unchanged', daemon.ring_until.get("right") == 0)
     # If it succeeds, it is marked as off.
-    demonio.ring_until = {"left": 10.0}
-    demonio.ring = lambda side, enabled: intentos.append((side, enabled))
-    demonio._stop_rings(100.0)
-    r.check('if it succeeds, it is marked as off', demonio.ring_until.get("left") == 0, demonio.ring_until)
+    daemon.ring_until = {"left": 10.0}
+    daemon.ring = lambda side, enabled: intentos.append((side, enabled))
+    daemon._stop_rings(100.0)
+    r.check('if it succeeds, it is marked as off', daemon.ring_until.get("left") == 0, daemon.ring_until)
     return r.failures
 
 
-def test_la_marca_caduca():
+def test_the_mark_expires():
     print('32) our-change marker expires (it does not swallow a later gesture)')
     import local_actions
 
@@ -1188,7 +1188,7 @@ def test_la_marca_caduca():
     return r.failures
 
 
-def test_restore_respeta_al_usuario():
+def test_restore_respects_the_user():
     print('33) the restore does not override a user change')
     import local_actions
 
@@ -1214,44 +1214,44 @@ def test_restore_respeta_al_usuario():
     return r.failures
 
 
-def test_modificador_prohibido():
+def test_forbidden_modifier():
     print('34) a rule can require a modifier NOT to be held')
     r = Runner([rule("a", "volume_up", 0, "none", "SIN_SUPER")])
     # The UI's "no_super" option is stored as forbid: ["super"].
     r.engine.rules[0]["require"] = []
     r.engine.rules[0]["forbid"] = ["super"]
-    r.evento(60, ["super"])
+    r.push_event(60, ["super"])
     time.sleep(0.3)
     r.check('with SUPER held, it does not run', r.engine.fired == [], r.engine.fired)
-    r.calmarse()
-    r.evento(70, [])
+    r.settle()
+    r.push_event(70, [])
     time.sleep(0.3)
     r.check('without SUPER, it does run', r.engine.fired == ["SIN_SUPER"], r.engine.fired)
     # And a rule requiring SUPER continues to require it.
-    r.calmarse()
+    r.settle()
     r2 = Runner([rule("b", "volume_up", 0, "super", "CON_SUPER")])
-    r2.evento(60, [])
+    r2.push_event(60, [])
     time.sleep(0.3)
     r2.check('the rule requiring SUPER does not run without it', r2.engine.fired == [], r2.engine.fired)
-    r2.calmarse()
-    r2.evento(70, ["super"])
+    r2.settle()
+    r2.push_event(70, ["super"])
     time.sleep(0.3)
     r2.check('and it does run with it', r2.engine.fired == ["CON_SUPER"], r2.engine.fired)
     return r.failures
 
 
-def test_restaurar_volumen():
+def test_restore_volume():
     print("35) the 'restore volume' option returns the previous volume")
     import local_actions
 
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
     r.engine.rules[0]["restore_volume"] = True
     r.engine._sink_provider = lambda: "sink-falso"
-    llamadas = []
+    calls = []
     original = local_actions._run
 
     # Replace the pactl call: the system's actual volume is not touched.
-    local_actions._run = _pactl_falso(llamadas, r.engine)
+    local_actions._run = _fake_pactl(calls, r.engine)
     try:
         r.engine._run_rule(
             r.engine.rules[0], "volume_up", 1, ["super"], 40
@@ -1263,14 +1263,14 @@ def test_restaurar_volumen():
         'it requests restoration of the previous volume',
         any(
             "set-sink-volume" in " ".join(c) and "40%" in " ".join(c)
-            for c in llamadas
+            for c in calls
         ),
-        llamadas,
+        calls,
     )
     return r.failures
 
 
-def test_contrato_del_estado():
+def test_state_contract():
     print('36) the UI only reads keys published by the daemon')
     import re
 
@@ -1301,7 +1301,7 @@ def test_contrato_del_estado():
     return r.failures
 
 
-def test_forbid_vacio():
+def test_empty_forbid():
     print('37) a rule saved from the panel with forbid={} still works')
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
     # Simulate what the panel serializes: forbid as an empty object.
@@ -1325,7 +1325,7 @@ def test_knob_press():
     return r.failures
 
 
-def test_ultima_accion_y_mods():
+def test_last_action_and_mods():
     print('39) the engine publishes the last action and the modifiers used')
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
     r.engine.modifiers.held = {"super"}
@@ -1341,7 +1341,7 @@ def test_ultima_accion_y_mods():
     return r.failures
 
 
-def test_traducciones():
+def test_translations():
     print('37) translations are consistent and valid for the store')
     import json
     import re
@@ -1349,15 +1349,15 @@ def test_traducciones():
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
     raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    def aplanar(tabla, prefijo=""):
-        salida = {}
-        for clave, valor in tabla.items():
-            ruta = prefijo + clave
-            if isinstance(valor, dict):
-                salida.update(aplanar(valor, ruta + "."))
+    def flatten(table, prefix=""):
+        output = {}
+        for key, value in table.items():
+            path = prefix + key
+            if isinstance(value, dict):
+                output.update(flatten(value, path + "."))
             else:
-                salida[ruta] = valor
-        return salida
+                output[path] = value
+        return output
 
     tablas = {}
     for lang in ("es", "en"):
@@ -1365,7 +1365,7 @@ def test_traducciones():
             os.path.join(raiz, "translations", "%s.json" % lang), encoding="utf-8"
         ) as fh:
             tablas[lang] = json.load(fh)
-    planas = {lang: aplanar(t) for lang, t in tablas.items()}
+    planas = {lang: flatten(t) for lang, t in tablas.items()}
 
     r.check(
         'es.json and en.json have the same keys',
@@ -1379,10 +1379,10 @@ def test_traducciones():
     # to be expressed with objects, not dots.
     segmento = re.compile(r"^[a-z0-9-][a-z0-9_-]*$")
     malas = []
-    for lang, tabla in tablas.items():
-        for clave in tabla:
-            if not segmento.match(clave):
-                malas.append("%s: %s" % (lang, clave))
+    for lang, table in tablas.items():
+        for key in table:
+            if not segmento.match(key):
+                malas.append("%s: %s" % (lang, key))
     r.check('top-level keys are valid', not malas, malas)
     r.check(
         'keys do not contain dots (nesting uses objects)',
@@ -1397,10 +1397,10 @@ def test_traducciones():
     prefijos = set()
     for base in (raiz, os.path.join(raiz, "lib")):
         for nombre in os.listdir(base):
-            ruta = os.path.join(base, nombre)
-            if not os.path.isfile(ruta) or not nombre.endswith(".luau"):
+            path = os.path.join(base, nombre)
+            if not os.path.isfile(path) or not nombre.endswith(".luau"):
                 continue
-            with open(ruta, encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 texto = fh.read()
             # Only literal keys: concatenated keys ("anc." .. x) cannot be
             # checked here (only their prefix is checked).
@@ -1419,14 +1419,14 @@ def test_traducciones():
     return r.failures
 
 
-def test_recarga():
+def test_reload():
     print('7) rules edited outside the panel are reloaded')
     path = "/tmp/cmf-buds-test-rules.json"
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
     r.engine.rules_path = path
     with open(path, "w", encoding="utf-8") as fh:
         fh.write('{"rules": [%s]}' % _json_rule("b", "volume_up", 0, "super", "DESDE_FICHERO"))
-    r.evento(60, ["super"])
+    r.push_event(60, ["super"])
     time.sleep(0.2)
     r.check('it uses the rule from the file', r.engine.fired == ["DESDE_FICHERO"], r.engine.fired)
     if os.path.exists(path):
@@ -1434,7 +1434,7 @@ def test_recarga():
     return r.failures
 
 
-def test_demonio_refleja_la_caida():
+def test_daemon_reflects_the_drop():
     print('46) the daemon notices that the link has dropped')
     import argparse
 
@@ -1442,9 +1442,9 @@ def test_demonio_refleja_la_caida():
 
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
     args = argparse.Namespace(
-        state="/tmp/cmf-buds-test-demonio/state.json",
-        socket="/tmp/cmf-buds-test-demonio/buds.sock",
-        log="/tmp/cmf-buds-test-demonio/daemon.log",
+        state="/tmp/cmf-buds-test-daemon/state.json",
+        socket="/tmp/cmf-buds-test-daemon/buds.sock",
+        log="/tmp/cmf-buds-test-daemon/daemon.log",
         poll=20,
         idle_timeout=600,
         device_mac="",
@@ -1477,7 +1477,7 @@ def test_demonio_refleja_la_caida():
     return r.failures
 
 
-def test_configuracion_del_demonio():
+def test_daemon_configuration():
     print('47) configuration is applied to the daemon at runtime')
     import argparse
 
@@ -1486,9 +1486,9 @@ def test_configuracion_del_demonio():
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
     raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     args = argparse.Namespace(
-        state="/tmp/cmf-buds-test-demonio/state.json",
-        socket="/tmp/cmf-buds-test-demonio/buds.sock",
-        log="/tmp/cmf-buds-test-demonio/daemon.log",
+        state="/tmp/cmf-buds-test-daemon/state.json",
+        socket="/tmp/cmf-buds-test-daemon/buds.sock",
+        log="/tmp/cmf-buds-test-daemon/daemon.log",
         poll=60,
         idle_timeout=600,
         device_mac="",
@@ -1535,7 +1535,7 @@ def test_configuracion_del_demonio():
     return r.failures
 
 
-def test_error_esperado_del_rpc():
+def test_expected_rpc_error():
     print('48) an expected RPC error does not fill the log with tracebacks')
     import argparse
 
@@ -1543,9 +1543,9 @@ def test_error_esperado_del_rpc():
 
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
     args = argparse.Namespace(
-        state="/tmp/cmf-buds-test-demonio/state.json",
-        socket="/tmp/cmf-buds-test-demonio/buds.sock",
-        log="/tmp/cmf-buds-test-demonio/daemon.log",
+        state="/tmp/cmf-buds-test-daemon/state.json",
+        socket="/tmp/cmf-buds-test-daemon/buds.sock",
+        log="/tmp/cmf-buds-test-daemon/daemon.log",
         poll=20,
         idle_timeout=600,
         device_mac="",
@@ -1583,7 +1583,7 @@ def _json_rule(rid, trigger, presses, modifier, command):
     return json.dumps(rule(rid, trigger, presses, modifier, command))
 
 
-def test_restore_volumen_al_cerrar_el_gesto():
+def test_restore_volume_when_the_gesture_ends():
     print("40) the 'any' rule that waits for closure restores the previous volume")
     import local_actions
 
@@ -1598,10 +1598,10 @@ def test_restore_volumen_al_cerrar_el_gesto():
     )
     r.engine.rules[1]["restore_volume"] = True
     r.engine._sink_provider = lambda: "sink-falso"
-    llamadas = []
+    calls = []
     original = local_actions._run
 
-    local_actions._run = _pactl_falso(llamadas, r.engine)
+    local_actions._run = _fake_pactl(calls, r.engine)
     try:
         # The dial rises from 50 to 60: the volume before the gesture is 50.
         r.engine.volume = 60
@@ -1614,14 +1614,14 @@ def test_restore_volumen_al_cerrar_el_gesto():
         'the previous volume is restored when the gesture closes',
         any(
             "set-sink-volume" in " ".join(c) and "50%" in " ".join(c)
-            for c in llamadas
+            for c in calls
         ),
-        llamadas,
+        calls,
     )
     return r.failures
 
 
-def test_modificadores_del_gesto():
+def test_gesture_modifiers():
     print('41) the gesture resolves with the modifiers used to make it')
     # A 3-press rule blocks the "any" rule: it is
     # resolved when the gesture closes.
@@ -1637,7 +1637,7 @@ def test_modificadores_del_gesto():
     # The user releases SUPER before the gesture closes: the gesture was
     # made with SUPER, so the rule still matches.
     r.engine.modifiers.held = set()
-    esperar(lambda: "CON_SUPER" in r.engine.fired, timeout=4.0)
+    wait_until(lambda: "CON_SUPER" in r.engine.fired, timeout=4.0)
     r.check(
         'the gesture remembers the modifiers from the start',
         "CON_SUPER" in r.engine.fired,
@@ -1659,7 +1659,7 @@ def test_modificadores_del_gesto():
     return r.failures
 
 
-def test_reglas_malformadas():
+def test_malformed_rules():
     print("42) a rules file whose 'rules' value is not a list does not break the engine")
     import json
 
@@ -1683,16 +1683,16 @@ def test_reglas_malformadas():
     return r.failures
 
 
-def test_watcher_sin_id_de_sink():
+def test_watcher_without_sink_id():
     print('43) the watcher ignores events if it cannot identify the sink')
     import local_actions
 
     r = Runner([rule("a", "volume_up", 0, "super", "UNO")])
-    llamadas = {"n": 0}
+    calls = {"n": 0}
     logs = []
 
     def on_change(sink):
-        llamadas["n"] += 1
+        calls["n"] += 1
 
     original = local_actions._run
 
@@ -1709,12 +1709,12 @@ def test_watcher_sin_id_de_sink():
         nuevo = watcher._handle_line("Event 'change' on sink #42", "sink-falso", None)
     finally:
         local_actions._run = original
-    r.check('the event is ignored', llamadas["n"] == 0, llamadas)
+    r.check('the event is ignored', calls["n"] == 0, calls)
     r.check('the watcher does not invent an ID', nuevo is None, nuevo)
     return r.failures
 
 
-def test_modificadores_sin_dispositivos():
+def test_modifiers_without_devices():
     print('44) the modifier reader survives without /dev/input and retries')
     import tempfile
 
@@ -1728,24 +1728,24 @@ def test_modificadores_sin_dispositivos():
     try:
         tracker.start()
         time.sleep(0.3)
-        vivo = tracker._thread.is_alive()
-        r.check('the thread remains alive without devices', vivo)
+        alive = tracker._thread.is_alive()
+        r.check('the thread remains alive without devices', alive)
         # When the devices appear, it opens them without needing to restart.
         with tempfile.NamedTemporaryFile(prefix="cmf-event", delete=False) as fh:
-            ruta = fh.name
-        local_actions._list_event_devices = lambda: [ruta]
+            path = fh.name
+        local_actions._list_event_devices = lambda: [path]
         try:
-            aparecer = esperar(lambda: tracker.available, timeout=8.0)
+            appears = wait_until(lambda: tracker.available, timeout=8.0)
         finally:
-            os.unlink(ruta)
+            os.unlink(path)
     finally:
         local_actions._list_event_devices = original
         tracker.stop()
-    r.check('the thread retries and opens the devices', aparecer, logs)
+    r.check('the thread retries and opens the devices', appears, logs)
     return r.failures
 
 
-def test_enlace_muerto():
+def test_dead_link():
     print('45) a dead RFCOMM socket aborts the link (the daemon reconnects)')
     import budsctl
 
@@ -1756,7 +1756,7 @@ def test_enlace_muerto():
     link.connected = True
     link.running = True
 
-    class SockMuerto:
+    class DeadSock:
         def sendall(self, data):
             raise OSError(107, "Transport endpoint is not connected")
 
@@ -1766,13 +1766,13 @@ def test_enlace_muerto():
         def close(self):
             pass
 
-    link.sock = SockMuerto()
-    excepcion = None
+    link.sock = DeadSock()
+    exception = None
     try:
         link.request(0xC007, b"", timeout=0.5)
     except Exception as exc:
-        excepcion = exc
-    r.check('the request fails', excepcion is not None, excepcion)
+        exception = exc
+    r.check('the request fails', exception is not None, exception)
     r.check('the link is disconnected', not link.connected)
     r.check('the socket is released', link.sock is None)
     r.check('the disconnection is reported', bool(errores), errores)
@@ -1783,55 +1783,55 @@ def main():
     print('Local shortcut engine tests\n')
     total = 0
     for test in (
-        test_regla_cualquiera_sola,
-        test_contador_manda,
-        test_modificadores_distintos,
-        test_especificidad,
-        test_comando_vacio,
-        test_rafaga,
-        test_recarga,
-        test_gesto_despues_de_restaurar,
-        test_pinchazos_muy_juntos,
-        test_cambio_propio_por_valor,
-        test_gestos_separados,
-        test_regla_malformada,
-        test_watcher_sobrevive,
-        test_watcher_sin_suscripcion,
-        test_espera_creciente,
-        test_contador_se_reinicia,
-        test_suscripcion_corta,
-        test_watcher_resolutor_falla,
-        test_restore_falla_visible,
-        test_no_se_pisan_las_reglas_del_fichero,
-        test_gesto_no_se_pierde,
-        test_lector_cierra_el_socket,
-        test_reconectar_cierra_el_enlace_anterior,
-        test_tramas_rfcmm,
-        test_ecodec_y_modelo,
-        test_codigos_de_modificadores,
-        test_aviso_del_atajo,
-        test_contrato_luau_motor,
-        test_gestos_permitidos,
-        test_ajustes_invalidos,
-        test_apagado_de_anillos,
-        test_la_marca_caduca,
-        test_restore_respeta_al_usuario,
-        test_modificador_prohibido,
-        test_restaurar_volumen,
-        test_contrato_del_estado,
-        test_forbid_vacio,
+        test_any_rule_alone,
+        test_count_wins,
+        test_different_modifiers,
+        test_specificity,
+        test_empty_command,
+        test_burst,
+        test_reload,
+        test_gesture_after_restore,
+        test_presses_too_close,
+        test_own_change_by_value,
+        test_separate_gestures,
+        test_malformed_rule,
+        test_watcher_survives,
+        test_watcher_without_subscription,
+        test_growing_wait,
+        test_counter_resets,
+        test_short_subscription,
+        test_watcher_resolver_fails,
+        test_restore_failure_visible,
+        test_file_rules_are_not_overwritten,
+        test_gesture_is_not_lost,
+        test_reader_closes_the_socket,
+        test_reconnect_closes_the_previous_link,
+        test_rfcmm_frames,
+        test_ecodec_and_model,
+        test_modifier_codes,
+        test_shortcut_notice,
+        test_luau_engine_contract,
+        test_allowed_gestures,
+        test_invalid_settings,
+        test_ring_shutdown,
+        test_the_mark_expires,
+        test_restore_respects_the_user,
+        test_forbidden_modifier,
+        test_restore_volume,
+        test_state_contract,
+        test_empty_forbid,
         test_knob_press,
-        test_ultima_accion_y_mods,
-        test_traducciones,
-        test_restore_volumen_al_cerrar_el_gesto,
-        test_modificadores_del_gesto,
-        test_reglas_malformadas,
-        test_watcher_sin_id_de_sink,
-        test_modificadores_sin_dispositivos,
-        test_enlace_muerto,
-        test_demonio_refleja_la_caida,
-        test_configuracion_del_demonio,
-        test_error_esperado_del_rpc,
+        test_last_action_and_mods,
+        test_translations,
+        test_restore_volume_when_the_gesture_ends,
+        test_gesture_modifiers,
+        test_malformed_rules,
+        test_watcher_without_sink_id,
+        test_modifiers_without_devices,
+        test_dead_link,
+        test_daemon_reflects_the_drop,
+        test_daemon_configuration,
+        test_expected_rpc_error,
     ):
         total += test()
     print("")

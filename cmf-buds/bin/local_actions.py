@@ -189,19 +189,39 @@ class ModifierTracker:
         # The descriptors are read by the reader thread and closed by stop():
         # a dedicated lock keeps the two apart.
         self._fd_lock = threading.RLock()
-        self._thread = threading.Thread(target=self._loop, daemon=True)
+        # The thread is created on every start(): the tracker runs only while
+        # a rule needs the modifiers, so it is started and stopped as the
+        # rules change and a thread that was already used cannot be reused.
+        self._thread = None
+        self._start_lock = threading.Lock()
+
+    @property
+    def running(self):
+        """Whether the reader thread is alive."""
+        return bool(self._thread is not None and self._thread.is_alive())
 
     def start(self):
-        self._thread.start()
+        """Start reading the keyboard, or do nothing if it is already running."""
+        with self._start_lock:
+            if self.running:
+                return
+            self._stop = threading.Event()
+            self._thread = threading.Thread(target=self._loop, daemon=True)
+            self._thread.start()
 
     def stop(self):
-        self._stop.set()
-        # The reader thread is waited for before closing the descriptors: it
-        # may be opening the devices right now, and the ones it opens after
-        # this point would stay open forever. Waiting also avoids closing a
-        # descriptor that another thread is about to reuse.
-        if self._thread.is_alive():
-            self._thread.join(timeout=2.0)
+        with self._start_lock:
+            thread = self._thread
+            if thread is None:
+                return
+            self._stop.set()
+            # The reader thread is waited for before closing the descriptors:
+            # it may be opening the devices right now, and the ones it opens
+            # after this point would stay open forever. Waiting also avoids
+            # closing a descriptor that another thread is about to reuse.
+            if thread.is_alive():
+                thread.join(timeout=2.0)
+            self._thread = None
         self._close_devices()
 
     def _close_devices(self):
@@ -672,6 +692,9 @@ class LocalActionEngine:
         self.watcher = None
         self._sink_provider = None
         self._last_volume = None
+        # True between start() and stop(): the modifier tracker must not be
+        # revived by a rule saved after the engine was stopped.
+        self._started = False
         # Daemon hook: this way the panel sees the volume changes made with
         # the dial or from the Nothing app live.
         self.on_volume = None
@@ -727,6 +750,7 @@ class LocalActionEngine:
             return
         before = len(self.rules)
         self.load()
+        self._sync_modifier_tracker()
         self.log("Rules reloaded (%d -> %d)" % (before, len(self.rules)))
 
     def save(self):
@@ -762,6 +786,7 @@ class LocalActionEngine:
             if not found:
                 self.rules.append(rule)
             self.save()
+            self._sync_modifier_tracker()
         return rule
 
     def delete(self, rid):
@@ -769,11 +794,13 @@ class LocalActionEngine:
             self.reload_rules_if_changed()
             self.rules = [r for r in self.rules if str(r.get("id")) != str(rid)]
             self.save()
+            self._sync_modifier_tracker()
         return self.rules
 
     # -- startup ------------------------------------------------------------
     def start(self, sink_provider):
         self._sink_provider = sink_provider
+        self._started = True
         self.load()
         # Initial value: without it the first change has nothing to restore.
         try:
@@ -785,13 +812,14 @@ class LocalActionEngine:
             # it is good to know when it fails: without it the first gesture
             # would have nothing to restore the volume against.
             self.log("Could not read the initial volume: %s" % exc)
-        self.modifiers.start()
+        self._sync_modifier_tracker()
         self.media.start()
         self.watcher = VolumeWatcher(sink_provider, self._on_volume_change, self.log)
         self.watcher.start()
         self.log("Local action engine active")
 
     def stop(self):
+        self._started = False
         for timer in list(self._timers.values()):
             try:
                 timer.cancel()
@@ -801,7 +829,32 @@ class LocalActionEngine:
         if self.watcher:
             self.watcher.stop()
         self.media.stop()
-        self.modifiers.stop()
+        self._sync_modifier_tracker()
+
+    # -- modifiers ----------------------------------------------------------
+    def _wants_modifiers(self):
+        """Whether an enabled rule needs the keyboard modifier state."""
+        for rule in self.rules:
+            if not isinstance(rule, dict):
+                continue
+            if rule.get("enabled") is False:
+                continue
+            if rule.get("require") or rule.get("forbid"):
+                return True
+        return False
+
+    def _sync_modifier_tracker(self):
+        """Reads the keyboard only while a rule needs the modifiers.
+
+        The tracker opens every /dev/input/event* device: with no rule using
+        'require'/'forbid' there is nothing to read, and the descriptors (and
+        the permission they need) are not touched at all.
+        """
+        wanted = self._started and self._wants_modifiers()
+        if wanted and not self.modifiers.running:
+            self.modifiers.start()
+        elif not wanted and self.modifiers.running:
+            self.modifiers.stop()
 
     # -- volume -------------------------------------------------------------
     def note_self_change(self, value=None):

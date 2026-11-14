@@ -612,14 +612,14 @@ class BudsLink:
                 if not chunk:
                     break
                 buf += chunk
-                acotado = _clamp_buffer(buf)
-                if not acotado:
+                bounded = _clamp_buffer(buf)
+                if not bounded:
                     # Sync has been lost: drop the buffer so we do not get
                     # stuck reading garbage.
                     self.log("RFCOMM buffer overflow: resynchronizing")
                     buf = b""
                     continue
-                buf = acotado
+                buf = bounded
                 frames, buf = parse_frames(buf)
                 for cmd, payload in frames:
                     self._handle(cmd, payload)

@@ -242,5 +242,150 @@ class EngineTests(unittest.TestCase):
         )
 
 
+
+class FakeTracker:
+    """Records the lifecycle calls of the modifier tracker."""
+
+    def __init__(self):
+        self.started = False
+        self.start_calls = 0
+        self.stop_calls = 0
+        self.available = False
+
+    @property
+    def running(self):
+        return self.started
+
+    def start(self):
+        self.started = True
+        self.start_calls += 1
+
+    def stop(self):
+        self.started = False
+        self.stop_calls += 1
+
+    def modifiers(self):
+        return []
+
+
+class FakeMedia:
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+
+class FakeWatcher:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+
+class ModifierTrackerLifecycleTests(unittest.TestCase):
+    """The keyboard reader must only run while a rule needs the modifiers.
+
+    Reading /dev/input is a sensitive capability: it has to stop as soon as
+    no enabled rule uses require/forbid, instead of running for the whole
+    life of the daemon.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = self._tmp.name
+        self.engine = local_actions.LocalActionEngine(self.dir, log=lambda msg: None)
+        self.tracker = FakeTracker()
+        self.engine.modifiers = self.tracker
+        self.engine.media = FakeMedia()
+        self._watcher = mock.patch.object(local_actions, "VolumeWatcher", FakeWatcher)
+        self._watcher.start()
+
+    def tearDown(self):
+        self._watcher.stop()
+        self._tmp.cleanup()
+
+    def rule(self, **overrides):
+        rule = {
+            "id": "r1",
+            "enabled": True,
+            "trigger": "volume_up",
+            "presses": 0,
+            "require": ["super"],
+            "forbid": [],
+            "command": "echo hi",
+        }
+        rule.update(overrides)
+        return rule
+
+    def test_the_tracker_is_not_started_without_rules(self):
+        self.engine.start(lambda: "")
+        self.assertFalse(
+            self.tracker.started,
+            "the keyboard reader runs without any rule that needs it",
+        )
+
+    def test_the_tracker_starts_when_a_rule_needs_modifiers(self):
+        self.engine.start(lambda: "")
+        self.engine.upsert(self.rule())
+        self.assertTrue(
+            self.tracker.started,
+            "a rule with require does not start the keyboard reader",
+        )
+
+    def test_the_tracker_stops_when_no_rule_needs_modifiers(self):
+        self.engine.start(lambda: "")
+        self.engine.upsert(self.rule())
+        self.engine.delete("r1")
+        self.assertFalse(
+            self.tracker.started,
+            "the keyboard reader keeps running after the last rule is gone",
+        )
+
+    def test_a_rule_without_modifiers_does_not_start_the_tracker(self):
+        self.engine.start(lambda: "")
+        self.engine.upsert(self.rule(require=[], forbid=[]))
+        self.assertFalse(
+            self.tracker.started,
+            "a rule without modifiers starts the keyboard reader",
+        )
+
+    def test_a_disabled_rule_does_not_start_the_tracker(self):
+        self.engine.start(lambda: "")
+        self.engine.upsert(self.rule(enabled=False))
+        self.assertFalse(
+            self.tracker.started,
+            "a disabled rule keeps the keyboard reader running",
+        )
+
+    def test_a_forbid_list_also_needs_the_tracker(self):
+        self.engine.start(lambda: "")
+        self.engine.upsert(self.rule(require=[], forbid=["alt"]))
+        self.assertTrue(
+            self.tracker.started,
+            "a rule with forbid does not start the keyboard reader",
+        )
+
+    def test_the_real_tracker_can_be_stopped_and_started_again(self):
+        tracker = local_actions.ModifierTracker(log=lambda msg: None)
+        with mock.patch.object(
+            local_actions, "_list_event_devices", return_value=[]
+        ):
+            tracker.start()
+            self.assertTrue(tracker.running, "the tracker did not start")
+            tracker.stop()
+            self.assertFalse(tracker.running, "the tracker did not stop")
+            try:
+                tracker.start()
+            except RuntimeError as exc:
+                self.fail("the tracker cannot be restarted: %s" % exc)
+            self.assertTrue(tracker.running, "the tracker did not restart")
+            tracker.stop()
+            self.assertFalse(tracker.running, "the tracker did not stop again")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

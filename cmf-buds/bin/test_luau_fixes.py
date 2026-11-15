@@ -61,6 +61,18 @@ def function_body(text, name):
     return rest[: end.end()]
 
 
+def method_body(text, name):
+    """The source of a method of a returned module (M.name) in a Luau file."""
+    match = re.search(r"^function M\.%s\(" % re.escape(name), text, re.M)
+    if match is None:
+        return ""
+    rest = text[match.start() :]
+    end = re.search(r"^end\s*$", rest, re.M)
+    if end is None:
+        return rest
+    return rest[: end.end()]
+
+
 class FakeLink:
     """A stand-in for BudsLink: it records what was sent."""
 
@@ -305,6 +317,24 @@ class LuauContractTests(unittest.TestCase):
         self.assertIsNone(
             re.search(r"\banim\b", self.panel),
             "the animation state of the panel is never used",
+        )
+
+    def test_a_late_frame_tick_does_not_rearm_the_closed_panel(self):
+        # With the panel closed, a frame tick queued before the close called
+        # setNeedsFrameTick(true) again: the host kept ticking forever and
+        # the plugin polled the daemon at 2 Hz with no panel to show it.
+        body = method_body(self.panel, "onFrameTick")
+        self.assertTrue(
+            contains(body, "if closed then"),
+            "a late frame tick re-arms the tick after the panel was closed",
+        )
+        self.assertTrue(
+            contains(body, "return"),
+            "the guard of the frame tick does not stop the function",
+        )
+        self.assertTrue(
+            contains(method_body(self.panel, "update"), "if closed then"),
+            "update() keeps polling the daemon after the panel was closed",
         )
 
     def test_an_unknown_shortcut_value_shows_itself_and_not_a_key(self):

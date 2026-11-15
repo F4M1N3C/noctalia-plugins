@@ -1683,6 +1683,13 @@ local function tickRefresh()
 end
 
 function M.update()
+  if closed then
+    -- The panel is closed: the host can still call the entry's update()
+    -- (a service tick or a late queued callback). Without this guard the
+    -- plugin would keep asking the daemon for the state with no panel to
+    -- show it.
+    return
+  end
   tickRefresh()
 end
 
@@ -1707,6 +1714,12 @@ function M.onIpc(event, payload)
 end
 
 function M.onFrameTick(deltaMs)
+  if closed then
+    -- A frame tick queued before the close (or delivered after it) must not
+    -- re-arm the tick: setNeedsFrameTick(true) made the host keep ticking
+    -- forever and the plugin polled the daemon at 2 Hz with the panel closed.
+    return
+  end
   refreshElapsedMs = refreshElapsedMs + (tonumber(deltaMs) or 16)
   if refreshElapsedMs >= refreshIntervalMs then
     refreshElapsedMs = 0

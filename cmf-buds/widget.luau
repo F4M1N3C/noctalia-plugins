@@ -4,349 +4,278 @@
 
 local C = require("./lib/common.luau")
 
-local glyph = noctalia.getConfig("glyph") or "headphones-filled"
+local glyph = noctalia.getConfig("glyph") or "headphones"
 local volumeStep = tonumber(noctalia.getConfig("volume_step")) or 5
 
 local statePath = nil
 local socketPath = nil
+local logPath = nil
 local pluginPath = noctalia.pluginDir() or ""
-
+local lastRaw = nil
 local lastState = nil
-local lastReadError = false
-local volumeInFlight = false
-local pendingVolumeTarget = nil
-local lastVolumeSentMs = 0
-local wheelBurst = false
-local volumeBurstResetTimer = nil
 
-local RPC_TIMEOUT_MS = 60000
+local render
 
 local function ensurePaths()
-  pluginPath = noctalia.pluginDir() or pluginPath
   local dir = noctalia.pluginDataDir()
-  if dir ~= nil and dir ~= "" then
+  if dir ~= nil then
     statePath = dir .. "/state.json"
     socketPath = dir .. "/daemon.sock"
+    logPath = dir .. "/daemon.log"
   end
 end
 
 local function readState()
   if statePath == nil then
+    ensurePaths()
+  end
+  if statePath == nil then
     return nil
   end
-  local okRead, text = pcall(noctalia.read, statePath)
-  if not okRead or type(text) ~= "string" or text == "" then
-    lastReadError = true
-    return nil
+  local raw = noctalia.readFile(statePath)
+  if raw == nil or raw == lastRaw then
+    return lastState
   end
-  local okDecode, obj = pcall(noctalia.jsonDecode, text)
-  if not okDecode or type(obj) ~= "table" then
-    lastReadError = true
-    return nil
+  local ok, data = pcall(noctalia.json.decode, raw)
+  if not ok or type(data) ~= "table" then
+    return lastState
   end
-  lastReadError = false
-  return obj
+  lastRaw = raw
+  lastState = data
+  return data
 end
 
-local function ancGlyph(state)
-  local lp = state.listening or {}
-  local mode = tostring(lp.mode or "off")
-  if mode == "anc" then
-    return "ear"
-  elseif mode == "transparency" then
-    return "ear-off"
-  end
-  return glyph
-end
-
-local function tooltipText(state)
-  if lastReadError then
-    return C.tr("tooltip.unavailable")
-  end
-  if type(state) ~= "table" then
-    return C.tr("tooltip.starting")
-  end
-  local conn = state.connection or {}
-  local bat = state.battery or {}
-  local lp = state.listening or {}
-  local eq = state.equalizer or {}
-  local vol = state.volume or {}
-
-  local lines = {}
-  if conn.connected ~= true then
-    table.insert(lines, C.tr("tooltip.disconnected"))
-  else
-    table.insert(lines, C.tr("tooltip.connected"))
-    local ancText = C.anc_label(tostring(lp.mode or "off"))
-    if lp.mode == "anc" and lp.anc_level ~= nil then
-      ancText = ancText .. " (" .. C.anc_level_label(tostring(lp.anc_level)) .. ")"
-    end
-    table.insert(lines, ancText)
-    if bat.left ~= nil then
-      table.insert(lines, C.tr("tooltip.left") .. ": " .. tostring(bat.left) .. "%")
-    end
-    if bat.right ~= nil then
-      table.insert(lines, C.tr("tooltip.right") .. ": " .. tostring(bat.right) .. "%")
-    end
-    if bat.case ~= nil then
-      table.insert(lines, C.tr("tooltip.case") .. ": " .. tostring(bat.case) .. "%")
-    end
-    table.insert(lines, C.eq_label(tostring(eq.preset or "balanced")))
-    if vol.percent ~= nil then
-      local v = tostring(vol.percent) .. "%"
-      if vol.muted == true then
-        v = v .. " (" .. C.tr("volume.mute") .. ")"
-      end
-      table.insert(lines, C.tr("tooltip.volume") .. ": " .. v)
-    end
-  end
-  if state.error ~= nil and tostring(state.error) ~= "" then
-    table.insert(lines, C.tr("tooltip.error") .. ": " .. C.error_text(tostring(state.error), state.error_detail))
-  end
-  return table.concat(lines, "\n")
-end
-
-local function render()
-  local state = lastState
-  local conn = (type(state) == "table" and state.connection) or {}
-  local battery = (type(state) == "table" and state.battery) or {}
-  local value = C.battery_overall(battery)
-
-  noctalia.setBarWidget({
-    icon = ancGlyph(type(state) == "table" and state or {}),
-    tooltip = tooltipText(state),
-    showIcon = true,
-    showPercent = conn.connected == true and value ~= nil,
-    percent = value,
-    onClick = "openPanel",
-    onMiddleClick = "connect",
-    onRightClick = "cycleAnc",
-  })
-end
+-- The daemon can take a while: a full query of the earbuds is about 15 s
+-- and a reconnection up to a minute (the Bluetooth connect plus the wait
+-- for BlueZ). The host clamps the timeout to 60 s, so the request is not
+-- killed in the middle and the real answer is not lost.
+local RPC_TIMEOUT_MS = 60000
 
 local function rpc(req, cb, silent)
   ensurePaths()
-  if statePath == nil or socketPath == nil then
-    if cb ~= nil then cb(nil) end
+  if statePath == nil then
+    if not silent then
+      noctalia.notifyError(C.tr("title"), C.error_text("daemon_failed"))
+    end
     return false
   end
-  local okEncode, payload = pcall(noctalia.jsonEncode, req)
-  if not okEncode then
-    if cb ~= nil then cb(nil) end
+  local encoded = noctalia.json.encode(req)
+  if encoded == nil then
+    noctalia.log("cmf-buds: could not serialize the request")
+    if not silent then
+      noctalia.notifyError(C.tr("title"), C.error_text("generic"))
+    end
+    if cb ~= nil then
+      cb(nil)
+    end
     return false
   end
-  local python = "/usr/bin/python3"
-  local script = pluginPath .. "/bin/budsctl.py"
-  local args = {
-    python, script, "rpc", payload,
-    "--state", statePath,
-    "--socket", socketPath,
-    "--poll", tostring(C.poll_seconds()),
-    "--device-mac", tostring(noctalia.getConfig("device_mac") or ""),
-    "--device-name", tostring(noctalia.getConfig("device_name") or ""),
+  local argv = {
+    "python3",
+    pluginPath .. "/bin/budsctl.py",
+    "rpc",
+    encoded,
+    "--socket",
+    socketPath,
+    "--state",
+    statePath,
+    "--log",
+    logPath,
+    -- The same arguments as the panel: if the widget is the one that has
+    -- to start the daemon, it must start it with the settings of the user.
+    "--poll",
+    tostring(C.poll_seconds()),
+    "--device-mac",
+    noctalia.getConfig("device_mac") or "",
+    "--device-name",
+    noctalia.getConfig("device_name") or "",
   }
-
-  local launched = noctalia.runAsync(args, function(result)
-    if type(result) ~= "table" or result.code ~= 0 then
+  local launched = noctalia.runAsync(argv, function(result)
+    local ok, data = pcall(noctalia.json.decode, result.stdout or "")
+    if not ok or type(data) ~= "table" then
       if not silent then
-        local detail = nil
-        if type(result) == "table" then
-          local stderr = tostring(result.stderr or "")
-          local stdout = tostring(result.stdout or "")
-          if stderr ~= "" then
-            detail = stderr
-          elseif stdout ~= "" then
-            detail = stdout
-          end
+        -- An empty answer means the process was killed: the daemon needs
+        -- more time than the host gave it.
+        local detail = ""
+        if result.timedOut then
+          detail = "timeout"
+        else
+          detail = (result.stderr or ""):gsub("%s+$", "")
         end
-        noctalia.notify(C.tr("title"), C.error_text("daemon_failed", detail))
+        noctalia.notifyError(C.tr("title"), C.error_text("daemon_failed", detail))
       end
-      if cb ~= nil then cb(nil) end
+      if cb ~= nil then
+        cb(nil)
+      end
+      render()
       return
     end
-
-    local stdout = tostring(result.stdout or "")
-    local okDecode, data = pcall(noctalia.jsonDecode, stdout)
-    if not okDecode or type(data) ~= "table" then
-      if not silent then
-        noctalia.notify(C.tr("title"), C.tr("error.decode"))
-      end
-      if cb ~= nil then cb(nil) end
-      return
-    end
-
-    if data.ok == false then
-      if not silent then
-        noctalia.notify(C.tr("title"), C.error_text(data.error, data.error_detail))
-      end
-      if cb ~= nil then cb(data) end
-      return
-    end
-
     if data.state ~= nil then
       lastState = data.state
-      render()
     end
-    if cb ~= nil then cb(data) end
+    if data.ok ~= true and not silent then
+      -- The daemon sends a stable code and the technical detail apart:
+      -- the text is resolved here, in the language of the user.
+      noctalia.notifyError(C.tr("title"), C.error_text(data.error, data.error_detail))
+    end
+    if cb ~= nil then
+      cb(data)
+    end
+    render()
   end, RPC_TIMEOUT_MS)
-
   if not launched then
+    -- The host did not start the process and never calls the callback: the
+    -- failure has to be reported here or the widget would wait forever.
     if not silent then
-      noctalia.notify(C.tr("title"), C.error_text("daemon_failed"))
+      noctalia.notifyError(C.tr("title"), C.error_text("daemon_failed"))
     end
-    if cb ~= nil then cb(nil) end
-  end
-  return launched
-end
-
-local function flushVolumeQueue()
-  if pendingVolumeTarget == nil then
-    volumeInFlight = false
-    wheelBurst = false
-    return
-  end
-  local target = pendingVolumeTarget
-  pendingVolumeTarget = nil
-  local now = (noctalia.epochMs and noctalia.epochMs()) or 0
-  if now > 0 then
-    lastVolumeSentMs = now
-  end
-  volumeInFlight = true
-  local launched = rpc({ cmd = "volume", percent = target, mute = "off" }, function()
-    volumeInFlight = false
-    flushVolumeQueue()
-  end, true)
-  if not launched then
-    volumeInFlight = false
-    pendingVolumeTarget = nil
-    wheelBurst = false
-  end
-end
-
-local function applyVolume(delta)
-  local state = lastState or {}
-  local vol = state.volume or {}
-  local current = tonumber(vol.percent) or 0
-  local target = C.clamp(current + delta, 0, 100)
-  pendingVolumeTarget = target
-  if not volumeInFlight then
-    local now = (noctalia.epochMs and noctalia.epochMs()) or 0
-    local wait = 0
-    if wheelBurst and lastVolumeSentMs > 0 and now > 0 then
-      local elapsed = now - lastVolumeSentMs
-      if elapsed < 160 then
-        wait = 160 - elapsed
-      end
+    if cb ~= nil then
+      cb(nil)
     end
-    if wait > 0 then
-      noctalia.setTimeout(function()
-        if not volumeInFlight then
-          flushVolumeQueue()
-        end
-      end, wait)
-    else
-      flushVolumeQueue()
-    end
-  end
-end
-
-local function resetWheelBurst()
-  wheelBurst = false
-  volumeBurstResetTimer = nil
-end
-
-local function onClick()
-  noctalia.openPanel(C.panel_id())
-end
-
-local function onConnect()
-  rpc({ cmd = "connect" }, function(data)
-    if data ~= nil and data.ok == true then
-      noctalia.notify(C.tr("title"), C.tr("toast.connected"))
-    end
-  end)
-end
-
-local function onDisconnect()
-  rpc({ cmd = "disconnect" }, function(data)
-    if data ~= nil and data.ok == true then
-      noctalia.notify(C.tr("title"), C.tr("toast.disconnected"))
-    end
-  end)
-end
-
-local function cycleAnc()
-  local state = lastState or {}
-  local lp = state.listening or {}
-  local nextMode = C.next_anc_mode(tostring(lp.mode or "off"))
-  local level = tostring(lp.anc_level or "high")
-  rpc({ cmd = "anc", mode = nextMode, level = level }, function(data)
-    if data ~= nil and data.ok == true then
-      noctalia.notify(C.tr("title"), C.anc_label(nextMode))
-    end
-  end)
-end
-
-local function onScroll(steps)
-  local conn = (lastState or {}).connection or {}
-  if conn.connected ~= true then
     return false
   end
-  wheelBurst = true
-  if volumeBurstResetTimer ~= nil then
-    noctalia.clearTimeout(volumeBurstResetTimer)
-  end
-  volumeBurstResetTimer = noctalia.setTimeout(resetWheelBurst, 220)
-  local delta = -(tonumber(steps) or 0) * volumeStep
-  applyVolume(delta)
   return true
 end
 
-function update()
-  ensurePaths()
-  local state = readState()
-  if state ~= nil then
-    lastState = state
+render = function()
+  local st = lastState
+  local connected = st ~= nil and st.connected == true
+  local ancMode = st and st.anc and st.anc.mode or "unknown"
+
+  local rows = {
+    { C.tr("tooltip.connection"), connected and C.tr("tooltip.connected") or C.tr("tooltip.disconnected") },
+    { C.tr("tooltip.anc"), C.anc_label(ancMode, st and st.anc and st.anc.level or nil) },
+    { C.tr("tooltip.battery"), C.battery_detail(st) },
+    { C.tr("tooltip.eq"), C.eq_label(st and st.eq and st.eq.preset or nil) },
+    { C.tr("tooltip.volume"), C.volume_text(st) },
+  }
+  if st ~= nil and st.error ~= nil and st.error ~= "" then
+    table.insert(rows, {
+      C.tr("tooltip.error"),
+      C.error_text(st.error, st.error_detail),
+    })
   end
+
+  -- The tooltip goes on the node under the pointer: with the declarative
+  -- tree, the hover area is the child (not the widget), so the widget's
+  -- setTooltip would not be shown.
+  local parts = {}
+  for _, row in ipairs(rows) do
+    table.insert(parts, tostring(row[1]) .. ": " .. tostring(row[2]))
+  end
+
+  -- Icon only: it inherits the bar color (like the other widgets).
+  local container = barWidget.isVertical() and ui.column or ui.row
+  barWidget.render(container({
+    gap = 0,
+    align = "center",
+    justify = "center",
+    tooltip = table.concat(parts, "\n"),
+  }, {
+    ui.glyph({ name = glyph, size = 15 }),
+  }))
+
+  barWidget.setTooltip(rows)
+end
+
+function update()
+  readState()
   render()
 end
 
-function onBarWidgetEvent(event, _payload)
-  if event == "openPanel" then
-    onClick()
-  elseif event == "connect" then
-    onConnect()
-  elseif event == "cycleAnc" then
-    cycleAnc()
-  elseif event == "wheelUp" then
-    onScroll(1)
-  elseif event == "wheelDown" then
-    onScroll(-1)
+function onClick()
+  noctalia.togglePanel(C.panel_id())
+end
+
+function onRightClick()
+  local st = lastState
+  local mode = st and st.anc and st.anc.mode or "off"
+  local req
+  if mode == "off" then
+    req = { cmd = "anc", mode = "transparency" }
+  elseif mode == "transparency" then
+    req = { cmd = "anc", mode = "anc", level = st and st.anc and st.anc.level or "high" }
+  else
+    req = { cmd = "anc", mode = "off" }
   end
+  if st ~= nil then
+    st.anc = st.anc or {}
+    st.anc.mode = req.mode
+    if req.level ~= nil then
+      st.anc.level = req.level
+    end
+    render()
+  end
+  rpc(req, nil, false)
+end
+
+-- The wheel sends one event per notch: sending a request for each of them
+-- would write the volume several times, and the last write to reach the
+-- daemon would not be the last one the user asked for. Only one request is
+-- in flight and the target of the last event wins.
+local volumeInFlight = false
+local pendingVolumeTarget = nil
+
+local function applyVolume(target)
+  pendingVolumeTarget = nil
+  volumeInFlight = true
+  rpc({ cmd = "volume", percent = target, mute = "off" }, function()
+    volumeInFlight = false
+    local next = pendingVolumeTarget
+    if next ~= nil then
+      applyVolume(next)
+    end
+  end, true)
+end
+
+function onScroll(axis, steps)
+  if axis ~= "vertical" then
+    return
+  end
+  -- The panel sliders are native controls and always take the wheel; this
+  -- setting is about scrolling the bar widget, so it is read here.
+  if noctalia.getConfig("wheel_adjust") == false then
+    return
+  end
+  local st = lastState
+  local current = st and st.volume and st.volume.percent
+  if current == nil then
+    current = 50
+  end
+  local delta = -steps * volumeStep
+  local target = math.max(0, math.min(100, current + delta))
+  if st ~= nil then
+    st.volume = st.volume or {}
+    st.volume.percent = target
+    st.volume.muted = false
+    render()
+  end
+  if volumeInFlight then
+    -- A request is already running: the target waits for it.
+    pendingVolumeTarget = target
+    return
+  end
+  applyVolume(target)
 end
 
 function onIpc(event, payload)
-  if event == "toggle" or event == "togglePanel" then
+  if event == "toggle" then
     noctalia.togglePanel(C.panel_id())
-  elseif event == "connect" then
-    onConnect()
-  elseif event == "disconnect" then
-    onDisconnect()
   elseif event == "refresh" then
     update()
   elseif event == "anc" then
-    local mode = tostring((type(payload) == "table" and payload.mode) or "anc")
-    local level = tostring((type(payload) == "table" and payload.level) or ((lastState or {}).listening or {}).anc_level or "high")
-    rpc({ cmd = "anc", mode = mode, level = level })
+    if payload == "off" or payload == "transparency" or payload == "anc" then
+      rpc({ cmd = "anc", mode = payload, level = lastState and lastState.anc and lastState.anc.level or "high" })
+    end
+  elseif event == "connect" then
+    rpc({ cmd = "connect" })
   end
 end
 
 function onConfigChanged()
-  glyph = noctalia.getConfig("glyph") or "headphones-filled"
+  glyph = noctalia.getConfig("glyph") or "headphones"
   volumeStep = tonumber(noctalia.getConfig("volume_step")) or 5
-  ensurePaths()
-  C.loadTranslations()
-  update()
+  render()
 end
 
 ensurePaths()

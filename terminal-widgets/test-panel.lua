@@ -1804,6 +1804,18 @@ check("service: respeta la supresión de impuestos", nil, storeLib.load().brainG
 mock.state.set("imposed", {})
 clients = {}
 
+-- si runAsync no arranca, el sondeo no debe quedar bloqueado
+files[storePath] = '{"commands":{},"brain":true,"brainGeometry":{}}'
+local realRunAsync = mock.runAsync
+mock.runAsync = function() return false end
+service.update()
+mock.runAsync = realRunAsync
+clients = { { class = "noctalia-term-lavat", at = { 0, 800 }, size = { 802, 582 }, address = "0x1", monitor = 0 } }
+service.update()
+service.update()
+check("service: runAsync fallido no bloquea el sondeo", "bottom-left, 802x582, 0, -58", storeLib.load().brainGeometry["noctalia-term-lavat"])
+clients = {}
+
 config.margin = savedMargin
 
 print(string.format("\n%d comprobaciones, %d fallos", PASSED + FAILED, FAILED))

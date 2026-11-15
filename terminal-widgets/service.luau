@@ -36,7 +36,7 @@ function update()
   local stored = storeLib.loadBrain()
   if stored.brain ~= true then return end   -- cerebro OFF: cero trabajo, cero hyprctl
   polling = true
-  noctalia.runAsync({ "hyprctl", "clients", "-j" }, function(result)
+  local started = noctalia.runAsync({ "hyprctl", "clients", "-j" }, function(result)
     polling = false
     if result.exitCode ~= 0 or type(result.stdout) ~= "string" or result.stdout == "" then
       return
@@ -51,6 +51,9 @@ function update()
       storeLib.saveBrainGeometry(capture.memory)
     end
   end)
+  if not started then
+    polling = false
+  end
 end
 
 noctalia.setUpdateInterval(1000)

@@ -6,10 +6,10 @@ version = "1.0.0"
 plugin_api = 26
 author = "faminec"
 license = "MIT"
-dependencies = []
-tags = ["productivity", "utility", "launcher"]
+dependencies = ["wl-copy"]
+tags = ["productivity", "utility", "bar", "panel", "service"]
 icon = "notes"
-description = "Quick text notes with live sync from mobile app and sync panel integration."
+description = "Official Notes plugin plus a mobile bridge: outside-change watching and a public link to your notes on the phone."
 
 # The notes_dir default is "$XDG_DOCUMENTS_DIR/Notes": the variable stands for the user's localized Documents folder
 # (XDG_DOCUMENTS_DIR from user-dirs.dirs, e.g. ~/Documentos on a Spanish system).

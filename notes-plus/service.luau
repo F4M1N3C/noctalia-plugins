@@ -1,25 +1,25 @@
 --!nonstrict
--- Servicio de sincronizacion entre el panel de notas del computador y el
--- celular.
+-- Sync service between the notes panel on the computer and the
+-- phone.
 --
--- El plugin `faminec/notes` se ocupa de las notas; este se ocupa del puente:
+-- The `faminec/notes` plugin takes care of the notes; this one is the bridge:
 --
---   * Vigila el servidor de `notes-mobile` y publica su estado en
---     `noctalia.state` ("notes_sync") para que el widget y el panel lo pinten.
---   * Encola mensajes hacia el celular (push) a traves de la API del servidor.
---   * Expone un contrato IPC estable, con payload JSON, para que otras
---     herramientas (o el propio celular) controlen el panel de notas.
+-- * Watches the `notes-mobile` server and publishes its state in
+-- `noctalia.state` ("notes_sync") so the widget and the panel can paint it.
+-- Queues messages for the phone (push) through the server API.
+-- * Exposes a stable IPC contract, with a JSON payload, so other
+-- tools (or the phone itself) can drive the notes panel.
 --
 -- Contrato IPC:
 --
 --   noctalia msg plugin faminec/notes-plus:service all refresh
 --   noctalia msg plugin faminec/notes-plus:service all cmd '{"op":"status"}'
 --   noctalia msg plugin faminec/notes-plus:service all cmd '{"op":"open-notes"}'
---   noctalia msg plugin faminec/notes-plus:service all cmd '{"op":"open-note","name":"mi nota.md"}'
+-- noctalia msg plugin faminec/notes-plus:service all cmd '{"op":"open-note","name":"my note.md"}'
 --   noctalia msg plugin faminec/notes-plus:service all cmd '{"op":"send-current"}'
---   noctalia msg plugin faminec/notes-plus:service all cmd '{"op":"push","text":"hola"}'
+-- noctalia msg plugin faminec/notes-plus:service all cmd '{"op":"push","text":"hello"}'
 --
--- El estado que publica el servicio:
+-- The state the service publishes:
 --
 --   noctalia.state "notes_sync" = {
 --     serverUp = bool, phoneConnected = bool, pending = number,
@@ -30,22 +30,22 @@
 local dirs = require("./dirs.luau")
 local channel = require("./channel.luau")
 
-local MAX_IN_FLIGHT = 4 -- el host acepta 8; se deja margen para otras acciones
--- Si el servidor se queda colgado (acepta la conexion pero no contesta), las
--- peticiones se quedan en vuelo y la cola crece sin limite. Los sondeos viejos
--- no sirven de nada (el estado se vuelve a pedir) y, lo peor, empujan las
--- acciones del usuario (que si importan) hasta el final de la cola. Asi que la
--- cola tiene un tope.
+local MAX_IN_FLIGHT = 4 -- the host accepts 8; some margin is left for other actions
+-- If the server hangs (it accepts the connection but never answers),
+-- requests stay in flight and the queue grows without limit. Old polls are
+-- useless (the state is requested again) and, worse, they push the user's
+-- actions (the ones that matter) to the back of the queue. So the
+-- queue has a cap.
 local MAX_QUEUE = 30
--- Que se puede tirar y que no. Cada peticion declara su prioridad y hay una
--- sola regla: cuando la cola esta llena se tira lo mas desechable (primero
--- un sondeo y despues una comprobacion). El mensaje del usuario NO se tira
--- nunca: si la cola esta llena solo de mensajes, se rechaza el nuevo (el
--- usuario se entera) y los anteriores se conservan para cuando el servidor
--- vuelva.
-local PRIO_SONDEO = 1 -- el estado se vuelve a pedir: da igual perderlo
-local PRIO_COMPROBACION = 2 -- una comprobacion: se vuelve a hacer
-local PRIO_MENSAJE = 3 -- el mensaje del usuario: no se tira nunca
+-- What can be dropped and what cannot. Every request declares its priority and
+-- there is a single rule: when the queue is full, the most disposable thing is
+-- dropped (a poll first, a check after). The user's message is NEVER
+-- dropped: if the queue holds only messages, the new one is rejected (the
+-- user is told) and the previous ones are kept for when the server
+-- comes back.
+local PRIO_SONDEO = 1 -- the state is requested again: losing it does not matter
+local PRIO_COMPROBACION = 2 -- a check: it is done again
+local PRIO_MENSAJE = 3 -- the user's message: never dropped
 
 local inFlight = 0
 local queue = {}
@@ -58,11 +58,11 @@ local function tr(key, params)
   return noctalia.tr(key)
 end
 
--- ------------------------------------------------------------------ ajustes
+-- ------------------------------------------------------------------ settings
 
 local function notesPluginId()
-  -- El plugin fusionado es siempre notes-plus; la clave antigua
-  -- `notes_plugin` ya no existe y provocaba un aviso de ajuste no declarado.
+  -- The merged plugin is always notes-plus; the old
+  -- `notes_plugin` key no longer exists and raised an undeclared setting warning.
   return "faminec/notes-plus"
 end
 
@@ -75,12 +75,12 @@ local function serverUrl()
   if type(url) ~= "string" or url == "" then
     url = "http://127.0.0.1:8787"
   end
-  -- Sin barra final: las rutas se concatenan tal cual.
+  -- No trailing slash: paths are concatenated as they are.
   return (url:gsub("/+$", ""))
 end
 
--- El token se puede dejar vacio en los ajustes: si es asi se lee del
--- config.json del servidor (que es donde esta por defecto).
+-- The token can be left empty in the settings: if so, it is read from the
+-- server's config.json (where it lives by default).
 local function serverToken()
   local token = noctalia.getConfig("token")
   if type(token) == "string" and token ~= "" then
@@ -108,8 +108,8 @@ end
 
 -- --------------------------------------------------------------------- HTTP
 --
--- El host acepta como maximo ocho peticiones simultaneas por script: si se
--- supera, la llamada se rechaza y no se avisa. Por eso todo pasa por una cola.
+-- The host accepts at most eight simultaneous requests per script: going over
+-- that rejects the call without any warning. That is why everything is queued.
 
 local function pump()
   while inFlight < MAX_IN_FLIGHT and #queue > 0 do
@@ -136,8 +136,8 @@ local function request(path, method, body, cb, priority)
   if body ~= nil then
     table.insert(headers, "Content-Type: application/json")
   end
-  -- Cola llena: se tira lo mas desechable y se avisa a quien lo pidio, para
-  -- que no se quede esperando a un servidor que no contesta.
+  -- Queue full: the most disposable thing is dropped and the caller is told, so
+  -- it does not wait forever for a server that never answers.
   if #queue >= MAX_QUEUE then
     local dropped = nil
     for _, p in ipairs({ PRIO_SONDEO, PRIO_COMPROBACION }) do
@@ -152,9 +152,9 @@ local function request(path, method, body, cb, priority)
       end
     end
     if dropped == nil then
-      -- En la cola solo hay mensajes del usuario: no se tira ninguno. Se
-      -- rechaza el nuevo (y el usuario se entera) y los anteriores se
-      -- conservan para cuando el servidor vuelva.
+      -- The queue holds only user messages: none is dropped. The new one is
+      -- rejected (and the user is told) and the previous ones are
+      -- kept for when the server comes back.
       cb(nil, tr("errors.queue_full"))
       return
     end
@@ -192,10 +192,10 @@ local function jsonRequest(path, method, payload, cb, priority)
       cb(nil, "sin respuesta del servidor")
       return
     end
-    -- `res.ok` significa que la peticion se completo, NO que saliera bien:
-    -- un 404 o un 500 tambien llegan con `ok = true`. Lo que dice si fue un
-    -- fallo es el codigo de estado (comprobado con una sonda contra el
-    -- servidor: un 404 devuelve ok=true, status=404).
+    -- `res.ok` means the request completed, NOT that it succeeded:
+    -- a 404 or a 500 also arrive with `ok = true`. What tells a failure apart is
+    -- the status code (checked with a probe against the
+    -- server).
     if not res.ok then
       cb(nil, "sin respuesta del servidor")
       return
@@ -214,8 +214,8 @@ local function jsonRequest(path, method, payload, cb, priority)
       cb(nil, "respuesta ilegible")
       return
     end
-    -- El servidor responde los fallos con {"error": "..."}: si aparece esa
-    -- clave, es un fallo aunque el codigo no lo delatara.
+    -- The server answers failures with {"error": "..."}: if that key shows up
+    -- it is a failure even when the status code did not reveal it.
     if decoded.error ~= nil then
       cb(nil, tostring(decoded.error))
       return
@@ -224,34 +224,34 @@ local function jsonRequest(path, method, payload, cb, priority)
   end, priority)
 end
 
--- ------------------------------------------------- nota abierta (otro plugin)
+-- ------------------------------------------------- open note (another plugin)
 --
--- `noctalia.state` esta aislado por plugin: las claves que publica el editor
--- no se ven desde aqui. El canal entre plugins es el fichero `.current.json`
--- que el editor escribe DENTRO de la carpeta de notas: asi funciona aunque el
--- editor y el puente sean plugins distintos (o repos distintos), porque la
--- carpeta de notas ya es el punto de encuentro entre el computador y el
--- celular. Precedente: el oficial guarda ahi `.pinned.json`.
+-- `noctalia.state` is isolated per plugin: the keys the editor publishes
+-- are not visible from here. The channel between plugins is the `.current.json`
+-- file the editor writes INSIDE the notes folder: that works even when the
+-- editor and the bridge are different plugins (or different repos), because the
+-- notes folder is already the meeting point between the computer and the
+-- phone. Precedent: the official plugin keeps `.pinned.json` there.
 --
--- La carpeta se resuelve con el mismo modulo que usa el editor (dirs.luau)
--- para que el panel y el puente apunten al mismo sitio.
+-- The folder is resolved with the same module the editor uses (dirs.luau)
+-- so the panel and the bridge point at the same place.
 
 local function notesDir()
   return dirs.resolveNotesDir()
 end
 
--- Devuelve {name, content, open} de la ultima nota con la que se trabajo en
--- el panel de notas, o nil. `open` dice si esa nota esta abierta ahora mismo.
+-- Returns {name, content, open} of the last note worked on in
+-- the notes panel, or nil. `open` says whether that note is open right now.
 local function readCurrentNote()
   local current = channel.read(notesDir())
-  -- Un canal vacio (nombre en blanco) es lo mismo que no hay nota.
+  -- An empty channel (blank name) is the same as no note at all.
   if current == nil or current.name == "" then
     return nil
   end
   return current
 end
 
--- ------------------------------------------------------------------ estado
+-- ------------------------------------------------------------------ state
 
 local snapshot = {
   serverUp = false,
@@ -275,8 +275,8 @@ local function publish()
   noctalia.state.set("notes_sync", snapshot)
 end
 
--- El servidor escribe ~/notes-mobile/state.json: si esta, se lee como
--- respaldo cuando el servidor no responde.
+-- The server writes ~/notes-mobile/state.json: when it is there, it is read as
+-- a fallback while the server does not answer.
 local function readStateFile()
   local path = noctalia.expandPath("~/notes-mobile/state.json")
   local raw = noctalia.readFile(path)
@@ -331,7 +331,7 @@ local function refresh()
   end, PRIO_SONDEO)
 end
 
--- Tambien se mira el estado del servidor para saber cuantas notas hay.
+-- The server state is also read to know how many notes there are.
 local function refreshState()
   jsonRequest("/api/state", "GET", nil, function(data, err)
     if data ~= nil then
@@ -367,23 +367,23 @@ local function notifyErr(text)
   noctalia.notifyError(tr("title"), text or "")
 end
 
--- --------------------------------------------------- comandos de Noctalia
+-- --------------------------------------------------- Noctalia commands
 --
--- Los nombres de nota vienen del celular: hay que citarlos bien para el
--- shell. Entre comillas simples, y las comillas simples de dentro se
--- cierran y se reabren ('\'').
+-- Note names come from the phone: they have to be quoted properly for the
+-- shell. Single quotes, and single quotes inside are closed and
+-- reopened ('\'').
 local function shellQuote(text)
   local s = tostring(text)
   s = s:gsub("'", "'\\''")
   return "'" .. s .. "'"
 end
 
--- Abre el panel de notas del plugin `faminec/notes`. Se usa `panel-open` (y
--- no `toggle`) para que un panel ya abierto no se cierre.
+-- Opens the notes panel of the `faminec/notes` plugin. `panel-open` is used (not
+-- `toggle`) so an already open panel does not close.
 local function openNotesPanel(noteName)
   if type(noteName) == "string" and noteName ~= "" then
-    -- Primero se apunta la nota en el panel abierto y en el servicio (que la
-    -- guarda para cuando el panel se abra), y despues se abre.
+    -- First the note is recorded in the open panel and in the service (which keeps
+    -- it for when the panel opens), and then the panel is opened.
     noctalia.runAsync(
       "noctalia msg plugin "
         .. shellQuote(notesPanelId())
@@ -400,8 +400,8 @@ local function openNotesPanel(noteName)
   noctalia.runAsync("noctalia msg panel-open " .. shellQuote(notesPanelId()))
 end
 
--- Codifica un texto para ponerlo en una URL (los nombres de nota pueden
--- llevar espacios, acentos o comillas).
+-- Encodes a text for a URL (note names can carry
+-- spaces, accents or quotes).
 local function urlEncode(text)
   local s = tostring(text)
   s = s:gsub("([^%w%-%.%_%~])", function(c)
@@ -410,16 +410,16 @@ local function urlEncode(text)
   return s
 end
 
--- ¿Sigue existiendo la nota? Se pregunta al servidor (que es quien ve el
--- disco). El segundo valor es el error cuando no se pudo saber.
+-- Does the note still exist? The server is asked (it is the one that sees the
+-- disk). The second value is the error when it could not be known.
 local function noteExists(name, cb)
   jsonRequest("/api/note/" .. urlEncode(name), "GET", nil, function(data, err)
     if data ~= nil then
       cb(true, nil)
       return
     end
-    -- "HTTP 404" es que no existe; cualquier otra cosa es que no se pudo
-    -- preguntar (y no es lo mismo).
+    -- "HTTP 404" means it does not exist; anything else means it could not be
+    -- asked (and that is not the same).
     if err ~= nil and err:match("^HTTP ") then
       cb(false, nil)
       return
@@ -428,7 +428,7 @@ local function noteExists(name, cb)
   end, PRIO_COMPROBACION)
 end
 
--- Encola un mensaje para el celular.
+-- Queues a message for the phone.
 local function pushToPhone(text, title, cb)
   if type(text) ~= "string" or text == "" then
     notifyErr(tr("errors.empty"))
@@ -448,7 +448,7 @@ local function pushToPhone(text, title, cb)
   end, PRIO_MENSAJE)
 end
 
--- Manda al celular la nota que hay abierta en el panel de notas.
+-- Sends the note open in the notes panel to the phone.
 local function sendCurrentNote()
   local current = readCurrentNote()
   if current == nil then
@@ -459,10 +459,10 @@ local function sendCurrentNote()
     notifyErr(tr("errors.cannot_read"))
     return
   end
-  -- Antes de mandarla se comprueba que la nota sigue existiendo: si se
-  -- borro desde el movil mientras el panel de notas estaba cerrado, el canal
-  -- sigue publicando su nombre (el panel no vigila si esta cerrado) y se
-  -- mandaria una nota que ya no esta.
+  -- Before sending it, the note is checked to still exist: if it
+  -- was deleted from the phone while the notes panel was closed, the channel
+  -- keeps publishing its name (the panel does not watch while closed) and a
+  -- note that is gone would be sent.
   noteExists(current.name, function(exists, err)
     if err ~= nil then
       notifyErr(err)
@@ -506,10 +506,10 @@ local function handleCommand(cmd)
 end
 
 function onIpc(event, payload)
-  -- Notas: refrescar el panel / abrir nota (compatibilidad con el IPC antiguo).
+  -- Notes: refresh the panel / open a note (compatibility with the old IPC).
   if event == "refresh" then
     refreshState()
-    -- Bump notes_bump para que el panel plegue cambios externos.
+    -- Bump notes_bump so the panel folds external changes in.
     local bump = noctalia.state.get("notes_bump")
     noctalia.state.set("notes_bump", (type(bump) == "number" and bump or 0) + 1)
     return
@@ -538,9 +538,9 @@ end
 
 -- ------------------------------------------------------------------ ciclo
 
--- Cada cuanto se pide el estado completo (no el resumen): el estado trae la
--- lista de notas, asi que no se pide en cada tic. El resumen (salud) es
--- ligero y se pide siempre.
+-- How often the full state is requested (not the summary): the state carries
+-- the note list, so it is not requested on every tick. The summary (health) is
+-- light and is always requested.
 local fullStateEvery = 6
 
 function update()

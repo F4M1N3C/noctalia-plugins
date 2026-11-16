@@ -1,10 +1,10 @@
 --!nonstrict
--- Widget de la barra: estado del puente entre el computador y el celular.
+-- Bar widget: state of the bridge between the computer and the phone.
 --
---   * verde  : el celular esta conectado al servidor
---   * ambar  : hay mensajes en cola para el celular
---   * gris   : el celular no esta conectado
---   * rojo   : el servidor de notas no responde
+-- * green : the phone is connected to the server
+-- * amber : there are messages queued for the phone
+-- * grey  : the phone is not connected
+-- * red   : the notes server is not responding
 
 local PANEL_ID = "faminec/notes-plus:panel"
 
@@ -74,7 +74,7 @@ function onClick()
   noctalia.togglePanel(PANEL_ID)
 end
 
--- Se redibuja cuando cambia el estado publicado por el servicio.
+-- Redrawn when the state published by the service changes.
 noctalia.state.watch("notes_sync", function()
   render()
 end)

@@ -26,8 +26,8 @@ local view = "list" -- "list" | "editor" | "sync"
 local current = nil -- filename ("foo.md") while the editor is open
 local buffer = ""
 local loadedContent = "" -- what the file held when we last read/wrote it
--- Ultima nota con la que se trabajo, aunque el panel este cerrado: es la que
--- se puede mandar al celular desde el panel de sincronizacion.
+-- Last note the user worked on, even with the panel closed: it is the one
+-- that can be sent to the phone from the sync view.
 local lastNote = ""
 local lastContent = ""
 local editorRev = 0 -- bumped to reseed the editor input after external changes
@@ -40,8 +40,8 @@ local hoveredKey = nil
 local cornerRadiusScale = 1.0
 local closeButton = true
 local watchedSignature = nil -- fingerprint of the notes dir, to spot outside edits
--- Contenido del disco que ya se sabe incompatible con lo que hay en el
--- editor: evita avisar y copiar el texto una y otra vez.
+-- Disk content already known to be incompatible with what the editor holds:
+-- avoids notifying and copying the text over and over.
 local conflictRemote = nil
 
 local render
@@ -96,7 +96,7 @@ local function loadPins()
   pins = {}
   local raw = noctalia.readFile(pinsPath())
   if raw ~= nil then
-    -- Un fichero corrupto no debe tumbar el panel.
+    -- A corrupt file must not take the panel down.
     local ok, decoded = pcall(noctalia.json.decode, raw)
     if not ok then
       noctalia.log("notes: no se pudo leer el fichero de fijados")
@@ -154,12 +154,12 @@ local function refreshFiles()
   end)
 end
 
--- Publica la nota abierta en un fichero dentro de la carpeta de notas.
+-- Publishes the open note to a file inside the notes folder.
 --
--- El canal vive en la carpeta de notas (y no en el directorio de datos del
--- plugin) para que lo pueda leer otro plugin (el puente) y cualquier otra
--- herramienta: la carpeta de notas ya es el punto de encuentro entre el
--- computador y el celular. Precedente: el oficial guarda ahí `.pinned.json`.
+-- The channel lives in the notes folder (and not in the plugin data
+-- directory) so another plugin (the bridge) and any other tool can read it:
+-- the notes folder is already the meeting point between the computer and the
+-- phone. Precedent: the official plugin keeps `.pinned.json` there.
 local function publishCurrent()
   if notesDir == "" then
     return
@@ -167,10 +167,10 @@ local function publishCurrent()
   local ok = channel.write(notesDir, {
     name = current or lastNote,
     content = current ~= nil and buffer or lastContent,
-    -- `open` dice si el panel tiene esa nota abierta ahora mismo. Cuando se
-    -- cierra, la nota sigue siendo la "ultima nota" para poder mandarla al
-    -- celular desde el panel de sincronizacion (los dos paneles no pueden
-    -- estar abiertos a la vez: Noctalia solo muestra uno).
+    -- `open` says whether the panel has that note open right now. When the panel
+    -- closes, the note is still the "last note" so it can be sent to the phone
+    -- from the sync view (both panels cannot be open at the same time: Noctalia
+    -- shows only one).
     open = current ~= nil,
     at = noctalia.formatTime("%Y-%m-%d %H:%M:%S"),
   })
@@ -179,10 +179,10 @@ local function publishCurrent()
   end
 end
 
--- Guarda el texto del usuario cuando la nota cambio fuera y las dos versiones
--- no se pueden combinar. Sin esta copia, al cerrar el panel se perderia lo
--- que habia escrito: el autoguardado deja de pisar el cambio externo, pero el
--- texto sigue ahi hasta que se cierre.
+-- Saves the user's text when the note changed outside and the two versions
+-- cannot be combined. Without this copy, closing the panel would lose what
+-- the user wrote: autosave stops overwriting the external change, but the
+-- text stays there until the panel closes.
 local function conflictCopy(noteName, content)
   if notesDir == "" then
     return nil
@@ -205,10 +205,10 @@ local function flush()
   if not dirty or current == nil then
     return
   end
-  -- Antes de guardar se lee lo que hay en disco. Si la nota cambio fuera
-  -- (el movil, una sincronizacion, otro editor), guardar a ciegas pisaria ese
-  -- cambio: se combinan los dos textos cuando se puede y, cuando no, no se
-  -- escribe nada.
+  -- Before saving, the disk is read. If the note changed outside
+  -- (the phone, a sync tool, another editor), saving blindly would overwrite
+  -- that change: both texts are combined when possible and, when not, nothing
+  -- is written.
   local remote = noctalia.readFile(notePath(current)) or ""
   local r = merge.resolve(loadedContent, buffer, remote)
   if r.status == "conflict" then
@@ -230,14 +230,14 @@ local function flush()
       return
     end
   end
-  -- "same" y "remote": el disco ya tiene lo que toca, solo se adopta.
+  -- "same" and "remote": the disk already holds the right text, it is adopted.
   buffer = r.content
   loadedContent = r.content
   dirty = false
   lastNote = current or lastNote
   lastContent = buffer
-  -- El contenido guardado se publica para que otros plugins puedan usarlo
-  -- (por ejemplo, para mandarlo al celular).
+  -- The saved content is published so other plugins can use it
+  -- (for example, to send it to the phone).
   noctalia.state.set("notes_content", buffer)
   publishCurrent()
 end
@@ -252,8 +252,8 @@ local function openNote(file)
   dirty = false
   idleTicks = 0
   pendingDelete = nil
-  -- Se publica la nota abierta para que otros plugins (por ejemplo
-  -- faminec/notes-sync) puedan actuar sobre ella sin adivinar.
+  -- The open note is published so other plugins (for example
+  -- faminec/notes-sync) can act on it without guessing.
   lastNote = file
   lastContent = buffer
   noctalia.state.set("notes_current", file)
@@ -276,8 +276,8 @@ local function deleteNote(file)
     buffer = ""
     dirty = false
     view = "list"
-    -- La nota abierta se acaba de borrar: se publica para que el canal con
-    -- el otro plugin no mande una nota que ya no existe.
+    -- The open note was just deleted: published so the channel with
+    -- the other plugin does not send a note that no longer exists.
     lastNote = ""
     lastContent = ""
     publishCurrent()
@@ -485,10 +485,10 @@ end
 
 -- --------------------------------------------------------------- sync view
 --
--- Lo que antes era el panel de `faminec/notes-sync`, integrado aqui como una
--- vista mas: se abre con el boton de ajustes de la cabecera y muestra el
--- estado del servidor, del celular, la cola de mensajes y la nota actual.
--- El servicio del plugin publica todo en `noctalia.state` ("notes_sync").
+-- What used to be the `faminec/notes-sync` panel, merged in here as one more
+-- view: it opens from the cloud button in the header and shows the
+-- state of the server, the phone, the message queue and the current note.
+-- The plugin service publishes all of it in `noctalia.state` ("notes_sync").
 
 local function readSync()
   local value = noctalia.state.get("notes_sync")
@@ -749,10 +749,10 @@ end
 
 function onOpenSync()
   view = "sync"
-  -- Pide estado fresco al servicio: sin esto la vista podria tardar hasta un
-  -- tic de sondeo en reflejar el estado real.
+  -- Asks the service for fresh state: without this the view could take up to
+  -- one poll tick to reflect the real state.
   noctalia.runAsync("noctalia msg plugin " .. PANEL_ID:gsub(":panel$", ":service") .. " all refresh")
-  -- El tunel publico escribe su direccion al arrancar: se relee al abrir.
+  -- The public tunnel writes its address on start: it is read again on open.
   refreshPublicShareUrl()
   render()
 end
@@ -877,8 +877,8 @@ end
 
 function onClose()
   flush()
-  -- El panel se cierra: ya no hay ninguna nota ABIERTA, pero la ultima con
-  -- la que se trabajo sigue publicada (para poder mandarla al celular).
+  -- The panel closes: no note is OPEN any more, but the last one
+  -- worked on stays published (so it can still be sent to the phone).
   current = nil
   buffer = ""
   noctalia.state.set("notes_current", "")
@@ -958,12 +958,12 @@ function onRename(value)
   end
   current = target
   lastNote = target
-  -- El estado publico tambien se renombra: si no, el resto de plugins leen
-  -- un nombre que ya no existe.
+  -- The published state is renamed too: otherwise other plugins read
+  -- a name that no longer exists.
   noctalia.state.set("notes_current", target)
   refreshFiles()
-  -- La nota ya no se llama igual: se vuelve a publicar para que el canal con
-  -- el otro plugin no mande un nombre que ya no existe.
+  -- The note has a new name: republished so the channel with
+  -- the other plugin does not send a name that no longer exists.
   publishCurrent()
   render()
 end
@@ -1002,16 +1002,16 @@ function onExternalChange()
   if notesDir == "" then
     return -- never opened; nothing resolved yet
   end
-  -- El estado publico se mantiene al dia (por si el nombre cambio fuera).
+  -- The published state is kept up to date (in case the name changed outside).
   noctalia.state.set("notes_current", current or "")
   loadPins()
   refreshFiles()
   if current ~= nil then
     if not noctalia.fileExists(notePath(current)) then
-      -- La nota se borro o se renombro desde fuera (el movil, una
-      -- sincronizacion). Sin esto el panel se queda con un fantasma: un
-      -- nombre que ya no existe y un editor vacio, y el canal con el otro
-      -- plugin mandaria esa nota inexistente.
+      -- The note was deleted or renamed outside (the phone, a
+      -- sync tool). Without this the panel keeps a ghost: a
+      -- name that no longer exists and an empty editor, and the channel with the
+      -- other plugin would send that nonexistent note.
       current = nil
       buffer = ""
       loadedContent = ""
@@ -1026,11 +1026,11 @@ function onExternalChange()
     end
     local contents = noctalia.readFile(notePath(current)) or ""
     if contents ~= loadedContent and contents ~= conflictRemote then
-      -- La nota cambio desde fuera (el movil, un editor, una sincronizacion).
-      -- Se compara con lo que hay en el editor: si solo cambio fuera, se
-      -- adopta; si los dos anadieron texto, se combinan; si las dos versiones
-      -- son incompatibles, no se pisa nada y el texto del usuario se guarda
-      -- en .conflicts/.
+      -- The note changed outside (the phone, an editor, a sync tool).
+      -- It is compared with what the editor holds: if only the outside changed, it
+      -- is adopted; if both appended text, they are combined; if the two versions
+      -- are incompatible, nothing is overwritten and the user's text is saved
+      -- in .conflicts/.
       local r = merge.resolve(loadedContent, buffer, contents)
       if r.status == "remote" or r.status == "same" then
         buffer = r.content
@@ -1058,8 +1058,8 @@ function onExternalChange()
         if path ~= nil then
           noctalia.notifyError(tr("title"), tr("errors.conflict_saved"))
         end
-        -- El buffer no se toca: el autoguardado lo intentara otra vez y, si
-        -- el usuario deja de editar, el texto se queda a salvo en la copia.
+        -- The buffer is left alone: autosave will try again and, if
+        -- the user stops typing, the text stays safe in the copy.
         publishCurrent()
       end
     end
@@ -1080,8 +1080,8 @@ local function dirSignature()
   table.sort(list)
   local parts = {}
   for _, name in ipairs(list) do
-    -- Solo las notas y el archivo de fijados: otros archivos de la carpeta
-    -- no interesan al panel.
+    -- Only notes and the pins file: other files in the folder
+    -- are of no interest to the panel.
     local isNote = name:sub(1, 1) ~= "." and hasSuffix(name)
     local isPins = name == ".pinned.json"
     if isNote or isPins then
@@ -1115,7 +1115,7 @@ function checkExternalChanges()
   end
 end
 
--- IPC entry point: `noctalia msg plugin faminec/notes:panel all <event> [payload]`
+-- IPC entry point: `noctalia msg plugin faminec/notes-plus:panel all <event> [payload]`
 function onIpc(event, payload)
   local ok, err = pcall(function()
     if event == "refresh" then
@@ -1148,8 +1148,8 @@ noctalia.state.watch("notes_bump", function(_value)
   onExternalChange()
 end)
 
--- El servicio publica el estado del servidor/celular en `notes_sync`. La
--- vista de sincronizacion lo pinta: hay que repintar cuando llegue.
+-- The service publishes the server/phone state in `notes_sync`. The
+-- sync view paints it: it has to repaint when it arrives.
 noctalia.state.watch("notes_sync", function(_value)
   if view == "sync" then
     render()

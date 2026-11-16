@@ -13,9 +13,11 @@ Run with: python3 bin/test_luau_fixes.py
 """
 
 import argparse
+import inspect
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import threading
@@ -311,6 +313,86 @@ class LuauContractTests(unittest.TestCase):
     def test_the_widget_has_no_unused_fonts(self):
         self.assertFalse(contains(self.widget, "loadFonts"))
         self.assertFalse(contains(self.widget, "batteryValue"))
+
+    def test_the_widget_only_redraws_when_the_state_changed(self):
+        # update() runs every second and redrawing the bar rebuilt the whole
+        # node tree even when the daemon had published the same state.
+        body = function_body(self.widget, "update")
+        self.assertTrue(
+            contains(body, "changed"),
+            "the widget redraws the bar on every tick",
+        )
+        self.assertTrue(
+            contains(function_body(self.widget, "readState"), ", false"),
+            "readState does not tell an unchanged state apart",
+        )
+
+    def test_the_service_only_sends_the_configuration_when_it_is_needed(self):
+        # The service sent `configure` every round, which is one more python3
+        # process per 20 s for values the daemon already had.
+        self.assertTrue(
+            contains(self.service, "configPayload()"),
+            "the configuration payload is not built in one place",
+        )
+        body = function_body(self.service, "needsConfigure")
+        self.assertTrue(
+            contains(body, "lastPayload") and contains(body, "pid"),
+            "the configuration is sent without checking whether it changed",
+        )
+        self.assertTrue(
+            contains(function_body(self.service, "update"), "ping()"),
+            "the round no longer asks the daemon how it is doing",
+        )
+        self.assertFalse(
+            contains(function_body(self.service, "update"), "configureDaemon()"),
+            "the round still sends the configuration unconditionally",
+        )
+
+    def test_the_cli_does_not_import_the_shortcut_engine(self):
+        # The engine, subprocess and traceback are only used by the daemon:
+        # importing them on every RPC call cost about 50 ms of the ~100 ms
+        # the process lives.
+        source = read("bin", "budsctl.py")
+        self.assertNotRegex(
+            source,
+            r"(?m)^import subprocess$",
+            "subprocess is imported on every call, the RPC path does not use it",
+        )
+        self.assertNotRegex(
+            source,
+            r"(?m)^import traceback$",
+            "traceback is imported on every call, the RPC path does not use it",
+        )
+        # Checked in a fresh interpreter: another test may already have
+        # loaded the engine in this one.
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys, budsctl; "
+                "print('local_actions' in sys.modules, "
+                "'subprocess' in sys.modules, budsctl.LocalActionEngine)",
+            ],
+            cwd=os.path.join(ROOT, "bin"),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        self.assertEqual(
+            probe.stdout.split(),
+            ["False", "False", "None"],
+            "loading the CLI pulls in the modules only the daemon needs",
+        )
+        engine, error = budsctl.local_engine_class()
+        self.assertIsNotNone(engine, "the engine is not importable: %s" % (error,))
+
+    def test_the_daemon_publishes_a_volume_moved_by_another_application(self):
+        # The panel and the bar read state.json now, so the monitor has to
+        # write the volume it reads instead of keeping it in memory only.
+        self.assertIn("publish", inspect.getsource(budsctl.BudsDaemon.refresh_volume))
+        monitor = inspect.getsource(budsctl.BudsDaemon.monitor)
+        self.assertIn("refresh_volume(publish=True)", monitor)
 
     def test_the_panel_has_no_unused_font_or_animation(self):
         self.assertFalse(contains(self.panel, "grotesk"))

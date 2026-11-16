@@ -351,6 +351,29 @@ def model_from_name(name: str | None) -> str | None:
     return None
 
 
+def _threading_unix_server():
+    """The threading Unix-stream server, on the interpreter that is there.
+
+    `socketserver.ThreadingUnixStreamServer` only exists from Python 3.12.
+    The plugin has to run on the `python3` the distribution ships (Debian 12
+    has 3.11, Ubuntu 22.04 has 3.10), and without this the daemon died at
+    start-up with an AttributeError: the whole plugin was dead on those
+    systems. The class is assembled from the same pieces the standard
+    library uses.
+    """
+    server = getattr(socketserver, "ThreadingUnixStreamServer", None)
+    if server is not None:
+        return server
+
+    class ThreadingUnixStreamServer(  # pragma: no cover - Python < 3.12
+        socketserver.ThreadingMixIn, socketserver.UnixStreamServer
+    ):
+        daemon_threads = True
+        block_on_close = False
+
+    return ThreadingUnixStreamServer
+
+
 def run(cmd, timeout=10):
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -2234,7 +2257,7 @@ class BudsDaemon:
                 os.unlink(self.socket_path)
         except OSError:
             pass
-        class Server(socketserver.ThreadingUnixStreamServer):
+        class Server(_threading_unix_server()):
             allow_reuse_address = True
             daemon_threads = True
 

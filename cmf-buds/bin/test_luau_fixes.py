@@ -13,6 +13,7 @@ Run with: python3 bin/test_luau_fixes.py
 """
 
 import argparse
+import ast
 import inspect
 import json
 import os
@@ -427,6 +428,37 @@ class LuauContractTests(unittest.TestCase):
         manifest = read("plugin.toml")
         self.assertIn("dbus-monitor", manifest)
         self.assertIn("dbus-monitor", read("README.md"))
+
+    def test_the_daemon_server_runs_before_python_312(self):
+        # `socketserver.ThreadingUnixStreamServer` only exists from Python
+        # 3.12: on Debian 12 (3.11) or Ubuntu 22.04 (3.10) the daemon died at
+        # start-up with an AttributeError and the plugin did nothing.
+        import socketserver
+
+        self.assertIs(
+            budsctl._threading_unix_server(),
+            getattr(socketserver, "ThreadingUnixStreamServer", None),
+            "the server class of the interpreter is not the one used",
+        )
+        saved = socketserver.ThreadingUnixStreamServer
+        del socketserver.ThreadingUnixStreamServer
+        try:
+            server = budsctl._threading_unix_server()
+        finally:
+            socketserver.ThreadingUnixStreamServer = saved
+        self.assertTrue(issubclass(server, socketserver.ThreadingMixIn))
+        self.assertTrue(issubclass(server, socketserver.UnixStreamServer))
+        self.assertTrue(server.daemon_threads)
+
+    def test_the_python_sources_parse_as_python_38(self):
+        # The plugin runs on the `python3` of the distribution: the syntax
+        # has to stay valid on the oldest interpreter the README promises.
+        for name in ("budsctl.py", "local_actions.py"):
+            source = read("bin", name)
+            try:
+                ast.parse(source, filename=name, feature_version=(3, 8))
+            except SyntaxError as exc:  # pragma: no cover - the test fails
+                self.fail("%s is not valid Python 3.8: %s" % (name, exc))
 
     def test_the_engine_has_no_unused_state(self):
         engine = read("bin", "local_actions.py")

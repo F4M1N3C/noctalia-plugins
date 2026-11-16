@@ -19,6 +19,7 @@
 
 ### Compatibility
 - Bumped `plugin_api` to `43` and plugin `version` to `1.1.0`.
+- **The daemon runs on Python 3.8 or newer.** The RPC server was built with `socketserver.ThreadingUnixStreamServer`, a class that only exists from Python 3.12: on Debian 12 (3.11) or Ubuntu 22.04 (3.10) the daemon died at start-up with an `AttributeError` and the plugin appeared to do nothing. The same class is now assembled from `ThreadingMixIn` and `UnixStreamServer` when the interpreter does not have it, and the syntax of both Python files is checked against 3.8 in the test suite.
 - Declared every external command the plugin runs: `python3`, `bluetoothctl`, `pactl`, `hyprctl`, `notify-send` and `dbus-monitor` (the last three are optional and degrade gracefully).
 
 ### Verification

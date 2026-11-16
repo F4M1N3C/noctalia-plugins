@@ -27,6 +27,9 @@ ALLOWED = {
     "noctalia", "ui", "panel", "barWidget",
     "require", "ipairs", "pairs", "next", "pcall", "xpcall", "print",
     "select", "tonumber", "tostring", "type", "unpack", "rawget", "rawset",
+    # Nombres estándar de Lua que aparecen en los mocks de pruebas (dofile,
+    # load, package), no globales sueltos del plugin.
+    "assert", "error", "dofile", "load", "loadfile", "package",
     "rawequal", "rawlen", "setmetatable", "getmetatable", "loadstring",
     "collectgarbage", "coroutine", "math", "string", "table", "os", "io",
     "utf8", "bit32", "debug", "self", "_G", "_VERSION",

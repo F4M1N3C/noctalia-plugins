@@ -250,6 +250,9 @@ runtime is created on demand.
   layout, with or without the brain. A layout typed into the form still wins.
 - The "add widget" editor is now the last card of the list, so entering edit mode no
   longer pushes the thumbnails down.
+- The panel is a little taller (520×750 logical px): four rows of open cards fit
+  without the right scrollbar, and longer lists scroll. The old size clipped the
+  fourth row when every widget was open.
 
 ### 2.2.2
 

@@ -18,7 +18,7 @@
 
 id = "faminec/lyrics-carousel"
 name = "Lyrics Carousel"
-version = "2.7.1"
+version = "2.8.0"
 plugin_api = 34
 author = "faminec"
 license = "MIT"
@@ -39,6 +39,10 @@ default = "music"
 [[widget]]
 id = "widget"
 entry = "widget.luau"
+
+[[service]]
+id = "service"
+entry = "service.luau"
 
 [[panel]]
 id = "panel"

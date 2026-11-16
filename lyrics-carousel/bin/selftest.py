@@ -1521,6 +1521,699 @@ def check_sung_text_is_crisp():
 
 
 
+def check_hold_repeat_helper():
+    """The pointer helper turns a held left button into repeat events."""
+    path = os.path.join(HERE, "hold-repeat.py")
+    if not os.path.isfile(path):
+        check("the hold-repeat helper exists", False, path)
+        return
+    loader = importlib.machinery.SourceFileLoader("hold_repeat_helper", path)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    helper = importlib.util.module_from_spec(spec)
+    try:
+        loader.exec_module(helper)
+    except Exception as error:  # noqa: BLE001
+        check("the hold-repeat helper loads", False, repr(error)[:160])
+        return
+    state = helper.HoldState()
+    check(
+        "pressing the left button emits down",
+        state.feed("mouse", helper.EV_KEY, helper.BTN_LEFT, 1, now=0.0)
+        == ["down mouse"],
+        "feed did not emit down",
+    )
+    check(
+        "no repeat before the initial delay",
+        state.due(0.44) == [],
+        repr(state.due(0.44)),
+    )
+    check(
+        "the first repeat arrives after 450 ms",
+        state.due(0.45) == ["repeat mouse"],
+        repr(state.due(0.45)),
+    )
+    check(
+        "repeats continue every 90 ms",
+        state.due(0.54) == ["repeat mouse"],
+        repr(state.due(0.54)),
+    )
+    check(
+        "releasing the left button emits up",
+        state.feed("mouse", helper.EV_KEY, helper.BTN_LEFT, 0, now=0.7)
+        == ["up mouse"],
+        "feed did not emit up",
+    )
+    check(
+        "repeats stop after release",
+        state.due(2.0) == [],
+        repr(state.due(2.0)),
+    )
+
+
+def check_instrumental_gap_detection():
+    """Instrumental spans are detected only for synced lyrics and when enabled."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with temporary_env({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.cfg = dict(mod.DEFAULTS)
+            app.demo = False
+            app.state = "lyrics"
+            app.synced = True
+            app.track = mod.Track("Tema", "Artista", duration=40.0)
+            app.lines = [
+                mod.LyricLine(6.0, 2.0, "primera"),
+                mod.LyricLine(14.0, 2.0, "segunda"),
+            ]
+            cases = (
+                ("before the first lyric", 1.0, True),
+                ("while a line is sung", 6.5, False),
+                ("between two separated lines", 10.0, True),
+                ("at the start of the next line", 14.0, False),
+                ("after the last line", 20.0, True),
+            )
+            for label, position, expected in cases:
+                value = app.instrumental_gap(position)
+                check(
+                    f"instrumental gap: {label}",
+                    value is expected,
+                    f"position={position} got={value!r}",
+                )
+
+            app.cfg["instrumental_marks"] = False
+            check(
+                "instrumental gaps respect the general toggle",
+                app.instrumental_gap(10.0) is False,
+                repr(app.instrumental_gap(10.0)),
+            )
+            app.cfg["instrumental_marks"] = True
+            app.synced = False
+            check(
+                "unsynced lyrics never become instrumental",
+                app.instrumental_gap(10.0) is False,
+                repr(app.instrumental_gap(10.0)),
+            )
+
+            app.synced = True
+            app.cfg["silence_threshold"] = 7
+            check(
+                "a threshold above the gap hides the notes",
+                app.instrumental_gap(10.0) is False,
+                repr(app.instrumental_gap(10.0)),
+            )
+            app.cfg["silence_threshold"] = 6
+            check(
+                "a threshold equal to the gap shows the notes",
+                app.instrumental_gap(10.0) is True,
+                repr(app.instrumental_gap(10.0)),
+            )
+            app.cfg["silence_threshold"] = 1
+            check(
+                "a threshold below the gap shows the notes",
+                app.instrumental_gap(10.0) is True,
+                repr(app.instrumental_gap(10.0)),
+            )
+
+            app.cfg["silence_threshold"] = 5
+            check(
+                "the intro uses the threshold",
+                app.instrumental_gap(2.0) is True,
+                repr(app.instrumental_gap(2.0)),
+            )
+            app.cfg["silence_threshold"] = 7
+            check(
+                "a title card longer than the intro is not a gap",
+                app.instrumental_gap(2.0) is False,
+                repr(app.instrumental_gap(2.0)),
+            )
+
+
+def instrumental_row_image(mod, variant=0, custom="", custom_on=False, size=26.0):
+    """Draws only the instrumental row on a blank canvas."""
+
+    class App:
+        pass
+
+    app = App()
+    app.theme = _HeaderTheme()
+    app.cfg = {
+        "instrumental_icon": variant,
+        "instrumental_custom": custom_on,
+        "instrumental_text": custom,
+    }
+    renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
+    renderer.app = app
+    renderer.fonts = {}
+    renderer.font_files = {"prueba": mod.FALLBACK_FONT}
+    image = mod.Image.new("RGBA", (600, 160), (0, 0, 0, 0))
+    draw = mod.ImageDraw.Draw(image)
+    renderer._measure_draw = draw
+    renderer._draw_instrumental(draw, 80.0, size, "prueba", (220, 60, 60))
+    return image
+
+
+def check_instrumental_variants():
+    """The notes row is vectorial, rotates variants and accepts custom text.
+
+    The glyphs cannot come from the font: with a typeface without `♪` the
+    row came out as empty boxes, which is exactly what the user saw with
+    NType 82 Mono. The four variants are drawn with Pillow primitives.
+    """
+    mod = image_module()
+    shots = []
+    for variant in range(4):
+        image = instrumental_row_image(mod, variant)
+        box = image.getbbox()
+        check(f"the instrumental variant {variant} draws something", box is not None, str(box))
+        if box is not None:
+            center = (box[0] + box[2]) / 2.0
+            check(
+                f"the instrumental variant {variant} is centered",
+                abs(center - 300.0) < 30.0,
+                "center=%.1f" % center,
+            )
+        shots.append(image.tobytes())
+    check(
+        "the four instrumental variants look different",
+        len(set(shots)) == 4,
+        "%d distinct" % len(set(shots)),
+    )
+    wrapped = instrumental_row_image(mod, 9)
+    check("an out-of-range icon rotates inside the variants", wrapped.tobytes() == shots[1])
+    custom = instrumental_row_image(mod, 0, custom="air", custom_on=True)
+    check("the custom text replaces the notes", custom.tobytes() != shots[0])
+    check(
+        "the custom text is centered",
+        custom.getbbox() is not None
+        and abs((custom.getbbox()[0] + custom.getbbox()[2]) / 2.0 - 300.0) < 30.0,
+        str(custom.getbbox()),
+    )
+    empty = instrumental_row_image(mod, 0, custom="  ", custom_on=True)
+    check("an empty custom text falls back to the notes", empty.tobytes() == shots[0])
+    unused = instrumental_row_image(mod, 0, custom="air", custom_on=False)
+    check("the saved text is ignored while the custom switch is off", unused.tobytes() == shots[0])
+
+
+# --- marker styles and header alignment (U6) -----------------------------
+
+MARKER_STYLE_COUNT = 6
+
+
+def marker_image(mod, style, text="hello", size=24.0):
+    """Draws only the active-line marker on a blank canvas."""
+    renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
+    renderer.fonts = {}
+    renderer.font_files = {"prueba": mod.FALLBACK_FONT}
+    image = mod.Image.new("RGBA", (420, 140), (0, 0, 0, 0))
+    draw = mod.ImageDraw.Draw(image)
+    renderer._measure_draw = draw
+    renderer._draw_marker(draw, text, 70.0, size, style, "prueba", (230, 60, 60, 255))
+    return image
+
+
+def check_marker_styles():
+    """The six marker styles are vectorial and each one looks different.
+
+    The marker cannot be a font glyph: `♪` is missing in many typefaces
+    and the marker would silently disappear. The drawing also has to stay
+    on the left of the active line and an out-of-range value has to wrap
+    instead of drawing nothing.
+    """
+    mod = image_module()
+    renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
+    renderer.fonts = {}
+    renderer.font_files = {"prueba": mod.FALLBACK_FONT}
+    reference = mod.Image.new("RGBA", (420, 140), (0, 0, 0, 0))
+    brush = mod.ImageDraw.Draw(reference)
+    renderer._measure_draw = brush
+    renderer._draw_centered(brush, "hello", 70.0, 24.0, (230, 60, 60, 255), "prueba")
+    text_box = reference.getbbox()
+    check("the marker test draws the active line", text_box is not None, str(text_box))
+
+    shots = []
+    for style in range(MARKER_STYLE_COUNT):
+        image = marker_image(mod, style)
+        box = image.getbbox()
+        check(f"the marker style {style} draws something", box is not None, str(box))
+        if box is not None and text_box is not None:
+            check(
+                f"the marker style {style} stays left of the text",
+                box[2] <= text_box[0] + 1,
+                "marker=%r text=%r" % (box, text_box),
+            )
+        shots.append(image.tobytes())
+    check(
+        "the six marker styles look different",
+        len(set(shots)) == MARKER_STYLE_COUNT,
+        "%d distinct of %d" % (len(set(shots)), MARKER_STYLE_COUNT),
+    )
+    wrapped = marker_image(mod, MARKER_STYLE_COUNT + 3)
+    check(
+        "an out-of-range marker style wraps",
+        wrapped.tobytes() == shots[3],
+        "style %d must equal style 3" % (MARKER_STYLE_COUNT + 3),
+    )
+
+
+class _HeaderTheme:
+    background = (12, 12, 18)
+    foreground = (240, 240, 245)
+    past = (110, 110, 120)
+    bright = (240, 240, 245)
+    faint = (150, 150, 160)
+
+
+def header_image(mod, header_pos, size=20.0):
+    """Draws only the header block on a blank canvas."""
+
+    class App:
+        pass
+
+    app = App()
+    app.theme = _HeaderTheme()
+    app.track = types.SimpleNamespace(title="Hello there", artist="The Artist")
+    app.tr = lambda key: key
+    app.cfg = {"header_pos": header_pos}
+    renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
+    renderer.app = app
+    renderer.fonts = {}
+    renderer.font_files = {"prueba": mod.FALLBACK_FONT}
+    image = mod.Image.new("RGBA", (900, 240), (0, 0, 0, 0))
+    draw = mod.ImageDraw.Draw(image)
+    renderer._measure_draw = draw
+    renderer._draw_header(draw, 900, 40.0, size, "prueba", (12, 12, 18))
+    return image
+
+
+def check_header_alignment():
+    """The header follows `header_pos` and the separator stays full width."""
+    mod = image_module()
+    size = 20.0
+    rule_y = int(40.0 + size * 2.0)
+    boxes = {}
+    for position, name in ((0, "left"), (1, "center"), (2, "right")):
+        image = header_image(mod, position)
+        text_area = image.crop((0, 0, 900, rule_y))
+        box = text_area.getbbox()
+        check(f"the {name} header draws the title", box is not None, str(box))
+        if box is None:
+            continue
+        boxes[position] = box
+        if position == 0:
+            check(
+                "the left header starts at the left margin",
+                box[0] < 90,
+                str(box),
+            )
+        elif position == 1:
+            center = (box[0] + box[2]) / 2.0
+            check(
+                "the centered header is centered",
+                abs(center - 450.0) < 40.0,
+                "center=%.1f" % center,
+            )
+        else:
+            check(
+                "the right header ends at the right margin",
+                box[2] > 810,
+                str(box),
+            )
+        rule = image.crop((0, rule_y, 900, rule_y + 3))
+        rule_box = rule.getbbox()
+        check(
+            f"the {name} header keeps the full-width rule",
+            rule_box is not None and rule_box[0] < 60 and rule_box[2] > 840,
+            str(rule_box),
+        )
+    check(
+        "the three header positions align differently",
+        len({tuple(box) for box in boxes.values()}) == 3,
+        str(boxes),
+    )
+
+
+def check_frame_signature_includes_visual_settings():
+    """The cached frame is dropped when a visual setting changes."""
+    mod = image_module()
+
+    def signature(**overrides):
+        class App:
+            pass
+
+        app = App()
+        app.theme = _SceneTheme()
+        app.track = types.SimpleNamespace(title="Song", artist="Artist", duration=180.0)
+        app.state = "lyrics"
+        app.lines = [_SceneLine("one"), _SceneLine("two")]
+        app.karaoke = True
+        app.karaoke_brain = True
+        app.position = lambda: 5.0
+        app.scroll_state = lambda scroll_position: (0, 1, 0.0)
+        app.cfg = {
+            "visible_above": 1,
+            "visible_below": 1,
+            "direction": "down",
+            "spacing": 2,
+            "marker": True,
+            "karaoke": True,
+            "footer": False,
+            "font_family": "Departure Mono",
+            "font_size": 22,
+            "active_scale": 1.35,
+            "header": True,
+            "hints": False,
+            "ghost": True,
+            "instrumental_marks": False,
+            "instrumental_icon": 0,
+            "instrumental_custom": False,
+            "instrumental_text": "",
+            "marker_style": 0,
+            "header_pos": 0,
+            "pin": False,
+        }
+        app.cfg.update(overrides)
+        renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
+        renderer.app = app
+        return renderer._frame_signature((200, 50, 60))
+
+    base = signature()
+    check("the frame signature is stable when nothing changes", signature() == base)
+    check(
+        "the frame signature changes with the marker style",
+        signature(marker_style=2) != base,
+        "marker_style is not part of the signature",
+    )
+    check(
+        "the frame signature changes with the header position",
+        signature(header_pos=2) != base,
+        "header_pos is not part of the signature",
+    )
+    check(
+        "the frame signature changes with the pin state",
+        signature(pin=True) != base,
+        "pin is not part of the signature",
+    )
+
+
+def _lua_block(text, header):
+    """Body of a top-level Lua table declared as `<header> = { ... }`."""
+    found = re.search(re.escape(header) + r"\s*=\s*\{(.*?)\n\}", text, re.S)
+    return found.group(1) if found else ""
+
+
+def check_visual_settings_allowlists():
+    """`marker_style`, `header_pos` and `pin` are registered on all sides.
+
+    A setting missing from one of the allowlists is a dead control: the
+    panel writes it and the window or the helper silently ignores it.
+    """
+    lib_path = os.path.join(os.path.dirname(HERE), "lib", "settings.luau")
+    with open(lib_path, encoding="utf-8") as handle:
+        lib = handle.read()
+    defaults = _lua_block(lib, "local DEFAULTS")
+    bools = _lua_block(lib, "local BOOL_KEYS")
+    ints = _lua_block(lib, "local INT_KEYS")
+    limits = _lua_block(lib, "local LIMITS")
+    for key, default in (("marker_style", "0"), ("header_pos", "0"), ("pin", "false")):
+        check(
+            f"lib/settings.luau defaults `{key}`",
+            re.search(rf"\b{key}\s*=\s*{default}\b", defaults) is not None,
+            defaults[:160],
+        )
+    check(
+        "lib/settings.luau declares `pin` as a bool",
+        re.search(r"\bpin\s*=\s*true", bools) is not None,
+        bools[:160],
+    )
+    for key in ("marker_style", "header_pos"):
+        check(
+            f"lib/settings.luau declares `{key}` as an int",
+            re.search(rf"\b{key}\s*=\s*true", ints) is not None,
+            ints[:160],
+        )
+    for key, low, high in (("marker_style", 0, 5), ("header_pos", 0, 2)):
+        check(
+            f"lib/settings.luau limits `{key}`",
+            re.search(rf"\b{key}\s*=\s*\{{\s*{low}\s*,\s*{high}\s*\}}", limits) is not None,
+            limits[:200],
+        )
+
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("set_setting_visual", HELPER)
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    for key in ("marker_style", "header_pos", "pin"):
+        check(f"set-setting.py allows `{key}`", key in helper.ALLOWED, str(sorted(helper.ALLOWED)))
+    check("set-setting.py treats `marker_style` as an int", "marker_style" in helper.INT_KEYS)
+    check("set-setting.py treats `header_pos` as an int", "header_pos" in helper.INT_KEYS)
+    check("set-setting.py treats `pin` as a bool", "pin" in helper.BOOL_KEYS)
+
+    mod = script_module()
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-visual-") as temporary:
+        with temporary_env(
+            {"XDG_CACHE_HOME": os.path.join(temporary, "cache")}
+        ), temporary_state(temporary) as destination:
+            os.makedirs(os.path.join(destination, "plugins", "data"), exist_ok=True)
+            with open(
+                os.path.join(destination, "settings.toml"), "w", encoding="utf-8"
+            ) as handle:
+                handle.write(
+                    '[plugin_settings."faminec/lyrics-carousel"]\n'
+                    "marker_style = 9\n"
+                    "header_pos = 7\n"
+                    'pin = "true"\n'
+                )
+            cfg = mod.load_settings()
+        check(
+            "the engine clamps marker_style like the panel",
+            cfg.get("marker_style") == 5,
+            str(cfg.get("marker_style")),
+        )
+        check(
+            "the engine clamps header_pos like the panel",
+            cfg.get("header_pos") == 2,
+            str(cfg.get("header_pos")),
+        )
+        check(
+            "the engine reads pin as a boolean",
+            cfg.get("pin") is True,
+            str(cfg.get("pin")),
+        )
+
+
+def check_pin_follows_the_setting():
+    """`pin` is the desired state: it is dispatched, not toggled blind.
+
+    The window may not exist yet when the settings are read, so a failed
+    attempt is retried for a few seconds; once it sticks, only a setting
+    change (or a manual unpin) triggers a new dispatch.
+    """
+    mod = script_module()
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    original_run = mod.subprocess.run
+    original_info = mod.window_info
+    try:
+        mod.subprocess.run = lambda args, **kwargs: calls.append(list(args)) or Result()
+        app = object.__new__(mod.LyricsCarousel)
+        app.demo = False
+        app.cfg = {"pin": True}
+        app.log = lambda message: None
+        app._last_pin_check = 0.0
+
+        mod.window_info = lambda: None
+        app._sync_pin(10.0)
+        check("without a window nothing is dispatched", not calls, str(calls))
+
+        mod.window_info = lambda: (1200, 880, True)
+        app._sync_pin(10.5)
+        check("an already pinned window is not touched again", not calls, str(calls))
+
+        # The steady state re-checks every two seconds (not twice a second):
+        # it is only to notice a manual unpin, not to chase the window.
+        mod.window_info = lambda: (1200, 880, False)
+        app._sync_pin(12.6)
+        check(
+            "the pin is applied when the window is not pinned",
+            len(calls) == 1,
+            str(calls),
+        )
+        expression = calls[0][-1] if calls else ""
+        check(
+            "the pin uses an explicit action and the window class",
+            'action="on"' in expression and "noctalia-lyrics-carousel" in expression,
+            expression,
+        )
+        check(
+            "the pin is dispatched with hyprctl",
+            bool(calls) and calls[0][:2] == ["hyprctl", "dispatch"],
+            str(calls[:1]),
+        )
+
+        # The window still reports the old state: the dispatch is retried.
+        app._last_pin_check = 0.0
+        app._sync_pin(13.2)
+        check("a pin that does not stick is retried", len(calls) == 2, str(calls))
+
+        # The retries stop after a few seconds instead of hammering hyprctl.
+        calls.clear()
+        app._pin_attempts = 0
+        app._pin_target = None
+        for step in range(20):
+            app._last_pin_check = 0.0
+            app._sync_pin(100.0 + step)
+        check(
+            "the pin retries stop after a few seconds",
+            0 < len(calls) <= 10,
+            "%d dispatches" % len(calls),
+        )
+
+        calls.clear()
+        mod.window_info = lambda: (1200, 880, True)
+        app._last_pin_check = 0.0
+        app._pin_giveup = False
+        app._pin_attempts = 0
+        app._pin_verified_at = 0.0
+        app._sync_pin(200.0)
+        check("a pinned window stops the retries", not calls, str(calls))
+
+        app.cfg["pin"] = False
+        mod.window_info = lambda: (1200, 880, True)
+        app._last_pin_check = 0.0
+        app._sync_pin(201.0)
+        check(
+            "disabling pin unpins the window",
+            len(calls) == 1 and 'action="off"' in calls[0][-1],
+            str(calls),
+        )
+
+        def broken(args, **kwargs):
+            raise OSError("hyprctl missing")
+
+        mod.subprocess.run = broken
+        app.cfg["pin"] = True
+        app._last_pin_check = 0.0
+        app._pin_attempts = 0
+        app._pin_target = None
+        try:
+            app._sync_pin(202.0)
+            survived = True
+        except OSError:
+            survived = False
+        check("a broken dispatch does not raise", survived)
+    finally:
+        mod.subprocess.run = original_run
+        mod.window_info = original_info
+
+
+def check_hints_list_every_shortcut():
+    """The hints row includes every key handled by the window."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with temporary_env({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            expected_by_language = {
+                "en": ("q", "space", "d", "k", "h", "m", "g", "f", "t", "c", "+", "-", "r"),
+                "es": ("q", "espacio", "d", "k", "h", "m", "g", "f", "t", "c", "+", "-", "r"),
+            }
+            for language in ("en", "es"):
+                hints = mod.TEXTS[language]["hints"]
+                full = hints[0] if hints else ""
+                missing = [
+                    key for key in expected_by_language[language]
+                    if f"[{key}]" not in full
+                ]
+                check(
+                    f"the {language} hints list every shortcut",
+                    not missing,
+                    "missing=%s hints=%r" % (missing, full),
+                )
+                check(
+                    f"the {language} hints do not advertise arrow keys",
+                    "←" not in full and "→" not in full,
+                    full,
+                )
+                check(
+                    f"the {language} hints label h as the header",
+                    "header" in full.lower() or "cabecera" in full.lower(),
+                    full,
+                )
+
+
+def check_theme_reload_by_signal():
+    """SIGUSR2 reloads the Kitty theme and invalidates the cached frame."""
+    with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
+        with temporary_env({"XDG_CACHE_HOME": cache}):
+            mod = script_module()
+            app = object.__new__(mod.LyricsCarousel)
+            app.args = types.SimpleNamespace(debug=False)
+            app.theme_reload_requested = False
+            theme_calls = []
+            app.theme = types.SimpleNamespace(
+                reload=lambda: theme_calls.append(True),
+            )
+            invalidated = []
+            app.image = types.SimpleNamespace(
+                invalidate_frame=lambda: invalidated.append(True),
+            )
+
+            app._on_theme_signal(signal.SIGUSR2, None)
+            check(
+                "the theme signal leaves the reload pending",
+                app.theme_reload_requested is True,
+                repr(app.theme_reload_requested),
+            )
+            check(
+                "the signal handler does not read the theme in the signal context",
+                theme_calls == [],
+                "calls=%s" % (theme_calls,),
+            )
+            check(
+                "the requested theme reload is handled once",
+                app._consume_theme_reload() is True
+                and theme_calls == [True]
+                and invalidated == [True]
+                and app.theme_reload_requested is False,
+                "calls=%s invalidated=%s flag=%s"
+                % (theme_calls, invalidated, app.theme_reload_requested),
+            )
+            check(
+                "without a theme signal nothing is reloaded",
+                app._consume_theme_reload() is False
+                and theme_calls == [True]
+                and invalidated == [True],
+                "calls=%s invalidated=%s" % (theme_calls, invalidated),
+            )
+
+
+def check_theme_refresh_is_event_driven():
+    """The backend never polls the Kitty theme files."""
+    try:
+        with open(SCRIPT, encoding="utf-8") as handle:
+            source = handle.read()
+    except OSError as error:
+        check("the backend source can be read", False, repr(error))
+        return
+    check(
+        "the backend has no periodic theme reload",
+        "self.last_reload > 15" not in source
+        and "self.theme.reload()" not in source.split("def _poll_data", 1)[1].split(
+            "def _position", 1
+        )[0],
+        "the old 15-second theme polling is still present",
+    )
+    check(
+        "the backend handles SIGUSR2 as a theme refresh event",
+        "SIGUSR2" in source and "_on_theme_signal" in source,
+        "SIGUSR2 bridge is missing",
+    )
+
+
 def check_reload_by_signal():
     """SIGUSR1 reloads the lyrics in the open window after clearing the cache."""
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
@@ -4066,6 +4759,17 @@ def main(argv):
     check_smooth_curve()
     check_sung_text_is_crisp()
     check_reload_by_signal()
+    check_theme_reload_by_signal()
+    check_theme_refresh_is_event_driven()
+    check_hints_list_every_shortcut()
+    check_instrumental_gap_detection()
+    check_instrumental_variants()
+    check_marker_styles()
+    check_header_alignment()
+    check_frame_signature_includes_visual_settings()
+    check_visual_settings_allowlists()
+    check_pin_follows_the_setting()
+    check_hold_repeat_helper()
     check_real_terminal_size()
     check_state_paths()
     check_without_text_mode()

@@ -159,5 +159,16 @@
   "custom_color": "Color personalizado",
   "color_placeholder": "#rrggbb",
   "glyph_placeholder": "music",
-  "write_failed": "No se pudo guardar el ajuste."
+  "write_failed": "No se pudo guardar el ajuste.",
+  "instrumental_marks": "Marcas instrumentales",
+  "instrumental_marks_desc": "Muestra notas musicales durante las pausas instrumentales.",
+  "instrumental_icon_tooltip": "Cambiar el icono instrumental",
+  "instrumental_custom_tooltip": "Texto instrumental propio · clic para activar · clic derecho para editar",
+  "instrumental_text_placeholder": "Texto propio (máx. 24 caracteres)",
+  "silence_threshold": "Umbral de silencio (s)",
+  "marker_style_tooltip": "Cambiar el estilo del marcador de la línea activa",
+  "header_pos_tooltip": "Cambiar la alineación de la cabecera",
+  "pin": "Siempre encima",
+  "bar_tooltip": "Lyrics Carousel · clic izquierdo: panel · clic derecho: abrir ventana",
+  "karaoke_brain": "Cerebro de karaoke"
 }

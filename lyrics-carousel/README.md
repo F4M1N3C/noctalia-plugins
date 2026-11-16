@@ -11,16 +11,16 @@ noctalia msg plugins source add dev path https://github.com/F4M1N3C/noctalia-plu
 noctalia msg plugins enable faminec/lyrics-carousel
 ```
 
-Then add the **Lyrics Carousel** bar widget from Noctalia's widget picker. Clicking it
-opens the panel (attached to the widget) and holds every setting of the plugin; the
-lyrics window itself is opened from the panel's **Open the carousel** button.
+Then add the **Lyrics Carousel** bar widget from Noctalia's widget picker. Left
+clicking it opens the panel (attached to the widget), which holds every setting of
+the plugin; right clicking opens the lyrics window directly.
 
 ## Plugin
 
 | Field | Value |
 | --- | --- |
 | ID | `faminec/lyrics-carousel` |
-| Entries | Bar widget: `widget`; panel: `panel` |
+| Entries | Bar widget: `widget`; panel: `panel`; event bridge: `service` |
 
 ## Requirements
 
@@ -36,13 +36,18 @@ The following executables must be installed and available on `PATH`:
 | --- | --- | --- |
 | `kitty` | `kitty` | The terminal the lyrics window runs in, and the graphics protocol the image renderer draws with. |
 | `hyprland` | `hyprland` | The compositor. The plugin only runs on Hyprland. |
-| `hyprctl` | `hyprland` | Lists, moves, resizes, focuses and closes the lyrics window (panel geometry, self-test). |
+| `hyprctl` | `hyprland` | Lists, moves, resizes, focuses, pins and closes the lyrics window (panel geometry, pin, self-test). |
 | `playerctl` | `playerctl` | Reads the active MPRIS player so the plugin knows what is playing. |
 | `python3` | `python` | Runs the carousel script (`bin/lyrics-carousel`) and the settings helper (`bin/set-setting.py`). |
 | `fc-match` | `fontconfig` | Resolves the configured font family to a file for Pillow (image mode accepts any installed font). |
 
 `python3` needs Pillow (`python-pillow`) for the image renderer. The plugin never
 installs anything: every dependency has to be there before the plugin is enabled.
+
+Pressing and holding a size stepper repeats the step. The panel learns the press and
+release from `/dev/input` with `bin/hold-repeat.py` (read-only, no root: the user has
+to be in the `input` group). Where that is not possible, the helper exits and the
+steppers keep their normal click-by-click behavior.
 
 The lyrics themselves come from the Noctalia Lyrics plugin's source adapter
 (`lyric_sources.py`), so the same providers and the same configuration are reused:
@@ -51,8 +56,8 @@ or Musixmatch.
 
 ## Usage
 
-Add the `widget` bar icon and click it to open the lyrics window. The panel opens
-attached to the widget and holds every setting of the plugin.
+Add the `widget` bar icon: left click opens the settings panel attached to it, right
+click opens the lyrics window directly. The panel holds every setting of the plugin.
 
 The panel can also be opened directly:
 
@@ -63,7 +68,7 @@ noctalia msg panel-toggle faminec/lyrics-carousel:panel
 ### Image rendering mode
 
 The window is drawn as a transparent PNG the size of the window
-(1200×820 px by default) using Pillow and the kitty graphics protocol,
+(1200×880 px by default) using Pillow and the kitty graphics protocol,
 so the desktop wallpaper stays visible through it. The active line is drawn
 larger, the scroll is pixel-accurate and any font works. The trade-off
 is that the text cannot be selected.
@@ -90,11 +95,21 @@ by then, the lookup is retried a minute later. The result is cached in
 | `space` | Pause / resume |
 | `d` | Reverse the scroll direction |
 | `k` | Toggle the karaoke effect |
+| `h` | Show / hide the header |
+| `m` | Show / hide the active-line marker |
+| `g` | Soft transition between lines on / off |
+| `f` | Show / hide the footer (time and progress bar) |
+| `t` | Keyboard hints on / off |
+| `c` | Cycle the accent colour |
+| `+` / `=` | Grow the lyrics one pixel |
+| `-` / `_` | Shrink the lyrics one pixel |
 | `r` | Look the lyrics up again |
 
-`d` and `k` write their value to `settings.toml`, so the change survives a restart
-and shows up in the settings page. Writing that file makes Noctalia reload the
-configuration, so a panel that happened to be open at that moment is closed.
+The hints row at the bottom shows every shortcut that fits in the window (the
+longest list first, then shorter ones). `d`, `k`, `h`, `m`, `g`, `f`, `t`, `c`
+and the font size write their value to `settings.toml`, so the change survives a
+restart and shows up in the settings page. Writing that file makes Noctalia reload
+the configuration, so a panel that happened to be open at that moment is closed.
 
 ## Settings
 
@@ -121,17 +136,19 @@ it belongs to the bar widget, not to the lyrics window.
 | `font_family` | `string` | `Departure Mono` | Font used for the lyrics. |
 | `font_size` | `int` | `22` | Size of the lyrics, in pixels. |
 | `direction` | `select` | `down` | `down`: the lyrics come in from the top. `up`: from the bottom. |
-| `marker` | `bool` | `false` | Shows a `>` next to the active line. |
+| `marker` | `bool` | `false` | Shows a vector marker next to the active line. |
+| `marker_style` | `int` | `0` | Marker shape: `0` chevron, `1` bullet, `2` bar, `3` note, `4` block, `5` arrow. The tiny button next to the marker switch rotates it and remembers the choice. |
 | `karaoke` | `bool` | `true` | Lights the active line as it is sung, letter by letter. |
 | `karaoke_brain` | `bool` | `true` | Intelligent karaoke control (global, persistent). When `karaoke` is on, the panel shows a brain button next to the Karaoke glow toggle: with it on (intelligent, like the `lyrics` plugin), karaoke uses per-word/per-character glow only for lines with precise word timing and highlights lines without usable word timing at once with no progressive glow. Turn it off to use the classic ("boring") progressive karaoke for all lines. |
 | `footer` | `bool` | `false` | Elapsed time and a progress bar. |
 | `hints` | `bool` | `false` | Keyboard hints at the bottom. |
 | `header` | `bool` | `false` | Title, artist and status tags. |
+| `header_pos` | `int` | `0` | Header alignment: `0` left, `1` centered, `2` right. The separator always spans the full width. |
 | `spacing` | `int` | `2` | Space between the lines. |
 | `ghost` | `bool` | `true` | Smooth ~0.9 s slide between lines. Off: the change is instant. |
 | `offset_ms` | `int` | `0` | Offset to fine-tune the synchronisation. |
 | `width` | `int` | `1200` | Window width. |
-| `height` | `int` | `820` | Window height. |
+| `height` | `int` | `880` | Window height. |
 | `anchor` | `select` | `center` | Window anchor: `center`, `top-left`, `bottom-right`… or `custom` (uses custom_x/custom_y). |
 | `custom_x` | `int` | `100` | Custom horizontal position (only with anchor = custom). |
 | `custom_y` | `int` | `100` | Custom vertical position (only with anchor = custom). |
@@ -140,6 +157,12 @@ it belongs to the bar widget, not to the lyrics window.
 | `active_scale` | `double` | `1.35` | Size multiplier of the line being sung. |
 | `visible_above` | `int` | `6` | Lines visible above the active one. |
 | `visible_below` | `int` | `6` | Lines visible below the active one. |
+| `instrumental_marks` | `bool` | `true` | Show a row of notes during instrumental gaps, explicit empty LRC lines and tracks without lyrics. |
+| `instrumental_icon` | `int` | `0` | Notes variant (`0`–`3`). The tiny button next to the instrumental switch rotates it. |
+| `instrumental_text` | `string` | `""` | Custom row text (up to 24 characters, no line breaks) that replaces the notes when `instrumental_custom` is on. |
+| `instrumental_custom` | `bool` | `false` | Use the saved custom text instead of the notes glyphs. |
+| `silence_threshold` | `int` | `4` | A gap between timed lines longer than this (in seconds, `1`–`15`) counts as instrumental. |
+| `pin` | `bool` | `false` | Keep the lyrics window always on top. It is the desired state: the window applies it (and re-applies it after a manual unpin). |
 | `glyph` | `glyph` | `music` | Bar icon (only in the settings page). |
 
 The position and the size are applied live to the running window, without recreating
@@ -193,7 +216,64 @@ noctalia msg plugin faminec/lyrics-carousel:widget all set font_family="Departur
 poured into `settings.toml` when the panel is closed and is visible in the settings
 page afterwards.
 
+The `service` entry is not meant to be driven by hand: it listens for the
+`colors-changed` and `theme-applied` events and sends `SIGUSR2` to the running
+window. See [Live colors](#live-colors).
+
+## Live colors
+
+The window reads its palette from the Kitty theme that Noctalia generates, so a
+wallpaper or theme change recolors it in place: no polling and no need to reopen
+the window.
+
+Noctalia fires its global `colors_changed` hook only after the terminal templates
+have been written, which is exactly when the new colors are on disk. Wire the hook
+once by dropping a file in the user config directory (any `*.toml` under
+`~/.config/noctalia/` joins the config stack):
+
+```toml
+# ~/.config/noctalia/lyrics-carousel-hooks.toml
+[hooks]
+colors_changed = "noctalia msg plugin faminec/lyrics-carousel:service all colors-changed"
+```
+
+The service forwards the event to the window process, which reloads the generated
+colors and invalidates its cached frame. If the window is closed the signal helper
+is a no-op (the PID file is checked against `/proc` first), so leaving the hook
+enabled costs nothing.
+
 ## Changelog
+
+### 2.8.0
+
+- **Right click opens the window**: the bar widget opens the lyrics window with a
+  right click and the panel with a left click. The launcher moved to
+  `lib/launch.luau`, so the widget and the panel create the same window.
+- **Live colours without polling**: a Noctalia `colors_changed` hook calls the
+  `service` entry, which sends `SIGUSR2` to the running window; it reloads the
+  generated Kitty theme and repaints at once. The blind 15 s reload is gone. See
+  [Live colors](#live-colors).
+- **Every shortcut is in the hints**: the hints row lists the 13 implemented keys,
+  falling back to a shorter list when the window is narrow, and the README table
+  matches the real key map.
+- **Marker styles and header position**: `marker_style` (six vector shapes, so the
+  marker does not depend on the font) and `header_pos` (left, centered, right,
+  with a full-width separator), with two tiny rotating buttons in the panel that
+  remember the chosen value.
+- **Always on top**: `pin` keeps the window pinned. It is a desired state, not an
+  action: the window applies it with an explicit `hl.dsp.window.pin` action and
+  retries for a few seconds if the window is still appearing.
+- **Instrumental row**: a vector row of notes (no font glyphs, so it cannot
+  turn into empty boxes) replaces the last lyric during instrumental gaps,
+  explicit empty LRC lines and tracks without lyrics; the variant rotates and a
+  custom text can replace the notes. `silence_threshold`
+  sets what counts as a gap.
+- **Press and hold the size steppers**: `bin/hold-repeat.py` reads the mouse
+  buttons from `/dev/input` and repeats the step while the button is held.
+  Without permission to read evdev the steppers keep their normal click.
+- **Panel honours saved values**: the panel reads the stored `settings.toml`
+  through `set-setting.py read`, so sliders and switches show what the window is
+  using instead of the defaults.
 
 ### 2.7.1
 
@@ -519,11 +599,13 @@ python3 ~/.local/share/noctalia/plugins/lyrics-carousel/tools/check-verifier.py
   `~/.cache/lyrics-carousel`, and the plugin data directory (`overrides.json`,
   `window.pid`). The settings are written to Noctalia's `settings.toml`.
 - **Commands spawned:** `kitty` (the lyrics window, launched through the Hyprland
-  Lua API), `python3` (the carousel script, the settings helper and the source
-  adapter), `playerctl` (player metadata and play/pause), `hyprctl` (`clients -j`
-  and `dispatch`), `fc-match` (the font family for Pillow), `pkill` (the previous
-  lyrics window, matched on `noctalia-lyrics-carousel --title lyrics`) and
-  `sleep` (the delay between creating the window and applying its geometry).
+  Lua API), `python3` (the carousel script, the settings helper, the source
+  adapter, `window-control.py` for stopping the previous window by PID and
+  `hold-repeat.py` for the press-and-hold steppers), `playerctl` (player metadata
+  and play/pause), `hyprctl` (`clients -j`, `dispatch` for the geometry and the
+  pin) and `sleep` (the delay between creating the window and applying its
+  geometry). `fc-match` resolves the font family for Pillow. No `pkill -f`
+  pattern is used: the previous window is stopped by its PID.
 
 ### Limitations
 
@@ -550,3 +632,16 @@ python3 ~/.local/share/noctalia/plugins/lyrics-carousel/tools/check-verifier.py
 - `lyrics-carousel --diagnostics` prints the state of the running script as JSON.
 - `bin/selftest.py` checks the installation assumptions without touching the real
   state. See `## Tests`.
+
+## Instrumental marks
+
+When enabled, the carousel shows musical notes during instrumental gaps: an
+empty timed LRC line, a track without lyrics, or a gap between timed lines longer
+than `silence_threshold` seconds. The notes are drawn with Pillow primitives, so
+they look the same with every font (`♪` is not in every typeface). The variant
+rotates from the panel and a saved custom text can replace the notes.
+
+## Bar widget quick actions
+
+- Left click: open/toggle the panel
+- Right click: open the lyrics window

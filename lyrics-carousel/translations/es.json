@@ -19,30 +19,34 @@
   "anchor_top_center": "sup centro",
   "anchor_top_left": "sup izq",
   "anchor_top_right": "sup der",
+  "anchor_custom": "Personalizada…",
   "close": "Cerrar",
   "direction": "Sentido",
   "down": "abajo",
-  "equalizer": "Visualizador de sonido",
+  "font_family": "Fuente",
+  "font_custom": "Otra fuente…",
+  "font_custom_name": "Nombre de la fuente",
+  "font_hint": "Cualquier fuente instalada vale: se aplica al vuelo.",
+  "font_placeholder": "Departure Mono",
   "font_size": "Tamaño",
   "footer": "Barra de tiempo",
-  "ghost": "Transiciones suaves",
+  "ghost": "Transición suave entre líneas",
+  "glyph": "Icono de la barra",
   "header": "Cabecera (título / artista)",
   "height": "Alto",
-  "hint": "Los cambios se aplican en caliente. En modo texto la tipografía reinicia la ventana.",
   "hints": "Atajos de teclado",
-  "image_only_fonts": "Solo en modo imagen (proporcionales):",
   "karaoke": "Efecto karaoke",
   "launch": "Abrir el carrusel",
   "launch_failed": "No se pudo abrir la terminal.",
   "marker": "Marca de la línea activa",
-  "mode_image": "imagen",
-  "mode_text": "texto",
+  "offset_ms": "Desfase de la letra (ms)",
   "open_settings": "Abrir ajustes",
-  "render_mode": "Renderizado",
+  "section_color": "Color",
   "section_display": "Presentación",
   "section_font": "Tipografía",
   "section_lyrics": "Letra",
   "section_window": "Ventana",
+  "spacing": "Espaciado entre líneas",
   "settings": {
     "accent": {
       "description": "El color primario sigue al fondo de pantalla; el resto son colores ANSI del tema.",
@@ -57,16 +61,20 @@
       "custom": "Personalizado"
     },
     "active_scale": {
-      "description": "Multiplicador de tamaño de la línea que se está cantando (solo modo imagen).",
+      "description": "Multiplicador de tamaño de la línea que se está cantando.",
       "label": "Tamaño de la línea activa"
     },
     "anchor": {
       "description": "Dónde se abre la ventana: center, top-left, bottom-right...",
       "label": "Posición de la ventana"
     },
-    "animation_ms": {
-      "description": "Duración del desplazamiento entre líneas, en milisegundos. 0 = instantáneo.",
-      "label": "Transición"
+    "custom_x": {
+      "description": "Posición horizontal personalizada (solo con posición personalizada)",
+      "label": "X"
+    },
+    "custom_y": {
+      "description": "Posición vertical personalizada (solo con posición personalizada)",
+      "label": "Y"
     },
     "custom_color": {
       "description": "Color hexadecimal (#rrggbb) cuando el acento es «custom».",
@@ -78,12 +86,8 @@
       "label": "Sentido del carrusel",
       "up": "Arriba"
     },
-    "equalizer": {
-      "description": "Muestra las barras animadas.",
-      "label": "Visualizador de sonido"
-    },
     "font_family": {
-      "description": "Fuente de la letra. En modo imagen admite cualquier fuente; en modo texto kitty solo acepta monoespaciadas.",
+      "description": "Fuente de la letra. Se admite cualquier fuente instalada.",
       "label": "Tipografía"
     },
     "font_size": {
@@ -95,8 +99,8 @@
       "label": "Barra de tiempo"
     },
     "ghost": {
-      "description": "Atenúa el bloque mientras se mueve para un acabado más suave.",
-      "label": "Transiciones suaves"
+      "description": "Desplazamiento suave (~0.9 s) al cambiar de línea. Desactivado, el cambio es instantáneo.",
+      "label": "Transición suave entre líneas"
     },
     "glyph": {
       "description": "Icono que se muestra en la barra.",
@@ -126,14 +130,8 @@
       "description": "Desplaza la letra en milisegundos para afinar la sincronía.",
       "label": "Desfase de la letra"
     },
-    "render_mode": {
-      "description": "Texto: lo dibuja la terminal. Imagen: se dibuja con Pillow, permite otros tamaños de letra y cualquier tipografía.",
-      "label": "Modo de renderizado",
-      "image": "Imagen",
-      "text": "Texto"
-    },
     "spacing": {
-      "description": "Filas en blanco entre letras (modo texto).",
+      "description": "Separación entre líneas del carrusel.",
       "label": "Separación entre líneas"
     },
     "visible_above": {
@@ -156,5 +154,21 @@
   "visible_above": "Renglones arriba",
   "visible_below": "Renglones abajo",
   "width": "Ancho",
-  "write_failed": "No se pudo guardar el ajuste."
+  "custom_x": "X",
+  "custom_y": "Y",
+  "custom_color": "Color personalizado",
+  "color_placeholder": "#rrggbb",
+  "glyph_placeholder": "music",
+  "write_failed": "No se pudo guardar el ajuste.",
+  "instrumental_marks": "Marcas instrumentales",
+  "instrumental_marks_desc": "Muestra notas musicales durante las pausas instrumentales.",
+  "instrumental_icon_tooltip": "Cambiar el icono instrumental",
+  "instrumental_custom_tooltip": "Texto instrumental propio · clic para activar · clic derecho para editar",
+  "instrumental_text_placeholder": "Texto propio (máx. 24 caracteres)",
+  "silence_threshold": "Umbral de silencio (s)",
+  "marker_style_tooltip": "Cambiar el estilo del marcador de la línea activa",
+  "header_pos_tooltip": "Cambiar la alineación de la cabecera",
+  "pin": "Siempre encima",
+  "bar_tooltip": "Lyrics Carousel · clic izquierdo: panel · clic derecho: abrir ventana",
+  "karaoke_brain": "Cerebro de karaoke"
 }

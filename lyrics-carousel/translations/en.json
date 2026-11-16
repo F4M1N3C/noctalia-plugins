@@ -19,30 +19,35 @@
   "anchor_top_center": "top mid",
   "anchor_top_left": "top left",
   "anchor_top_right": "top right",
+  "anchor_custom": "Custom…",
   "close": "Close",
   "direction": "Direction",
   "down": "down",
-  "equalizer": "Sound visualiser",
+  "font_family": "Font",
+  "font_custom": "Other font…",
+  "font_custom_name": "Font name",
+  "font_hint": "Any installed font works: it is applied on the fly.",
+  "font_placeholder": "Departure Mono",
   "font_size": "Size",
   "footer": "Time bar",
-  "ghost": "Soft transitions",
+  "ghost": "Soft transition between lines",
+  "glyph": "Bar icon",
   "header": "Header (title / artist)",
   "height": "Height",
-  "hint": "Changes apply live. In text mode the font restarts the window.",
   "hints": "Keyboard hints",
-  "image_only_fonts": "Image mode only (proportional):",
   "karaoke": "Karaoke glow",
+  "karaoke_brain": "Intelligent karaoke (on): per-word glow only when word timing is available. Off: classic progressive karaoke",
   "launch": "Open the carousel",
   "launch_failed": "Could not open the terminal.",
   "marker": "Active line marker",
-  "mode_image": "image",
-  "mode_text": "text",
+  "offset_ms": "Lyrics offset (ms)",
   "open_settings": "Open settings",
-  "render_mode": "Rendering",
+  "section_color": "Colour",
   "section_display": "Display",
   "section_font": "Font",
   "section_lyrics": "Lyrics",
   "section_window": "Window",
+  "spacing": "Line spacing",
   "settings": {
     "accent": {
       "description": "The primary colour follows the wallpaper; the rest are ANSI colours from the theme.",
@@ -57,16 +62,20 @@
       "custom": "Custom"
     },
     "active_scale": {
-      "description": "Size multiplier of the line being sung (image mode only).",
+      "description": "Size multiplier of the line being sung.",
       "label": "Active line size"
     },
     "anchor": {
       "description": "Where the window opens: center, top-left, bottom-right...",
       "label": "Window position"
     },
-    "animation_ms": {
-      "description": "Duration of the scroll between lines, in milliseconds. 0 = instant.",
-      "label": "Transition"
+    "custom_x": {
+      "description": "Custom horizontal position (only with custom position)",
+      "label": "X"
+    },
+    "custom_y": {
+      "description": "Custom vertical position (only with custom position)",
+      "label": "Y"
     },
     "custom_color": {
       "description": "Hex colour (#rrggbb) used when the accent is \"custom\".",
@@ -78,12 +87,8 @@
       "label": "Scroll direction",
       "up": "Up"
     },
-    "equalizer": {
-      "description": "Show the animated bars.",
-      "label": "Sound visualiser"
-    },
     "font_family": {
-      "description": "Font used for the lyrics. Image mode accepts any font; text mode only accepts monospaced ones.",
+      "description": "Lyrics font. Any installed font is accepted.",
       "label": "Font family"
     },
     "font_size": {
@@ -95,8 +100,8 @@
       "label": "Time bar"
     },
     "ghost": {
-      "description": "Dim the block slightly while it moves for a softer feel.",
-      "label": "Soft transitions"
+      "description": "Smooth slide (~0.9 s) when the line changes. Off, the change is instant.",
+      "label": "Soft transition between lines"
     },
     "glyph": {
       "description": "Icon shown in the bar.",
@@ -126,14 +131,8 @@
       "description": "Shift the lyrics in milliseconds to fine tune the sync.",
       "label": "Lyrics offset"
     },
-    "render_mode": {
-      "description": "Text: drawn by the terminal. Image: drawn with Pillow, allows other line sizes and any font.",
-      "label": "Rendering mode",
-      "image": "Image",
-      "text": "Text"
-    },
     "spacing": {
-      "description": "Blank rows between lyrics (text mode).",
+      "description": "Line spacing in the carousel.",
       "label": "Line spacing"
     },
     "visible_above": {
@@ -156,5 +155,20 @@
   "visible_above": "Lines above",
   "visible_below": "Lines below",
   "width": "Width",
-  "write_failed": "Could not save the setting."
+  "custom_x": "X",
+  "custom_y": "Y",
+  "custom_color": "Custom colour",
+  "color_placeholder": "#rrggbb",
+  "glyph_placeholder": "music",
+  "write_failed": "Could not save the setting.",
+  "instrumental_marks": "Instrumental marks",
+  "instrumental_marks_desc": "Show musical notes during instrumental pauses.",
+  "instrumental_icon_tooltip": "Rotate the instrumental icon",
+  "instrumental_custom_tooltip": "Custom instrumental text · click to toggle · right click to edit",
+  "instrumental_text_placeholder": "Custom text (max 24 characters)",
+  "silence_threshold": "Silence threshold (s)",
+  "marker_style_tooltip": "Rotate the active line marker style",
+  "header_pos_tooltip": "Rotate the header alignment",
+  "pin": "Always on top",
+  "bar_tooltip": "Lyrics Carousel · left click: panel · right click: open window"
 }

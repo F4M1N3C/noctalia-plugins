@@ -1,13 +1,13 @@
-"""Renderizador por imagen del carrusel de letras (protocolo de gráficos de kitty).
+"""Image renderer for the lyrics carousel (kitty graphics protocol).
 
-Ventajas frente al modo texto:
-  * La línea activa se puede dibujar con otro tamaño de letra (active_scale).
-  * El desplazamiento es a nivel de píxel, no de fila de terminal.
-  * Admite cualquier TTF/OTF, también los que kitty rechaza por no ser
-    monoespaciados.
+Advantages over text mode:
+  * The active line can be drawn with a different font size (active_scale).
+  * Scrolling happens at the pixel level, not at the terminal row level.
+  * Any TTF/OTF is accepted, including the ones kitty rejects because
+    they are not monospaced.
 
-El tamaño en píxeles del terminal se saca de TIOCGWINSZ (ws_xpixel/ws_ypixel),
-que kitty rellena, así que la imagen encaja 1:1 en la rejilla de celdas.
+The pixel size of the terminal comes from TIOCGWINSZ (ws_xpixel/ws_ypixel),
+which kitty fills in, so the image fits 1:1 in the cell grid.
 """
 
 from __future__ import annotations
@@ -27,7 +27,11 @@ except ImportError:  # pragma: no cover
 
 
 def terminal_cells(fd=None):
-    """(cols, rows, xpix, ypix) del terminal."""
+    """(cols, rows, xpix, ypix) of the terminal.
+
+    kitty fills in ws_xpixel/ws_ypixel, so the drawing area is known
+    exactly and the image fits 1:1 in the cell grid.
+    """
     fd = fd if fd is not None else sys.stdout.fileno()
     try:
         raw = fcntl.ioctl(fd, termios.TIOCGWINSZ, b"\0" * 8)
@@ -42,7 +46,7 @@ def is_kitty() -> bool:
 
 
 class GraphicsRenderer:
-    """Dibuja el carrusel en un canvas y lo manda a kitty."""
+    """Draws the carousel on a canvas and sends it to kitty."""
 
     IMAGE_ID = 77
 
@@ -62,13 +66,13 @@ class GraphicsRenderer:
             return None
         return Image.new("RGBA", (max(1, width), max(1, height)), (0, 0, 0, 0))
 
-    # -- envío ----------------------------------------------------------
+    # -- sending --------------------------------------------------------
 
     def _send(self, payload: bytes, cols: int, rows: int, width: int, height: int):
-        """Transmite los datos de la imagen (sin colocarla).
+        """Transmits the image data (without placing it).
 
-        Solo el primer trozo lleva los datos de control; el resto únicamente
-        el flag m (protocolo de gráficos de kitty).
+        Only the first chunk carries the control data; the rest only carry
+        the m flag (kitty graphics protocol).
         """
         if self.broken:
             return False
@@ -79,8 +83,8 @@ class GraphicsRenderer:
             for index, part in enumerate(parts):
                 more = 1 if index < len(parts) - 1 else 0
                 if index == 0:
-                    # Sin clave "a" la imagen solo se transmite; la
-                    # colocación se hace después con a=p.
+                    # Without the "a" key the image is only transmitted; the
+                    # placement is done afterwards with a=p.
                     control = (
                         f"f=32,s={width},v={height},o=z,i={self.image_id},q=2,m={more}"
                     )
@@ -89,7 +93,7 @@ class GraphicsRenderer:
                 self.out.write(f"\x1b_G{control};{part}\x1b\\")
             self.out.flush()
         except OSError:
-            # El terminal se ha redimensionado o cerrado: no es un fallo fatal.
+            # The terminal was resized or closed: this is not a fatal error.
             self.write_errors += 1
             if self.write_errors > 30:
                 self.broken = True
@@ -97,15 +101,15 @@ class GraphicsRenderer:
         return True
 
     def present(self, image, cols: int, rows: int):
-        """Manda la imagen y la deja colocada en la ventana.
+        """Sends the image and leaves it placed in the window.
 
-        Se usa el formato crudo RGBA (f=32) comprimido con zlib: es unas tres
-        veces más rápido de codificar que PNG y pesa lo mismo.
+        The raw RGBA format (f=32) compressed with zlib is used: it is
+        about three times faster to encode than PNG and weighs the same.
 
-        Para actualizar en el sitio se borra la imagen anterior, se
-        transmiten los datos nuevos y se vuelve a colocar con el mismo id de
-        colocación (C=1 evita que el cursor se mueva). Todo va dentro de una
-        actualización sincronizada para que no parpadee.
+        To update in place the previous image is deleted, the new data is
+        transmitted and the image is placed again with the same placement
+        id (C=1 prevents the cursor from moving). Everything goes inside a
+        synchronized update so it does not flicker.
         """
         if image is None or cols <= 0 or rows <= 0:
             return False
@@ -116,11 +120,11 @@ class GraphicsRenderer:
             return False
         try:
             self.out.write("\x1b[?2026h")
-            # Se borra la imagen anterior (y sus colocaciones).
+            # The previous image (and its placements) is deleted.
             self.out.write(f"\x1b_Ga=d,d=I,i={self.image_id},q=2\x1b\\")
             ok = self._send(payload, cols, rows, width, height)
-            # Se coloca la imagen nueva en la esquina con el mismo id.
-            # El cursor marca el sitio: va a la esquina superior izquierda.
+            # The new image is placed in the corner with the same id.
+            # The cursor marks the spot: it goes to the top-left corner.
             self.out.write("\x1b[1;1H")
             self.out.write(
                 f"\x1b_Ga=p,i={self.image_id},p={self.placement_id},"
@@ -137,18 +141,25 @@ class GraphicsRenderer:
         return ok
 
     def clear(self):
-        """Quita la imagen de la pantalla."""
+        """Removes the image from the screen."""
         self.out.write(f"\x1b_Ga=d,d=I,i={self.image_id},q=2\x1b\\")
         self.out.flush()
 
 
-def load_font(path: str, size: int):
+def load_font(path: str, size: float):
     if Image is None or not path:
         return None
     try:
-        return ImageFont.truetype(path, max(1, int(size)))
-    except OSError:
-        return None
+        # The size can be fractional: this way the growing text does not
+        # step by one pixel.
+        return ImageFont.truetype(path, max(1.0, float(size)))
+    except (OSError, TypeError, ValueError):
+        # An old version of Pillow may not accept a fractional size: fall
+        # back to the integer instead of bringing the render down.
+        try:
+            return ImageFont.truetype(path, max(1, int(round(float(size)))))
+        except (OSError, TypeError, ValueError):
+            return None
 
 
 def text_width(draw, text, font) -> float:

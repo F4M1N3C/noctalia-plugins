@@ -16,6 +16,8 @@ package.path = _scriptDir() .. "/?.luau;" .. package.path
 local DIR = os.getenv("NOTES_TEST_DIR")
   or ("/tmp/notes-panel-test-" .. tostring(math.random(1000000, 9999999)))
 local DATA_DIR = DIR .. "/data"
+-- HOME falso: el panel lee ~/notes-mobile/public-url.txt y ~/notes-mobile/config.json
+local HOME = DIR .. "/home"
 
 local pins = {}
 
@@ -24,13 +26,24 @@ local pins = {}
 -- y no escribiendo el fichero final a medias.
 local bitacora = {}
 
+-- Estado de los simulacros: ajustes que devuelve getConfig (state.token),
+-- botones y etiquetas que crea el panel, comandos de runAsync y errores
+-- notificados. Se declaran aqui para que limpia() los vacie de verdad.
+local state = {}
+local erroresNotificados = {}
+local botones = {}
+local etiquetas = {}
+local comandos = {}
+
 local function limpia()
   os.execute("rm -rf " .. DIR)
   os.execute("mkdir -p " .. DIR .. " " .. DATA_DIR)
   pins = {}
   for i in pairs(bitacora) do bitacora[i] = nil end
-  if erroresNotificados then for i in pairs(erroresNotificados) do erroresNotificados[i] = nil end end
-  if botones then for i in pairs(botones) do botones[i] = nil end end
+  for i in pairs(erroresNotificados) do erroresNotificados[i] = nil end
+  for i in pairs(botones) do botones[i] = nil end
+  for i in pairs(etiquetas) do etiquetas[i] = nil end
+  for i in pairs(comandos) do comandos[i] = nil end
 end
 
 -- El mock usa el disco de verdad: las notas y el current.json son ficheros
@@ -116,17 +129,30 @@ local function json_decode(s)
 end
 
 -- Los botones que crea el panel se guardan aqui para poder pulsar el de
--- confirmar el borrado (su onClick es el que llama a deleteNote).
-local botones = {}
-
+-- confirmar el borrado (su onClick es el que llama a deleteNote) o el del
+-- enlace publico, y las etiquetas para comprobar que el resultado se pinta.
 local function ui_button(props)
   props = props or {}
   botones[#botones + 1] = props
   return props
 end
 
-local state = {}
-local erroresNotificados = {}
+local function ui_label(props)
+  props = props or {}
+  etiquetas[#etiquetas + 1] = props
+  return props
+end
+
+-- Los comandos que el panel manda a `noctalia.runAsync`, con su callback ya
+-- resuelto: sirve para comprobar que el enlace se copia con wl-copy y para
+-- simular que la copia falla (state.run_async_exit).
+local function runAsync(cmd, callback)
+  comandos[#comandos + 1] = tostring(cmd)
+  if type(callback) == "function" then
+    callback({ exitCode = state.run_async_exit or 0, stdout = "", stderr = "" })
+  end
+  return true
+end
 
 local mock = {
   getConfig = function(key)
@@ -136,14 +162,24 @@ local mock = {
     if key == "extension" then
       return "md"
     end
+    if key == "token" then
+      return state.token or ""
+    end
     return ""
   end,
   getSetting = function()
     return 1
   end,
   expandPath = function(p)
+    if p == "~" then
+      return HOME
+    end
+    if p:sub(1, 2) == "~/" then
+      return HOME .. p:sub(2)
+    end
     return p
   end,
+  runAsync = runAsync,
   setUpdateInterval = function() end,
   tr = function(key)
     return key
@@ -228,16 +264,19 @@ _G.ui = setmetatable({}, {
     if key == "button" then
       return ui_button
     end
+    if key == "label" then
+      return ui_label
+    end
     return function()
       return {}
     end
   end,
 })
 
--- Los modulos del plugin (merge, dirs, channel) se cargan a mano: el require
--- de Lua 5.4 convierte los puntos del nombre en carpetas, de modo que
--- "./merge.luau" no se encuentra solo. El runtime de Noctalia si lo resuelve.
-for _, modName in ipairs({ "merge", "dirs", "channel" }) do
+-- Los modulos del plugin (merge, dirs, channel, publiclink) se cargan a mano:
+-- el require de Lua 5.4 convierte los puntos del nombre en carpetas, de modo
+-- que "./merge.luau" no se encuentra solo. El runtime de Noctalia si lo resuelve.
+for _, modName in ipairs({ "merge", "dirs", "channel", "publiclink" }) do
   package.loaded["./" .. modName .. ".luau"] = dofile(_scriptDir() .. "/" .. modName .. ".luau")
 end
 
@@ -277,10 +316,13 @@ return {
   mock = mock,
   state = state,
   botones = botones,
+  etiquetas = etiquetas,
+  comandos = comandos,
   bitacora = bitacora,
   erroresNotificados = erroresNotificados,
   pins = pins,
   DIR = DIR,
+  HOME = HOME,
   DATA_DIR = DATA_DIR,
   limpia = limpia,
   escribir = escribir,
@@ -290,6 +332,7 @@ return {
   json_encode = json_encode,
   json_decode = json_decode,
   ui_button = ui_button,
+  ui_label = ui_label,
   normaliza = normaliza,
   scriptDir = scriptDir,
   PANEL_PATH = PANEL_PATH,

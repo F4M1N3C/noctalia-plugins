@@ -155,6 +155,41 @@ check("merge: conflict (middle edit)", "conflict", merge.resolve("ab", "aXb", "a
 check("merge: conflict keeps local", "aXb", merge.resolve("ab", "aXb", "ayb").content)
 check("merge: conflict (base empty)", "conflict", merge.resolve("", "x", "y").status)
 
+-- ========================================================== publiclink.luau
+-- El enlace publico que abre la app de notas en el movil: tunel de Cloudflare
+-- (public-url.txt) + token del servidor (config.json o los ajustes).
+local publiclink = dofile(scriptDir() .. "/publiclink.luau")
+
+check("publiclink: trim", "https://x", publiclink.trim("  https://x\n"))
+check("publiclink: trim de un valor que no es texto", "", publiclink.trim(nil))
+check("publiclink: base sin barra final", "https://a.b.c", publiclink.normalizeBase("https://a.b.c\n"))
+check("publiclink: base con una barra final", "https://a.b.c", publiclink.normalizeBase("https://a.b.c/"))
+check("publiclink: base con varias barras finales", "https://a.b.c", publiclink.normalizeBase("https://a.b.c///"))
+check("publiclink: base vacia", "", publiclink.normalizeBase("   \n"))
+
+check("publiclink: link con base sin barra", "https://a.b.c/?token=tok", publiclink.buildLink("https://a.b.c", "tok"))
+check("publiclink: link con base con barra", "https://a.b.c/?token=tok", publiclink.buildLink("https://a.b.c/", "tok"))
+check("publiclink: link con espacios alrededor", "https://a.b.c/?token=tok", publiclink.buildLink("  https://a.b.c  \n", " tok "))
+check("publiclink: link sin base", "", publiclink.buildLink("", "tok"))
+check("publiclink: link con base en blanco", "", publiclink.buildLink("  ", "tok"))
+check("publiclink: link sin token", "", publiclink.buildLink("https://a.b.c", ""))
+check("publiclink: link con token en blanco", "", publiclink.buildLink("https://a.b.c", "  "))
+
+check(
+  "publiclink: token de config.json",
+  "abc123",
+  publiclink.tokenFromConfig('{"port":8787,"token":"abc123"}', json_decode)
+)
+check("publiclink: token con espacios", "abc123", publiclink.tokenFromConfig('{"token":"  abc123\n"}', json_decode))
+check("publiclink: config sin token", "", publiclink.tokenFromConfig('{"port":8787}', json_decode))
+check("publiclink: config vacio", "", publiclink.tokenFromConfig("", json_decode))
+check("publiclink: config roto", "", publiclink.tokenFromConfig("{no es json", function()
+  error("decode roto")
+end))
+check("publiclink: config que no es un objeto", "", publiclink.tokenFromConfig('"hola"', function()
+  return "hola"
+end))
+
 -- ============================================================ channel.luau
 local channel = dofile(scriptDir() .. "/channel.luau")
 

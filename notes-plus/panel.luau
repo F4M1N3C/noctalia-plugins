@@ -13,6 +13,7 @@
 local dirs = require("./dirs.luau")
 local merge = require("./merge.luau")
 local channel = require("./channel.luau")
+local publiclink = require("./publiclink.luau")
 
 local AUTOSAVE_IDLE_TICKS = 2 -- 1s panel ticks with no edits before a flush
 local SCRATCHPAD_BASE = "scratchpad"
@@ -308,7 +309,7 @@ local function deleteControls(file)
       end,
     }),
     ui.button({
-      glyph = "xmark",
+      glyph = "x",
       variant = "ghost",
       onClick = function()
         pendingDelete = nil
@@ -512,56 +513,220 @@ local function syncCurrentNote()
   return nil, false
 end
 
+-- Public link: the Cloudflare tunnel in front of `notes-mobile` plus the
+-- server token, so a phone can open these notes in its browser. The tunnel
+-- rewrites its address on every start, so the address is read from disk each
+-- time it is needed (never cached across sessions).
+local PUBLIC_URL_FILE = "~/notes-mobile/public-url.txt"
+local NOTES_MOBILE_CONFIG = "~/notes-mobile/config.json"
+
+local publicShareUrl = "" -- last link resolved, "" when there is none
+local publicShareStatus = "" -- what to say about the last attempt
+local publicShareError = false
+
+local function readTrimmedFile(path)
+  local content = noctalia.readFile(noctalia.expandPath(path))
+  if type(content) ~= "string" then
+    return ""
+  end
+  return publiclink.trim(content)
+end
+
+-- The token comes from the plugin settings; the server's config.json is the
+-- fallback so a fresh install works without copying anything by hand.
+local function resolvePublicShareToken()
+  local configured = publiclink.trim(noctalia.getConfig("token"))
+  if configured ~= "" then
+    return configured
+  end
+  local raw = noctalia.readFile(noctalia.expandPath(NOTES_MOBILE_CONFIG))
+  return publiclink.tokenFromConfig(raw, function(text)
+    return noctalia.json.decode(text)
+  end)
+end
+
+-- Returns the link, and when there is none the reason to show the user.
+local function buildPublicShareUrl()
+  local base = readTrimmedFile(PUBLIC_URL_FILE)
+  if base == "" then
+    return "", tr("sync.no_public_tunnel")
+  end
+  local token = resolvePublicShareToken()
+  if token == "" then
+    return "", tr("sync.missing_token")
+  end
+  return publiclink.buildLink(base, token)
+end
+
+-- Resolves the link for display without touching the clipboard: the Sync view
+-- calls this on open, so a restarted tunnel shows up without any click.
+local function refreshPublicShareUrl()
+  local url = buildPublicShareUrl()
+  publicShareUrl = url
+  if url == "" then
+    publicShareStatus = ""
+    publicShareError = false
+  end
+end
+
+-- wl-copy is part of any Wayland session, so the link is copied with a single
+-- pipeline and no extra dependency. An exit code other than 0 means the link
+-- stays on screen for the user to copy by hand.
+local function copyPublicShareUrl(url, onDone)
+  if type(noctalia.runAsync) ~= "function" then
+    onDone(false)
+    return
+  end
+  local quoted = url:gsub("'", "'\\''")
+  local started = pcall(noctalia.runAsync, "printf '%s' '" .. quoted .. "' | wl-copy", function(result)
+    local code = tonumber(result and result.exitCode) or 1
+    onDone(code == 0)
+  end)
+  if not started then
+    onDone(false)
+  end
+end
+
+function onSharePublicLink()
+  local url, reason = buildPublicShareUrl()
+  if url == "" then
+    publicShareUrl = ""
+    publicShareStatus = reason
+    publicShareError = true
+    render()
+    return
+  end
+
+  publicShareUrl = url
+  publicShareStatus = tr("sync.link_ready")
+  publicShareError = false
+  render()
+
+  copyPublicShareUrl(url, function(copied)
+    publicShareStatus = copied and tr("sync.link_copied") or tr("sync.copy_failed")
+    publicShareError = not copied
+    render()
+  end)
+end
+
 local function syncView()
   local s = readSync()
   local rows = {}
 
   table.insert(rows, statusRow(
-    tr("label_server"),
-    s.serverUp and tr("value_online") or tr("value_offline"),
+    tr("sync.label_server"),
+    s.serverUp and tr("sync.value_online") or tr("sync.value_offline"),
     s.serverUp and "primary" or "error"
   ))
   table.insert(rows, statusRow(
-    tr("label_phone"),
-    s.phoneConnected and tr("value_connected") or tr("value_disconnected"),
+    tr("sync.label_phone"),
+    s.phoneConnected and tr("sync.value_connected") or tr("sync.value_disconnected"),
     s.phoneConnected and "primary" or "on_surface_variant"
   ))
   local pending = tonumber(s.pending) or 0
   table.insert(rows, statusRow(
-    tr("label_pending"),
+    tr("sync.label_pending"),
     tostring(pending),
     pending > 0 and "warning" or "on_surface_variant"
   ))
-  table.insert(rows, statusRow(tr("label_notes"), tostring(tonumber(s.notes) or 0), "on_surface"))
+  table.insert(rows, statusRow(tr("sync.label_notes"), tostring(tonumber(s.notes) or 0), "on_surface"))
 
   local seen = tonumber(s.lastSeen) or 0
   local seenText
   if seen == 0 then
-    seenText = tr("value_never")
+    seenText = tr("sync.value_never")
   else
     local minutes = math.floor((os.time() * 1000 - seen) / 60000)
     if minutes < 1 then
-      seenText = tr("value_just_now")
+      seenText = tr("sync.value_just_now")
     elseif minutes < 60 then
-      seenText = tr("value_minutes", { count = minutes })
+      seenText = tr("sync.value_minutes", { count = minutes })
     else
-      seenText = tr("value_hours", { count = math.floor(minutes / 60) })
+      seenText = tr("sync.value_hours", { count = math.floor(minutes / 60) })
     end
   end
-  table.insert(rows, statusRow(tr("label_last_seen"), seenText, "on_surface_variant"))
+  table.insert(rows, statusRow(tr("sync.label_last_seen"), seenText, "on_surface_variant"))
 
   local name, isOpen = syncCurrentNote()
   if name == nil then
-    table.insert(rows, statusRow(tr("label_note"), tr("value_no_note"), "on_surface_variant"))
+    table.insert(rows, statusRow(tr("sync.label_note"), tr("sync.value_no_note"), "on_surface_variant"))
   elseif isOpen then
-    table.insert(rows, statusRow(tr("label_note"), name, "on_surface"))
+    table.insert(rows, statusRow(tr("sync.label_note"), name, "on_surface"))
   else
-    table.insert(rows, statusRow(tr("label_note"), tr("value_last_note", { name = name }), "on_surface"))
+    table.insert(rows, statusRow(tr("sync.label_note"), tr("sync.value_last_note", { name = name }), "on_surface"))
   end
 
-  table.insert(rows, statusRow(tr("label_url"), tostring(s.url or ""), "on_surface_variant"))
+  table.insert(rows, statusRow(tr("sync.label_url"), tostring(s.url or ""), "on_surface_variant"))
   if s.error ~= nil and s.error ~= "" then
     table.insert(rows, ui.label({ text = tostring(s.error), color = "error", fontSize = 11 }))
+  end
+
+  -- Opening the notes on the phone is the one thing a user needs here: the
+  -- link is resolved and copied, and the phone picks between installing the
+  -- app and keeping it as one more browser tab.
+  table.insert(rows, ui.label({ text = " ", fontSize = 4 }))
+  table.insert(rows, ui.row({ gap = 8, align = "center" }, {
+    ui.button({
+      key = "sync-public-link",
+      glyph = "external-link",
+      variant = "primary",
+      onClick = "onSharePublicLink",
+      tooltip = tr("sync.open_on_phone_tooltip"),
+    }),
+    ui.label({
+      text = tr("sync.open_on_phone"),
+      fontSize = 12,
+      color = "on_surface",
+      flexGrow = 1,
+      maxLines = 2,
+    }),
+  }))
+  if publicShareStatus ~= "" then
+    table.insert(rows, ui.label({
+      text = publicShareStatus,
+      fontSize = 11,
+      color = publicShareError and "error" or "primary",
+      maxLines = 3,
+    }))
+  end
+  if publicShareUrl ~= "" then
+    table.insert(rows, ui.row({ gap = 8, align = "center" }, {
+      ui.label({
+        text = tr("sync.public_link"),
+        fontSize = 12,
+        color = "on_surface_variant",
+        flexGrow = 1,
+      }),
+      ui.button({
+        key = "sync-public-link-copy",
+        glyph = "copy",
+        variant = "ghost",
+        onClick = "onSharePublicLink",
+        tooltip = tr("sync.copy_link_tooltip"),
+      }),
+    }))
+    -- The UI has no selectable text: the URL is shown in full (the copy button
+    -- and a failure message are the ways out) instead of being masked.
+    table.insert(rows, ui.label({
+      text = publicShareUrl,
+      fontSize = 11,
+      fontFamily = "monospace",
+      color = "on_surface",
+      maxWidth = 360,
+      maxLines = 3,
+    }))
+    table.insert(rows, ui.label({
+      text = tr("sync.public_link_hint"),
+      fontSize = 11,
+      color = "on_surface_variant",
+      maxLines = 3,
+    }))
+    table.insert(rows, ui.label({
+      text = tr("sync.link_changes_hint"),
+      fontSize = 11,
+      color = "on_surface_variant",
+      maxLines = 2,
+    }))
   end
 
   table.insert(rows, ui.label({ text = " ", fontSize = 4 }))
@@ -587,6 +752,8 @@ function onOpenSync()
   -- Pide estado fresco al servicio: sin esto la vista podria tardar hasta un
   -- tic de sondeo en reflejar el estado real.
   noctalia.runAsync("noctalia msg plugin " .. PANEL_ID:gsub(":panel$", ":service") .. " all refresh")
+  -- El tunel publico escribe su direccion al arrancar: se relee al abrir.
+  refreshPublicShareUrl()
   render()
 end
 
@@ -598,6 +765,8 @@ end
 
 function onRefreshSync()
   noctalia.runAsync("noctalia msg plugin " .. PANEL_ID:gsub(":panel$", ":service") .. " all refresh")
+  refreshPublicShareUrl()
+  render()
 end
 
 function onSendCurrent()
@@ -648,7 +817,7 @@ render = function()
     table.insert(header, ui.button({ key = "header-new", glyph = "plus", variant = "primary", onClick = "onNewNote" }))
   end
   if closeButton then
-    table.insert(header, ui.button({ key = "header-close", glyph = "xmark", variant = "ghost", onClick = "onClosePanel" }))
+    table.insert(header, ui.button({ key = "header-close", glyph = "x", variant = "ghost", onClick = "onClosePanel" }))
   end
   panel.render(ui.column({ flexGrow = 1, gap = 12, align = "stretch" }, {
     ui.row({ align = "center", gap = 8 }, header),

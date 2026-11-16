@@ -28,6 +28,36 @@ Plugin fusionado de `faminec/notes` y `faminec/notes-sync` para Noctalia Shell.
 - `glyph`: widget glyph (default `notes`)
 - `show_text`: show label text in widget (default `false`)
 
+## Public link (open the notes on your phone)
+
+The Sync view of the panel has an **Open on my phone** button. It builds the
+link to the `notes-mobile` app that is already running on this machine and
+copies it to the clipboard, so the phone just has to open it in its browser
+and decide whether to install it as an app or keep it as one more tab.
+
+Requirements:
+
+- the `notes-mobile` server running (`notes-mobile.service`);
+- the Cloudflare tunnel running (`notes-mobile-tunnel.service`), which writes
+  its address to `~/notes-mobile/public-url.txt`;
+- the server token, either in the `token` plugin setting or in
+  `~/notes-mobile/config.json`.
+
+The link is `https://<tunnel>.trycloudflare.com/?token=<token>`. It is the
+address of the tunnel, so **it changes every time the tunnel restarts**: press
+the button again to get the current one. If `wl-copy` is unavailable the link
+stays on screen to be copied by hand.
+
+What the button says when it cannot build the link:
+
+- *no public tunnel*: `public-url.txt` is missing or empty — start the tunnel;
+- *missing token*: no `token` in the settings and none in `config.json`.
+
+Privacy: the token travels in the URL, so the link gives full access to the
+notes of this machine while the tunnel is up. It is your own link (each person
+runs their own plugin and server), but keep it private; do not paste it in
+public places.
+
 ## Notes
 - Mantiene la UI de `notes` como base (panel principal)
 - Integra funcionalidades de sincronización con `notes-mobile` desde `notes-sync`

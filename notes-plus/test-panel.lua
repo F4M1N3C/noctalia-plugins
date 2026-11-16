@@ -32,10 +32,13 @@ local M = dofile(scriptDir() .. "/test-mock.luau")
 local mock = M.mock
 local state = M.state
 local botones = M.botones
+local etiquetas = M.etiquetas
+local comandos = M.comandos
 local bitacora = M.bitacora
 local erroresNotificados = M.erroresNotificados
 local pins = M.pins
 local DIR = M.DIR
+local HOME = M.HOME
 local DATA_DIR = M.DATA_DIR
 local limpia = M.limpia
 local escribir = M.escribir
@@ -244,6 +247,147 @@ check("el panel crea una nota nueva", true, type(nueva) == "string" and nueva ~=
 pcall(onEdited, "primera linea")
 pcall(onFlushNow, "primera linea")
 check("una nota nueva desde el PC se guarda", "primera linea", leer(DIR .. "/" .. tostring(nueva)) or "")
+
+print()
+print("== el enlace para abrir las notas en el movil ==")
+-- El boton de la vista Sync resuelve el enlace publico (tunel de Cloudflare +
+-- token) y lo copia con wl-copy. Se prueba sobre el estado visible y sobre el
+-- comando que recibe runAsync, sin tocar el portapapeles de verdad.
+
+local MOBILE = HOME .. "/notes-mobile"
+
+local function etiquetas_texto()
+  local partes = {}
+  for _, etiqueta in ipairs(etiquetas) do
+    if type(etiqueta.text) == "string" then
+      partes[#partes + 1] = etiqueta.text
+    end
+  end
+  return table.concat(partes, "\n")
+end
+
+-- Lo que se ve en el panel (las claves de traduccion se devuelven tal cual).
+local function pintado(texto)
+  return etiquetas_texto():find(texto, 1, true) ~= nil
+end
+
+local function boton_por_glifo(glifo)
+  for _, boton in ipairs(botones) do
+    if boton.glyph == glifo then
+      return boton
+    end
+  end
+  return nil
+end
+
+-- El panel enlaza los manejadores por nombre (onClick = "onSharePublicLink"):
+-- se resuelven como lo hace el host.
+local function pulsar(boton)
+  if boton == nil then
+    return false
+  end
+  local handler = boton.onClick
+  if type(handler) == "string" then
+    handler = _G[handler]
+  end
+  if type(handler) ~= "function" then
+    return false
+  end
+  pcall(handler)
+  return true
+end
+
+local function comandos_de_copia()
+  local copias = {}
+  for _, comando in ipairs(comandos) do
+    if comando:find("wl-copy", 1, true) then
+      copias[#copias + 1] = comando
+    end
+  end
+  return copias
+end
+
+local function limpia_avisos()
+  for i in pairs(comandos) do comandos[i] = nil end
+  for i in pairs(etiquetas) do etiquetas[i] = nil end
+end
+
+-- Sin tunel: el boton existe, no copia nada y dice que falta.
+limpia()
+os.execute("mkdir -p " .. MOBILE)
+state.token = ""
+pcall(onOpenSync)
+check("la vista Sync ofrece el boton del enlace", true, boton_por_glifo("external-link") ~= nil)
+limpia_avisos()
+check("el boton del enlace responde", true, pulsar(boton_por_glifo("external-link")))
+check("sin tunel no se copia nada", 0, #comandos_de_copia())
+check("sin tunel se explica el motivo", true, pintado("sync.no_public_tunnel"))
+
+-- Tunel y token en los ajustes del plugin: al abrir la vista ya se ve el
+-- enlace, y el boton lo copia con una sola barra.
+limpia()
+os.execute("mkdir -p " .. MOBILE)
+escribir(MOBILE .. "/public-url.txt", "https://uno.trycloudflare.com\n")
+state.token = "tok-1"
+pcall(onOpenSync)
+check("al abrir la vista ya se ve el enlace", true, pintado("https://uno.trycloudflare.com/?token=tok-1"))
+limpia_avisos()
+pulsar(boton_por_glifo("external-link"))
+local copias = comandos_de_copia()
+check("el boton copia un unico enlace", 1, #copias)
+check(
+  "copia el enlace publico completo",
+  true,
+  copias[1] ~= nil and copias[1]:find("https://uno.trycloudflare.com/?token=tok-1", 1, true) ~= nil
+)
+check("avisa de que se copio", true, pintado("sync.link_copied"))
+check("deja el enlace a la vista", true, pintado("https://uno.trycloudflare.com/?token=tok-1"))
+check("y el aviso de privacidad", true, pintado("sync.public_link_hint"))
+
+-- El tunel a veces escribe barras finales de sobra.
+escribir(MOBILE .. "/public-url.txt", "https://dos.trycloudflare.com///\n")
+state.token = "tok-2"
+limpia_avisos()
+pulsar(boton_por_glifo("external-link"))
+copias = comandos_de_copia()
+check("con barras finales de sobra no se duplica la barra", true, copias[1] ~= nil
+  and copias[1]:find("https://dos.trycloudflare.com/?token=tok-2", 1, true) ~= nil
+  and not copias[1]:find("//?token", 1, true))
+
+-- Sin token en los ajustes, se usa el del config.json del servidor.
+state.token = ""
+escribir(MOBILE .. "/config.json", '{"port":8787,"token":"tok-json"}')
+limpia_avisos()
+pulsar(boton_por_glifo("external-link"))
+copias = comandos_de_copia()
+check("sin token en los ajustes se usa config.json", true, copias[1] ~= nil
+  and copias[1]:find("https://dos.trycloudflare.com/?token=tok-json", 1, true) ~= nil)
+
+-- Sin token en ningun sitio: no se copia y se explica.
+os.remove(MOBILE .. "/config.json")
+limpia_avisos()
+pulsar(boton_por_glifo("external-link"))
+check("sin token no se copia", 0, #comandos_de_copia())
+check("sin token se explica el motivo", true, pintado("sync.missing_token"))
+check("y no se queda un enlace viejo a la vista", false, pintado("https://dos.trycloudflare.com"))
+
+-- public-url.txt vacio (o solo espacios) es como no tener tunel.
+escribir(MOBILE .. "/public-url.txt", "  \n")
+state.token = "tok-3"
+limpia_avisos()
+pulsar(boton_por_glifo("external-link"))
+check("un public-url.txt vacio no da enlace", 0, #comandos_de_copia())
+check("y se explica que falta el tunel", true, pintado("sync.no_public_tunnel"))
+
+-- Si wl-copy falla, el enlace se queda en pantalla para copiarlo a mano.
+escribir(MOBILE .. "/public-url.txt", "https://tres.trycloudflare.com\n")
+state.token = "tok-4"
+state.run_async_exit = 1
+limpia_avisos()
+pulsar(boton_por_glifo("external-link"))
+check("si wl-copy falla se avisa", true, pintado("sync.copy_failed"))
+check("y el enlace queda a mano", true, pintado("https://tres.trycloudflare.com/?token=tok-4"))
+state.run_async_exit = nil
 
 print()
 print("== el test detecta una regresion ==")

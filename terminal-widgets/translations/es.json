@@ -1,5 +1,7 @@
 {
   "add_widget": "Añadir widget",
+  "brain_on": "Cerebro encendido: cada ventana se reabre donde la dejaste",
+  "brain_off": "Cerebro apagado: las ventanas usan su layout configurado",
   "cancel": "Cancelar",
   "clear_thumb": "Quitar miniatura personalizada",
   "close": "Cerrar",

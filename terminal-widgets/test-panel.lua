@@ -1109,6 +1109,11 @@ print("\n== panel ==")
 
 -- Se carga el panel con la UI simulada. Si usa un global que no existe
 -- (un `local` declarado más abajo, por ejemplo), aquí se rompe.
+--
+-- El panel cachea el store en memoria desde su primera apertura: se deja en
+-- disco un store conocido (cerebro apagado y sin memoria) para que la sección
+-- arranque siempre en el mismo estado.
+files[storePath] = '{"commands":{},"layouts":{},"thumbs":{},"removed":{},"brain":false,"brainGeometry":{}}'
 local panelChunk, panelErr = loadfile(DIR .. "panel.luau", "t", env)
 if not panelChunk then
   print("  FALLA no se pudo cargar panel.luau: " .. tostring(panelErr))
@@ -1426,6 +1431,210 @@ check("botón de cerrar en widget abierto", true, (function()
     return closeBtn ~= nil and closeBtn.props and closeBtn.props.onClick ~= nil
   end)())
 clients = {}
+
+-- ---------------------------------------------- cerebro y geometría --
+
+print("\n== cerebro ==")
+
+-- El margen se fija a 0 para que las posiciones esperadas sean exactas (el
+-- margen por defecto, 16 px, desplaza la base de cada ancla).
+local savedMarginPanel = config.margin
+config.margin = 0
+env.onOpen("")
+
+-- El botón va primero de su fila: a la izquierda de "abrir todo".
+local brainButton = findNode(lastTree, "brain")
+check("panel: el botón del cerebro existe", true, brainButton ~= nil)
+check("panel: glifo brain", "brain", brainButton ~= nil and brainButton.props.glyph or nil)
+check("panel: variante ghost", "ghost", brainButton ~= nil and brainButton.props.variant or nil)
+check("panel: arranca apagado", false, brainButton ~= nil and brainButton.props.selected == true)
+check("panel: tooltip de apagado", "brain_off", brainButton ~= nil and brainButton.props.tooltip or nil)
+
+-- Orden de las claves del árbol renderizado (las claves viven en
+-- `props.key`; `nodeKeys` de arriba sirve para árboles crudos).
+local function keyOrder(tree, out)
+  out = out or {}
+  if type(tree) ~= "table" then return out end
+  if type(tree.props) == "table" and tree.props.key ~= nil then
+    table.insert(out, tree.props.key)
+  end
+  for _, child in ipairs(tree.children or {}) do keyOrder(child, out) end
+  return out
+end
+
+local brainKeys = keyOrder(lastTree)
+local brainIndex, openAllIndex
+for index, key in ipairs(brainKeys) do
+  if key == "brain" then brainIndex = index end
+  if key == "open-all" then openAllIndex = index end
+end
+check("panel: cerebro a la izquierda de abrir todo", true,
+  brainIndex ~= nil and openAllIndex ~= nil and brainIndex < openAllIndex)
+
+-- Pulsarlo enciende, repinta y persiste.
+if brainButton ~= nil and brainButton.props.onClick ~= nil then
+  brainButton.props.onClick()
+end
+check("panel: enciende el cerebro", true, storeLib.loadBrain().brain == true)
+local brainOn = findNode(lastTree, "brain")
+check("panel: marcado al encender", true, brainOn ~= nil and brainOn.props.selected == true)
+check("panel: tooltip de encendido", "brain_on", brainOn ~= nil and brainOn.props.tooltip or nil)
+
+-- Apagarlo no borra la memoria.
+storeLib.saveBrainGeometry({ ["noctalia-term-cerebro"] = "center, 10x10" })
+env.onOpen("")
+local brainOffButton = findNode(lastTree, "brain")
+if brainOffButton ~= nil and brainOffButton.props.onClick ~= nil then
+  brainOffButton.props.onClick()
+end
+check("panel: apaga el cerebro", false, storeLib.loadBrain().brain)
+check("panel: apagar no borra la memoria", "center, 10x10",
+  storeLib.loadBrain().brainGeometry["noctalia-term-cerebro"])
+
+-- Las dos claves existen en los dos idiomas.
+for _, lang in ipairs({ "en", "es" }) do
+  local raw = readRealFile(DIR .. "translations/" .. lang .. ".json")
+  check("traducciones " .. lang .. ": brain_on", true, raw ~= nil and raw:find('"brain_on"') ~= nil)
+  check("traducciones " .. lang .. ": brain_off", true, raw ~= nil and raw:find('"brain_off"') ~= nil)
+end
+
+-- Widget de prueba con layout oficial y memoria distinta.
+env.onIpc("remove", "cerebro")
+env.onIpc("add", "cerebro|cerebro --demo|bottom-left, 802x582")
+storeLib.saveBrainToggle(false)
+storeLib.saveBrainGeometry({ ["noctalia-term-cerebro"] = "top-right, 400x300, -10, 10" })
+env.onOpen("")
+
+-- Cerebro OFF: manda el layout oficial (comportamiento de siempre).
+clients = {
+  { class = "noctalia-term-cerebro", at = { 100, 100 }, size = { 600, 400 }, address = "0x77", monitor = 0 },
+}
+clock = clock + 5000
+dispatched = {}
+clickCard("cerebro")
+local offText = dispatchText()
+check("sin cerebro: resize al tamaño del layout", true, offText:find("resize%({ x = 802, y = 582") ~= nil)
+check("sin cerebro: vuelve a su ancla", true, offText:find("move%({ x = 0, y = 858") ~= nil)
+
+-- Lo que impone el plugin se publica para que el service no lo memorice.
+local published = mock.state.get("imposed") or {}
+local imposedEntry = published["noctalia-term-cerebro"]
+check("imposed: publica la clase", true, imposedEntry ~= nil)
+check("imposed: ancho del layout", 802, imposedEntry ~= nil and imposedEntry.w or nil)
+check("imposed: posición absoluta", 858, imposedEntry ~= nil and imposedEntry.y or nil)
+check("imposed: lleva sello temporal", true,
+  imposedEntry ~= nil and (imposedEntry.at or 0) > 0)
+
+-- Las entradas caducadas se podan al publicar la siguiente geometría.
+mock.state.set("imposed", { ["noctalia-term-vieja"] = { x = 0, y = 0, w = 10, h = 10, at = 1 } })
+clock = clock + 5000
+clickCard("cerebro")
+check("imposed: poda las caducadas", nil, (mock.state.get("imposed") or {})["noctalia-term-vieja"])
+
+-- Cerebro ON y ya abierto: solo foco, sin recolocar.
+storeLib.saveBrainToggle(true)
+env.onOpen("")
+clients = {
+  { class = "noctalia-term-cerebro", at = { 100, 100 }, size = { 600, 400 }, address = "0x77", monitor = 0 },
+}
+clock = clock + 5000
+dispatched = {}
+clickCard("cerebro")
+check("con cerebro y abierto: un solo dispatch", 1, #dispatched)
+check("con cerebro y abierto: es un foco", true,
+  dispatched[1] ~= nil and dispatched[1]:find("hl.dsp.focus") ~= nil)
+check("con cerebro y abierto: no redimensiona", nil,
+  dispatched[1] ~= nil and dispatched[1]:find("resize") or nil)
+
+-- Cerebro ON y cerrado: la apertura usa la memoria.
+clients = {}
+clock = clock + 5000
+dispatched = {}
+clickCard("cerebro")
+local onText = dispatched[1] or ""
+check("con cerebro: abre con el tamaño recordado", true, onText:find("size = { 400, 300") ~= nil)
+check("con cerebro: abre en la posición recordada", true, onText:find("move = { 3030, 10") ~= nil)
+
+-- Guardar un layout en el formulario borra la memoria del widget.
+storeLib.saveBrainGeometry({ ["noctalia-term-cerebro"] = "top-right, 400x300, -10, 10" })
+env.onIpc("add", "cerebro|cerebro --demo|center, 500x400")
+check("formulario: borra la memoria del widget", nil,
+  storeLib.loadBrain().brainGeometry["noctalia-term-cerebro"])
+
+-- O5: al salir de edición se guarda la geometría que movió el usuario.
+local function enterEditMode()
+  local node = findNode(lastTree, "edit")
+  if node ~= nil and node.props.onClick ~= nil then node.props.onClick() end
+end
+
+storeLib.saveBrainToggle(false)
+env.onIpc("add", "cerebro|cerebro --demo|bottom-left, 802x582")
+env.onOpen("")
+clients = {}
+clock = clock + 5000
+clickCard("cerebro")  -- coloca la ventana y registra lo que impone el plugin
+
+-- Una ventana que sigue donde el plugin la puso no toca el layout.
+clients = {
+  { class = "noctalia-term-cerebro", at = { 0, 858 }, size = { 802, 582 }, address = "0x77", monitor = 0 },
+}
+enterEditMode()
+enterEditMode()
+check("O5: no toca una ventana quieta", "bottom-left, 802x582", storeLib.load().layouts.cerebro)
+
+-- Una ventana movida a mano se guarda como layout permanente.
+clients = {
+  { class = "noctalia-term-cerebro", at = { 0, 0 }, size = { 700, 400 }, address = "0x77", monitor = 0 },
+}
+enterEditMode()
+enterEditMode()
+check("O5: guarda la geometría movida", "top-left, 700x400, 0, 0", storeLib.load().layouts.cerebro)
+
+-- Y funciona igual con el cerebro ON.
+storeLib.saveBrainToggle(true)
+env.onOpen("")
+clients = {}
+env.onIpc("add", "cerebro|cerebro --demo|bottom-left, 802x582")
+clock = clock + 5000
+clickCard("cerebro")
+clients = {
+  { class = "noctalia-term-cerebro", at = { 0, 0 }, size = { 700, 400 }, address = "0x77", monitor = 0 },
+}
+enterEditMode()
+enterEditMode()
+check("O5: también guarda con cerebro ON", "top-left, 700x400, 0, 0", storeLib.load().layouts.cerebro)
+
+-- Un layout escrito en el formulario manda sobre la geometría viva.
+storeLib.saveBrainToggle(false)
+env.onOpen("")
+clients = {}
+env.onIpc("add", "cerebro|cerebro --demo|bottom-left, 802x582")
+clock = clock + 5000
+clickCard("cerebro")
+clients = {
+  { class = "noctalia-term-cerebro", at = { 0, 0 }, size = { 700, 400 }, address = "0x77", monitor = 0 },
+}
+enterEditMode()
+env.onIpc("add", "cerebro|cerebro --demo|bottom-center, 600x300")
+enterEditMode()
+check("O5: el formulario manda", "bottom-center, 600x300", storeLib.load().layouts.cerebro)
+
+-- O4: el editor de alta va después de la última tarjeta.
+clients = {}
+env.onOpen("")
+enterEditMode()
+local editOrder = keyOrder(lastTree)
+local lastCardIndex, addEditorIndex = nil, nil
+for index, key in ipairs(editOrder) do
+  if key:sub(1, 5) == "card-" then lastCardIndex = index end
+  if key == "editor" then addEditorIndex = index end
+end
+check("edición: hay más de una tarjeta", true, countKeys(lastTree, "card-") > 1)
+check("edición: el editor de alta va al final", true,
+  addEditorIndex ~= nil and lastCardIndex ~= nil and addEditorIndex > lastCardIndex)
+enterEditMode()  -- salir del modo edición
+
+config.margin = savedMarginPanel
 
 -- ------------------------------------------------- borrar desde el panel --
 

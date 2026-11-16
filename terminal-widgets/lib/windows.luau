@@ -559,7 +559,9 @@ function M.rotate(windows, mode, swapSizes, callback)
   M.applyGeometry(moves, function()
     M.rotating = false
     if callback ~= nil then
-      callback()
+      -- Las rotaciones se entregan al llamador para que pueda publicarlas como
+      -- geometrías impuestas (el service no debe memorizarlas).
+      callback(moves)
     end
   end)
   return true

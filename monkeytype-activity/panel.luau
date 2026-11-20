@@ -261,6 +261,8 @@ local function statusText()
     return tr("status.no_key")
   elseif status == "invalid_key" then
     return tr("status.invalid_key")
+  elseif status == "inactive_key" then
+    return tr("status.inactive_key")
   elseif status == "auth_error" then
     return tr("status.auth_error")
   elseif status == "rate_limited" then
@@ -284,6 +286,8 @@ local function emptyStateText()
     return tr("status.no_key")
   elseif status == "invalid_key" then
     return tr("status.invalid_key")
+  elseif status == "inactive_key" then
+    return tr("status.inactive_key")
   elseif status == "auth_error" then
     return tr("status.auth_error")
   elseif status == "no_activity" then
@@ -377,7 +381,15 @@ function render()
     local actions = {
       ui.button({ text = tr("action.try_again"), glyph = "refresh", variant = "primary", onClick = "onRefreshClicked" }),
     }
-    if not hasApeKey() or status == "invalid_key" then
+    if status == "invalid_key" or status == "inactive_key" then
+      table.insert(actions, 1, ui.button({
+        text = tr("action.open_ape_keys"),
+        glyph = "external-link",
+        variant = "outline",
+        onClick = "onOpenApeKeys",
+      }))
+    end
+    if not hasApeKey() or status == "invalid_key" or status == "inactive_key" then
       table.insert(actions, 1, ui.button({
         text = tr("action.open_settings"),
         glyph = "settings",
@@ -454,7 +466,8 @@ function render()
     justify = (centerReadyContent or data == nil) and "center" or "start",
   }, body))
 
-  if showProfileButton and hasApeKey() and status ~= "invalid_key" and status ~= "auth_error" then
+  if showProfileButton and hasApeKey()
+    and status ~= "invalid_key" and status ~= "inactive_key" and status ~= "auth_error" then
     table.insert(root, ui.separator({ thickness = 1, color = "outline_variant/0.35" }))
     table.insert(root, ui.row({ justify = "end", paddingH = 14, paddingV = 10 }, {
       ui.button({
@@ -495,6 +508,10 @@ end
 
 function onOpenProfile()
   openUrl(profileUrl or siteUrl)
+end
+
+function onOpenApeKeys()
+  openUrl(Monkeytype.APE_KEYS_URL)
 end
 
 local function rerender(valueName, value)

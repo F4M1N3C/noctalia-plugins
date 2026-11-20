@@ -243,12 +243,19 @@ do
   check("panel not toggled", nil, mock.panelToggled)
 end
 
-section("invalid key: click opens the settings")
+section("invalid or disabled key: the click opens the panel")
 do
-  local mock = newMock({ display_mode = "icon_and_value", display_metric = "today" }, sampleData(), "invalid_key")
-  local widget = loadWidget(mock)
-  widget.onClick()
-  check("settings opened", true, mock.settingsOpened)
+  local invalid = newMock({ display_mode = "icon_and_value", display_metric = "today" }, sampleData(), "invalid_key")
+  local invalidWidget = loadWidget(invalid)
+  invalidWidget.onClick()
+  check("invalid key opens the panel", "faminec/monkeytype-activity:calendar", invalid.panelToggled)
+  check("invalid key keeps settings closed", false, invalid.settingsOpened)
+
+  local disabled = newMock({ display_mode = "icon_and_value", display_metric = "today" }, nil, "inactive_key")
+  local disabledWidget = loadWidget(disabled)
+  check("disabled key names the toggle", "status.inactive_key", disabled.tooltip)
+  disabledWidget.onClick()
+  check("disabled key opens the panel", "faminec/monkeytype-activity:calendar", disabled.panelToggled)
 end
 
 section("with a key: click toggles the calendar")

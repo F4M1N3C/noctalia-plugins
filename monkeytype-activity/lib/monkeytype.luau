@@ -10,11 +10,14 @@
 local Monkeytype = {}
 
 Monkeytype.BASE_URL = "https://api.monkeytype.com"
+-- Ape Keys live in the account settings, in their own tab.
+Monkeytype.APE_KEYS_URL = "https://monkeytype.com/account-settings?tab=apeKeys"
 
 -- Shared status vocabulary published to the widget and the panel.
 Monkeytype.STATUS = {
   AUTH = "auth_error",
   INVALID_KEY = "invalid_key",
+  INACTIVE_KEY = "inactive_key",
   RATE_LIMITED = "rate_limited",
   REQUEST = "request_error",
   RESPONSE = "invalid_response",
@@ -32,13 +35,17 @@ function Monkeytype.request(path, key)
   }
 end
 
--- The API answers 470/471/472 for unusable Ape keys and 429/479 for rate
--- limits; anything else is a plain failure.
+-- The API answers 470 (unknown), 471 (disabled in the website's toggle) and
+-- 472 (malformed) for unusable Ape keys, and 429/479 for rate limits; anything
+-- else is a plain failure.
 function Monkeytype.statusFor(httpStatus)
   if httpStatus == 401 then
     return Monkeytype.STATUS.AUTH
   end
-  if httpStatus == 470 or httpStatus == 471 or httpStatus == 472 then
+  if httpStatus == 471 then
+    return Monkeytype.STATUS.INACTIVE_KEY
+  end
+  if httpStatus == 470 or httpStatus == 472 then
     return Monkeytype.STATUS.INVALID_KEY
   end
   if httpStatus == 429 or httpStatus == 479 then

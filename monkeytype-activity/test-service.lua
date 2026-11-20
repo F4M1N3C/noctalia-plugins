@@ -336,6 +336,15 @@ do
   check("later click refreshes again", before + 8, #mock.requests)
 end
 
+section("a disabled Ape Key is named, not called invalid")
+do
+  local mock = coldMock()
+  routeFailure(mock, "/users/streak", 471)
+  loadService(mock)
+  check("status", "inactive_key", mock.state.status)
+  check("no data published", nil, mock.state.data)
+end
+
 section("an invalid Ape Key is reported, not retried blindly")
 do
   local mock = coldMock()

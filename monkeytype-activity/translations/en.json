@@ -1,5 +1,6 @@
 {
   "action": {
+    "open_ape_keys": "Open Ape Keys",
     "open_profile": "Open profile",
     "open_settings": "Open settings",
     "open_site": "Open MonkeyType",
@@ -101,17 +102,18 @@
   },
   "status": {
     "auth_error": "MonkeyType rejected the Ape Key.",
+    "inactive_key": "That Ape Key is disabled. Turn it on in MonkeyType's Ape Keys, or create a new one.",
     "invalid_key": "That Ape Key is not valid. Create a new one under Settings, then Ape Keys.",
+    "invalid_response": "MonkeyType returned an unexpected response.",
     "loading": "Loading MonkeyType activity…",
     "missing_xdg_open": "xdg-open is required to open MonkeyType.",
     "no_activity": "No MonkeyType tests are saved on this account yet.",
     "no_data": "No activity data is available yet.",
     "no_key": "Add your MonkeyType Ape Key in the plugin settings.",
+    "rate_limited": "MonkeyType rate limit reached. Retrying later.",
     "refresh_schedule": "Last updated at {time} · Auto-refresh every {interval} min",
     "refreshing": "Refreshing MonkeyType activity…",
-    "rate_limited": "MonkeyType rate limit reached. Retrying later.",
     "request_error": "MonkeyType Activity could not reach the API.",
-    "invalid_response": "MonkeyType returned an unexpected response.",
     "stale": "Showing cached activity.",
     "unavailable": "MonkeyType activity is unavailable."
   },

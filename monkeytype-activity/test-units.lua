@@ -103,6 +103,22 @@ check("last day sits on its weekday row", os.date("!%Y-%m-%d", TODAY) .. "|5", l
 local lastRowLevels = Activity.rowLevels(built.rows[lastWeekday])
 check("today is shaded", 3, lastRowLevels[#lastRowLevels])
 
+section("activity: millisecond timestamps")
+check("seconds pass through", 1771027200, Activity.toSeconds(1771027200))
+check("milliseconds are converted", 1771027200, Activity.toSeconds(1771027200000))
+check("zero is not a timestamp", nil, Activity.toSeconds(0))
+check("text is rejected", nil, Activity.toSeconds("1771027200"))
+local msPayload = Activity.normalize({
+  days = { 1, 2 },
+  dayCount = 2,
+  lastDay = TODAY * 1000,
+  streak = { lastResultTimestamp = (NOW - 600) * 1000, length = 2, maxLength = 9 },
+  now = NOW,
+})
+check("ms lastDay ends on the same day", os.date("!%Y-%m-%d", TODAY), msPayload.lastDate)
+check("ms streak timestamp converted", NOW - 600, msPayload.lastResultTimestamp)
+check("ms payload keeps today's count", 2, msPayload.today)
+
 section("activity: today count")
 local todayCount, todayDate = Activity.todayCount(counts, TODAY, NOW)
 check("today count", 5, todayCount)
@@ -168,7 +184,7 @@ check("method", "GET", request.method)
 check("authorization header", "Authorization: ApeKey SECRET", request.headers[2])
 check("401 is an auth error", "auth_error", Monkeytype.statusFor(401))
 check("470 is an invalid key", "invalid_key", Monkeytype.statusFor(470))
-check("471 is an invalid key", "invalid_key", Monkeytype.statusFor(471))
+check("471 is a disabled key", "inactive_key", Monkeytype.statusFor(471))
 check("472 is an invalid key", "invalid_key", Monkeytype.statusFor(472))
 check("429 is a rate limit", "rate_limited", Monkeytype.statusFor(429))
 check("479 is a rate limit", "rate_limited", Monkeytype.statusFor(479))
@@ -183,6 +199,7 @@ check("network failure", "request_error", select(2, Monkeytype.payload(nil, deco
 check("invalid key response", "invalid_key", select(2, Monkeytype.payload({ ok = false, status = 470 }, decodeValue(nil))))
 check("completed 4xx is still an error", "invalid_key", select(2, Monkeytype.payload({ ok = true, status = 472 }, decodeValue(nil))))
 check("completed 429 is a rate limit", "rate_limited", select(2, Monkeytype.payload({ ok = true, status = 479 }, decodeValue(nil))))
+check("disabled key reported as such", "inactive_key", select(2, Monkeytype.payload({ ok = true, status = 471 }, decodeValue(nil))))
 check("transport failure", "request_error", select(2, Monkeytype.payload({ ok = false, status = 0 }, decodeValue(nil))))
 check("2xx without ok", "request_error", select(2, Monkeytype.payload({ ok = false, status = 200 }, decodeValue(nil))))
 check("undecodable body", "invalid_response", select(2, Monkeytype.payload({ ok = true, status = 200, body = "nope" }, decodeValue(nil))))

@@ -31,6 +31,8 @@ local function tooltip()
     return tr("status.no_key")
   elseif status == "invalid_key" then
     return tr("status.invalid_key")
+  elseif status == "inactive_key" then
+    return tr("status.inactive_key")
   elseif status == "auth_error" then
     return tr("status.auth_error")
   elseif status == "rate_limited" then
@@ -87,7 +89,7 @@ end)
 function onClick()
   -- Without an Ape Key the panel has nothing to show, so the click goes
   -- straight to the setting that fixes it.
-  if status == "no_key" or status == "invalid_key" then
+  if status == "no_key" then
     noctalia.openSettings()
     return
   end

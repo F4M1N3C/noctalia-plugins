@@ -1,5 +1,6 @@
 {
   "action": {
+    "open_ape_keys": "Abrir Ape Keys",
     "open_profile": "Abrir perfil",
     "open_settings": "Abrir ajustes",
     "open_site": "Abrir MonkeyType",
@@ -101,17 +102,18 @@
   },
   "status": {
     "auth_error": "MonkeyType ha rechazado la Ape Key.",
+    "inactive_key": "Esa Ape Key está desactivada. Actívala en las Ape Keys de MonkeyType o crea una nueva.",
     "invalid_key": "Esa Ape Key no es válida. Crea una nueva en Ajustes, luego Ape Keys.",
+    "invalid_response": "MonkeyType ha devuelto una respuesta inesperada.",
     "loading": "Cargando la actividad de MonkeyType…",
     "missing_xdg_open": "Hace falta xdg-open para abrir MonkeyType.",
     "no_activity": "Todavía no hay tests guardados en esta cuenta de MonkeyType.",
     "no_data": "Todavía no hay datos de actividad.",
     "no_key": "Añade tu Ape Key de MonkeyType en los ajustes del plugin.",
+    "rate_limited": "Límite de peticiones de MonkeyType alcanzado. Se reintentará más tarde.",
     "refresh_schedule": "Última actualización a las {time} · Se actualiza cada {interval} min",
     "refreshing": "Actualizando la actividad de MonkeyType…",
-    "rate_limited": "Límite de peticiones de MonkeyType alcanzado. Se reintentará más tarde.",
     "request_error": "No se ha podido contactar con la API de MonkeyType.",
-    "invalid_response": "MonkeyType ha devuelto una respuesta inesperada.",
     "stale": "Mostrando la actividad en caché.",
     "unavailable": "La actividad de MonkeyType no está disponible."
   },

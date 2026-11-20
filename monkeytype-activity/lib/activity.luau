@@ -59,6 +59,21 @@ function Activity.rowLevels(row)
   return levels
 end
 
+-- MonkeyType reports timestamps in milliseconds (`lastDay`,
+-- `lastResultTimestamp`), while Luau's os.date/os.time work in seconds. Any
+-- value past this threshold cannot be a plausible second timestamp.
+local MILLISECOND_THRESHOLD = 100000000000
+
+function Activity.toSeconds(timestamp)
+  if type(timestamp) ~= "number" or timestamp <= 0 then
+    return nil
+  end
+  if timestamp > MILLISECOND_THRESHOLD then
+    return math.floor(timestamp / 1000)
+  end
+  return math.floor(timestamp)
+end
+
 -- ISO date of a UTC timestamp, e.g. "2026-02-14".
 function Activity.utcDate(timestamp)
   return os.date("!%Y-%m-%d", timestamp)
@@ -268,7 +283,7 @@ local function lastResultFields(result, previous)
     lastAcc = accuracy,
     lastMode = mode,
     lastMode2 = mode2,
-    lastTestAt = positiveInteger(result.timestamp),
+    lastTestAt = Activity.toSeconds(result.timestamp),
   }
 end
 
@@ -281,7 +296,7 @@ function Activity.normalize(parts)
   if type(days) ~= "table" then
     return nil, "missing test activity"
   end
-  if type(lastDay) ~= "number" or lastDay <= 0 then
+  if Activity.toSeconds(lastDay) == nil then
     return nil, "missing last activity day"
   end
 
@@ -306,7 +321,8 @@ function Activity.normalize(parts)
     end
   end
 
-  local lastTimestamp = lastDay - lastDay % SECONDS_PER_DAY
+  local lastSeconds = Activity.toSeconds(lastDay)
+  local lastTimestamp = lastSeconds - lastSeconds % SECONDS_PER_DAY
   local built = Activity.build(counts, lastTimestamp)
   local today, todayDate = Activity.todayCount(counts, lastTimestamp, parts.now)
   local streak = type(parts.streak) == "table" and parts.streak or {}
@@ -336,7 +352,7 @@ function Activity.normalize(parts)
     todayDate = todayDate,
     currentStreak = positiveInteger(currentStreak) or 0,
     bestStreak = positiveInteger(bestStreak) or 0,
-    lastResultTimestamp = positiveInteger(streak.lastResultTimestamp),
+    lastResultTimestamp = Activity.toSeconds(streak.lastResultTimestamp),
     completedTests = positiveInteger(stats.completedTests) or previous.completedTests,
     startedTests = positiveInteger(stats.startedTests) or previous.startedTests,
     timeTyping = numberOr(stats.timeTyping, previous.timeTyping),

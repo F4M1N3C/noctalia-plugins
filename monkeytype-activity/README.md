@@ -21,8 +21,10 @@ built from the official MonkeyType API instead of scraping the profile page.
 | A MonkeyType **Ape Key** | All per-user endpoints of the API require one. It is free and created on the website. |
 | `xdg-open` (`xdg-utils` on Arch) | Opens your MonkeyType profile from the panel. |
 
-Create the key in MonkeyType under **Settings**, then **Ape Keys**, and paste it
-into this plugin's settings. The key is read-only for the endpoints this plugin
+Create the key in MonkeyType under **Account settings**, then the **ape keys**
+tab, and paste it into this plugin's settings. New keys start **disabled**: the
+`active` column of that table has to be switched on, or every request answers
+`471 ApeKey is inactive` and the panel offers a shortcut back to that page. The key is read-only for the endpoints this plugin
 uses and is sent in an `Authorization` header by the native HTTP client, so it
 never appears in a process command line.
 
@@ -79,6 +81,9 @@ Key already identifies the account.
 - **UTC day buckets.** MonkeyType counts daily activity in UTC, so the calendar
   matches the heatmap on monkeytype.com/profile. The streak number comes from
   `/users/streak`, which honours your own streak hour offset.
+- **Millisecond timestamps.** MonkeyType reports `lastDay` and
+  `lastResultTimestamp` in milliseconds while the date helpers work in seconds;
+  both are normalised before bucketing, so the calendar never drifts eras.
 - **Offline friendly.** The last payload is cached in the plugin data directory
   and rendered before the first request of the session finishes.
 - **Privacy.** The only data crossing the network are the requests to

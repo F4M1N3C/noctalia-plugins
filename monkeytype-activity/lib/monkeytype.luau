@@ -24,6 +24,14 @@ Monkeytype.STATUS = {
   NO_ACTIVITY = "no_activity",
 }
 
+-- Ape Keys are base64url-ish tokens: anything else (a stray line break from a
+-- paste, a whole shell snippet) must never reach the header list.
+local KEY_PATTERN = "^[%w_%-]+$"
+
+function Monkeytype.isValidKey(key)
+  return type(key) == "string" and key ~= "" and string.match(key, KEY_PATTERN) ~= nil
+end
+
 function Monkeytype.request(path, key)
   return {
     url = Monkeytype.BASE_URL .. path,
@@ -134,14 +142,16 @@ function Monkeytype.arrayLength(body, field)
   return separatorCount + valueCount
 end
 
--- Profile URL for the optional username setting, or nil when unset.
+-- Profile URL for the optional username setting, or nil when unset or not a
+-- name MonkeyType could have issued. Stripping bad characters would land on a
+-- different (possibly existing) profile, so the name is validated instead.
 function Monkeytype.profileUrl(username)
   if type(username) ~= "string" then
     return nil
   end
 
-  local name = string.gsub(username, "[^%w_%-]", "")
-  if name == "" then
+  local name = string.match(username, "^%s*(.-)%s*$")
+  if name == "" or string.match(name, KEY_PATTERN) == nil then
     return nil
   end
 

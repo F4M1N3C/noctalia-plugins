@@ -108,7 +108,6 @@
     "loading": "Loading MonkeyType activity…",
     "missing_xdg_open": "xdg-open is required to open MonkeyType.",
     "no_activity": "No MonkeyType tests are saved on this account yet.",
-    "no_data": "No activity data is available yet.",
     "no_key": "Add your MonkeyType Ape Key in the plugin settings.",
     "rate_limited": "MonkeyType rate limit reached. Retrying later.",
     "refresh_schedule": "Last updated at {time} · Auto-refresh every {interval} min",

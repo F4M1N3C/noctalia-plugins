@@ -81,8 +81,9 @@ end
 
 -- Parse an ISO calendar date as local noon. Noon avoids DST boundary changes,
 -- while the round trip rejects values that os.time would otherwise normalize.
--- Only used to format labels: the date itself is a civil date, so the local
--- zone never changes which day it refers to.
+-- Only used to format labels. `os.time(table)` is UTC in Luau and `os.date`
+-- without "!" is local, so the round trip is verified in UTC to stay correct at
+-- any offset, including the +12…+14 zones where local noon is the next day.
 function Activity.dateTimestamp(value)
   if type(value) ~= "string" then
     return nil
@@ -100,7 +101,7 @@ function Activity.dateTimestamp(value)
     hour = 12,
   })
 
-  if type(timestamp) ~= "number" or os.date("%Y-%m-%d", timestamp) ~= value then
+  if type(timestamp) ~= "number" or os.date("!%Y-%m-%d", timestamp) ~= value then
     return nil
   end
 
@@ -237,8 +238,8 @@ function Activity.build(counts, lastTimestamp)
 end
 
 -- Tests recorded on the current UTC day, mapped back through the window's last
--- day. The window ends on the last day with activity, so today is normally
--- past its end and the answer is zero.
+-- day. MonkeyType ends the window on today (UTC), so the last entry is normally
+-- the count for today; the offset still handles a payload from an earlier day.
 function Activity.todayCount(counts, lastTimestamp, now)
   local stamp = now or os.time()
   local todayTimestamp = stamp - stamp % SECONDS_PER_DAY
@@ -326,7 +327,6 @@ function Activity.normalize(parts)
   local built = Activity.build(counts, lastTimestamp)
   local today, todayDate = Activity.todayCount(counts, lastTimestamp, parts.now)
   local streak = type(parts.streak) == "table" and parts.streak or {}
-  local stats = type(parts.stats) == "table" and parts.stats or {}
   local previous = type(parts.previous) == "table" and parts.previous or {}
   local localStreak, localBest = Activity.streaks(counts)
   local lastResult = lastResultFields(parts.lastResult, previous)
@@ -353,9 +353,6 @@ function Activity.normalize(parts)
     currentStreak = positiveInteger(currentStreak) or 0,
     bestStreak = positiveInteger(bestStreak) or 0,
     lastResultTimestamp = Activity.toSeconds(streak.lastResultTimestamp),
-    completedTests = positiveInteger(stats.completedTests) or previous.completedTests,
-    startedTests = positiveInteger(stats.startedTests) or previous.startedTests,
-    timeTyping = numberOr(stats.timeTyping, previous.timeTyping),
     lastWpm = lastResult.lastWpm,
     lastAcc = lastResult.lastAcc,
     lastMode = lastResult.lastMode,

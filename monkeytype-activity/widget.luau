@@ -13,7 +13,7 @@ local function tooltip()
   if data ~= nil then
     local freshness = stale and tr("widget.cached") or tr("widget.up_to_date")
     local refreshSchedule = tr("status.refresh_schedule", {
-      time = noctalia.formatTime("%H:%M", math.floor(data.fetchedAt)),
+      time = noctalia.formatTime(noctalia.timeFormat(), math.floor(data.fetchedAt)),
       interval = Settings.refreshIntervalMinutes(noctalia.getConfig("refresh_interval_minutes")),
     })
     return tr("widget.tooltip", {

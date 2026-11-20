@@ -257,14 +257,14 @@ end
 local function coldMock()
   local mock = newMock()
   route(mock, "/users/streak", {
-    lastResultTimestamp = NOW - 600,
+    -- The API answers milliseconds; the payload stores seconds.
+    lastResultTimestamp = (NOW - 600) * 1000,
     length = 3,
     maxLength = 7,
     hourOffset = 2,
   })
   routeActivity(mock, YESTERDAY, quietCounts())
-  route(mock, "/users/stats", { completedTests = 500, startedTests = 520, timeTyping = 3600 })
-  route(mock, "/results/last", { wpm = 95.6, acc = 97.2, timestamp = NOW - 600, mode = "time", mode2 = "15" })
+  route(mock, "/results/last", { wpm = 95.6, acc = 97.2, timestamp = (NOW - 600) * 1000, mode = "time", mode2 = "15" })
   return mock
 end
 
@@ -284,7 +284,7 @@ local coldMockInstance = coldMock()
 local coldService = loadService(coldMockInstance)
 do
   local mock = coldMockInstance
-  check("four requests", 4, #mock.requests)
+  check("three requests", 3, #mock.requests)
   check("streak first", "/users/streak", mock.requests[1])
   check("activity second", "/users/currentTestActivity", mock.requests[2])
   check("status", "ready", mock.state.status)
@@ -297,8 +297,7 @@ do
   check("columns", 54, data.columns)
   check("current streak", 3, data.currentStreak)
   check("best streak", 7, data.bestStreak)
-  check("completed tests", 500, data.completedTests)
-  check("last wpm rounded", 96, data.lastWpm)
+    check("last wpm rounded", 96, data.lastWpm)
   check("last accuracy rounded", 97, data.lastAcc)
   check("last mode", "time", data.lastMode)
   check("not stale", false, mock.state.stale)
@@ -313,8 +312,8 @@ do
   local before = mock.state.data.fetchedAt
   mock.clock = mock.clock + 60000
   coldService.update()
-  check("one request", 5, #mock.requests)
-  check("last request is the streak", "/users/streak", mock.requests[5])
+  check("one request", 4, #mock.requests)
+  check("last request is the streak", "/users/streak", mock.requests[4])
   check("status", "ready", mock.state.status)
   check("fetchedAt refreshed", true, mock.state.data.fetchedAt >= before)
   check("calendar kept", true, #mock.state.data.rows[1] > 0)
@@ -324,13 +323,13 @@ section("a new result triggers a full refresh")
 do
   local mock = coldMockInstance
   route(mock, "/users/streak", {
-    lastResultTimestamp = NOW - 30,
+    lastResultTimestamp = (NOW - 30) * 1000,
     length = 4,
     maxLength = 8,
     hourOffset = 2,
   })
   coldService.update()
-  check("four more requests", 9, #mock.requests)
+  check("three more requests", 7, #mock.requests)
   check("current streak", 4, mock.state.data.currentStreak)
   check("best streak", 8, mock.state.data.bestStreak)
 end
@@ -339,14 +338,14 @@ section("manual refreshes are debounced")
 do
   local mock = coldMockInstance
   local before = #mock.requests
-  -- A manual refresh always refetches everything, so it costs four requests.
+  -- A manual refresh always refetches everything, so it costs three requests.
   mock.noctalia.state.set("refresh_request", 1)
-  check("first click refreshes", before + 4, #mock.requests)
+  check("first click refreshes", before + 3, #mock.requests)
   coldService.onIpc("refresh")
-  check("second click is dropped", before + 4, #mock.requests)
+  check("second click is dropped", before + 3, #mock.requests)
   mock.clock = mock.clock + 11000
   coldService.onIpc("refresh")
-  check("later click refreshes again", before + 8, #mock.requests)
+  check("later click refreshes again", before + 6, #mock.requests)
 end
 
 section("a disabled Ape Key is named, not called invalid")
@@ -382,19 +381,6 @@ do
   service.update()
   check("tick after the backoff window retries", true, #mock.requests > before)
   check("status recovers", "ready", mock.state.status)
-end
-
-section("a failing stats request keeps the previous totals")
-do
-  local mock = coldMock()
-  local service = loadService(mock)
-  check("initial total", 500, mock.state.data.completedTests)
-  routeFailure(mock, "/users/stats", 500)
-  route(mock, "/users/streak", { lastResultTimestamp = NOW - 30, length = 4, maxLength = 8 })
-  service.update()
-  check("refresh needed", 8, #mock.requests)
-  check("two complete requests keep the total", 500, mock.state.data.completedTests)
-  check("status still ready", "ready", mock.state.status)
 end
 
 section("cached data is served before the first request finishes")
@@ -442,7 +428,7 @@ do
   local before = #mock.requests
   mock.config.ape_key = "ANOTHERKEY"
   service.onConfigChanged()
-  check("full refresh", before + 4, #mock.requests)
+  check("full refresh", before + 3, #mock.requests)
   check("status", "ready", mock.state.status)
 end
 

@@ -163,6 +163,10 @@ local function newMock(config, data, status, stale)
   noctalia.formatTime = function(pattern, timestamp)
     return pattern .. "@" .. tostring(timestamp)
   end
+  -- Mirrors the manifest default for `[shell].time_format`.
+  noctalia.timeFormat = function()
+    return "%H:%M"
+  end
   mock.noctalia = noctalia
 
   mock.barWidget = {

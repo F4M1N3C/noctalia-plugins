@@ -45,6 +45,15 @@ The panel can also be opened from the command line:
 noctalia msg panel-toggle faminec/monkeytype-activity:calendar
 ```
 
+## IPC
+
+The sync service accepts a `refresh` event, which is what the panel's refresh
+button and the widget's right-click send:
+
+```sh
+noctalia msg plugin faminec/monkeytype-activity:sync all refresh
+```
+
 ## Settings
 
 | Setting | Type | Default | Description |
@@ -69,13 +78,13 @@ clock.
 
 ## Notes
 
-- **Network.** Four HTTPS requests to `api.monkeytype.com`, each with the header
-  `Authorization: ApeKey <key>`: `GET /users/streak`, `GET
-  /users/currentTestActivity`, `GET /users/stats` and `GET /results/last`.
-  `/results` is never requested because an Ape Key only allows 30 calls per day
-  for it. Every tick asks `/users/streak` first; the other three run only when a
-  new result or a new UTC day can change the answer, so an idle bar costs one
-  request per interval instead of four. Nothing is sent anywhere else.
+- **Network.** Three HTTPS requests to `api.monkeytype.com`, each with the
+  header `Authorization: ApeKey <key>`: `GET /users/streak`, `GET
+  /users/currentTestActivity` and `GET /results/last`. `/results` is never
+  requested because an Ape Key only allows 30 calls per day for it. Every tick
+  asks `/users/streak` first; the other two run only when a new result or a new
+  UTC day can change the answer, so an idle bar costs one request per interval
+  instead of three. Nothing is sent anywhere else.
 - **Files.** The last payload is written to `activity.json` in this plugin's
   data directory (`<Noctalia data dir>/plugins/data/faminec/monkeytype-activity/`)
   and read back at start, so the panel and the widget render before the first
@@ -84,11 +93,15 @@ clock.
   argument array, to open your profile or the Ape Keys page. No shell is
   involved.
 - **Rate limits.** A rate-limit answer (`429`/`479`) backs off exponentially for
-  up to an hour, and manual refreshes are debounced.
+  up to an hour; that backoff also covers manual refreshes, which are debounced
+  on top of it.
 - **UTC day buckets.** MonkeyType counts daily activity in UTC, so the calendar
   matches the heatmap on monkeytype.com/profile.
 - **Timestamps.** MonkeyType reports `lastDay` and `lastResultTimestamp` in
   milliseconds; both are normalised before bucketing.
+- **Storage.** The Ape Key is a normal string setting, so Noctalia keeps it in
+  plain text in its own configuration file, and the cached `activity.json` holds
+  only counts, dates and your last result.
 - **Troubleshooting.** `471` means the key exists but the `active` toggle is off.
   `470`/`472` mean the key is unknown or malformed. The panel names the case and
   keeps rendering cached data when it has any.

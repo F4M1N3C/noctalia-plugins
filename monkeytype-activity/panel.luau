@@ -75,7 +75,9 @@ local function formatDate(pattern, date)
   if timestamp == nil then
     return ""
   end
-  return noctalia.formatTime(pattern, timestamp)
+  -- The timestamp is a UTC noon, so it has to be read back in UTC: formatting
+  -- it in local time prints the next day's name past UTC+12.
+  return noctalia.formatTime(pattern, timestamp, "UTC")
 end
 
 local function representativeDateForWeek(week)
@@ -201,7 +203,15 @@ local function prepareGridColumns()
           height = calendarCellHeight,
           -- A native tooltip per day: re-rendering the tree from a hover
           -- callback replaces the node under the pointer and kills the hover.
-          tooltip = trp("panel.day_total", count, { date = date, count = count }),
+          tooltip = trp("panel.day_total", count, { date = formatDate("%Y-%m-%d", date), count = count }),
+        }))
+      else
+        -- A column starts on Sunday, so the leading week is short: an empty
+        -- slot keeps every later cell on its weekday row.
+        table.insert(cells, ui.box({
+          width = calendarCellWidth,
+          height = calendarCellHeight,
+          fill = "on_surface/0",
         }))
       end
     end
@@ -304,7 +314,7 @@ local function refreshSchedule()
     return ""
   end
   return tr("status.refresh_schedule", {
-    time = noctalia.formatTime("%H:%M", math.floor(data.fetchedAt)),
+    time = noctalia.formatTime(noctalia.timeFormat(), math.floor(data.fetchedAt)),
     interval = Settings.refreshIntervalMinutes(noctalia.getConfig("refresh_interval_minutes")),
   })
 end

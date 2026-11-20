@@ -153,7 +153,6 @@ local payload, normaliseError = Activity.normalize({
   dayCount = 372,
   lastDay = TODAY - 86400,
   streak = { length = 3, maxLength = 11, lastResultTimestamp = NOW - 600, hourOffset = 2 },
-  stats = { completedTests = 1800, startedTests = 2000, timeTyping = 7200.5 },
   lastResult = { wpm = 82.4, acc = 95.6, timestamp = NOW - 600, mode = "time", mode2 = "60" },
   now = NOW,
 })
@@ -163,8 +162,6 @@ check("today is empty", 0, payload.today)
 check("window total", 13, payload.windowTotal)
 check("current streak from the API", 3, payload.currentStreak)
 check("best streak from the API", 11, payload.bestStreak)
-check("completed tests", 1800, payload.completedTests)
-check("time typing kept as a float", 7200.5, payload.timeTyping)
 check("wpm rounded", 82, payload.lastWpm)
 check("accuracy rounded", 96, payload.lastAcc)
 check("mode kept", "time", payload.lastMode)
@@ -180,7 +177,6 @@ local merged = Activity.normalize({
   previous = previous,
   now = NOW,
 })
-check("optional stats fall back to the previous payload", 1234, merged.completedTests)
 check("previous wpm survives a failed last result", 70, merged.lastWpm)
 
 local broken, brokenError = Activity.normalize({ days = nil, lastDay = TODAY, now = NOW })
@@ -229,9 +225,31 @@ check("spaced json", 3, Monkeytype.arrayLength('{"testsByDays": [1, 2, 3]}', "te
 check("missing field", nil, Monkeytype.arrayLength('{"data":{}}', "testsByDays"))
 check("garbage input", nil, Monkeytype.arrayLength(nil, "testsByDays"))
 
+section("monkeytype: ape key shape")
+check("alphanumeric key", true, Monkeytype.isValidKey("abcDEF123_-xyz"))
+check("a pasted line break is rejected", false, Monkeytype.isValidKey("abc\nApeKey xyz"))
+check("a space is rejected", false, Monkeytype.isValidKey("abc def"))
+check("empty key", false, Monkeytype.isValidKey(""))
+check("not a string", false, Monkeytype.isValidKey(nil))
+
+section("activity: the payload stores the streak timestamp in seconds")
+local msPayload = Activity.normalize({
+  days = { 4, 0 },
+  dayCount = 2,
+  lastDay = TODAY * 1000,
+  streak = { lastResultTimestamp = (TODAY + 3600) * 1000, length = 2, maxLength = 5 },
+  now = NOW,
+})
+check(
+  "the service can compare it with toSeconds of the raw value",
+  msPayload.lastResultTimestamp,
+  Activity.toSeconds((TODAY + 3600) * 1000)
+)
+
 section("monkeytype: profile url")
 check("plain name", "https://monkeytype.com/profile/faminec", Monkeytype.profileUrl("faminec"))
-check("unsafe characters dropped", "https://monkeytype.com/profile/Ana-Maria", Monkeytype.profileUrl(" Ana-Maria! "))
+check("a rejected name falls back to the site", nil, Monkeytype.profileUrl("Ana Maria!"))
+check("surrounding spaces are ignored", "https://monkeytype.com/profile/Ana-Maria", Monkeytype.profileUrl("  Ana-Maria \n"))
 check("empty name", nil, Monkeytype.profileUrl("   "))
 check("not a string", nil, Monkeytype.profileUrl(nil))
 

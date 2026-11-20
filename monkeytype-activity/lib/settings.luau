@@ -52,9 +52,18 @@ function Settings.username(value)
   return name
 end
 
+-- The setting is a select, so Noctalia hands over the option value as a string;
+-- a hand-edited settings file can also hold a plain number.
 function Settings.refreshIntervalMinutes(value)
   if type(value) == "string" and refreshIntervalMinutes[value] then
     return refreshIntervalMinutes[value]
+  end
+  if type(value) == "number" then
+    for minutes in pairs(refreshIntervalMinutes) do
+      if math.floor(value) == refreshIntervalMinutes[minutes] then
+        return refreshIntervalMinutes[minutes]
+      end
+    end
   end
   return DEFAULT_REFRESH_INTERVAL_MINUTES
 end

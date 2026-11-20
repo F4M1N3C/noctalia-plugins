@@ -5,7 +5,7 @@
 --
 -- Requests are adaptive. `/users/streak` is cheap and tells us whether
 -- anything happened since the last fetch (a new result or a new UTC day), so
--- the three heavier calls only run when they can return something new. The
+-- the two heavier calls only run when they can return something new. The
 -- results endpoint is never polled: it is limited to 30 requests per day with
 -- an Ape Key.
 
@@ -26,9 +26,8 @@ local lastManualMs = 0
 local activeKey = nil
 local data = nil
 
-local function publish(status, detail)
+local function publish(status)
   noctalia.state.set("status", status)
-  noctalia.state.set("error", detail or "")
 end
 
 local function publishData(payload, stale)
@@ -100,11 +99,11 @@ local function succeed(payload)
   persist(payload)
 end
 
-local function failure(status, detail)
+local function failure(status)
   inFlight = false
   failures = failures + 1
   noctalia.state.set("stale", data ~= nil)
-  publish(status, detail)
+  publish(status)
 
   -- Back off only when the server asked us to: retrying a rate limit at the
   -- normal cadence would keep the key blocked.
@@ -129,7 +128,7 @@ end
 local function fullRefresh(key, streak)
   local collected = { streak = streak }
   local activityError = nil
-  local pending = 3
+  local pending = 2
 
   local function step()
     pending = pending - 1
@@ -138,6 +137,8 @@ local function fullRefresh(key, streak)
     end
 
     if collected.activity == nil then
+      -- `activityError` is the status of the failed call (`no_activity` for an
+      -- empty account, `invalid_response` for a malformed payload).
       failure(activityError or Monkeytype.STATUS.RESPONSE)
       return
     end
@@ -147,7 +148,6 @@ local function fullRefresh(key, streak)
       dayCount = collected.dayCount,
       lastDay = collected.activity.lastDay,
       streak = collected.streak,
-      stats = collected.stats,
       lastResult = collected.lastResult,
       previous = data,
       now = os.time(),
@@ -172,16 +172,8 @@ local function fullRefresh(key, streak)
     step()
   end)
 
-  -- Stats and the last result are extras: a failure keeps the previous values
-  -- instead of discarding the whole refresh.
-  request("/users/stats", key, function(response)
-    local stats = Monkeytype.payload(response, noctalia.json.decode)
-    if stats ~= nil then
-      collected.stats = stats
-    end
-    step()
-  end)
-
+  -- The last result is an extra: a failure keeps the previous values instead of
+  -- discarding the whole refresh.
   request("/results/last", key, function(response)
     local lastResult = Monkeytype.payload(response, noctalia.json.decode)
     if lastResult ~= nil then
@@ -203,8 +195,16 @@ local function refresh(force)
     return
   end
 
+  if not Monkeytype.isValidKey(key) then
+    noctalia.state.set("stale", data ~= nil)
+    publish(Monkeytype.STATUS.INVALID_KEY)
+    return
+  end
+
   activeKey = key
-  if not force and noctalia.nowMs() < retryAtMs then
+  -- A manual refresh never talks past a rate-limit backoff: that is exactly the
+  -- click loop that would keep the key blocked.
+  if noctalia.nowMs() < retryAtMs then
     return
   end
 
@@ -221,11 +221,9 @@ local function refresh(force)
 
     -- A new result changes `lastResultTimestamp`; a new UTC day changes the
     -- day the heatmap ends on. Anything else can reuse the cached calendar.
+    -- The payload stores it in seconds, the API answers in milliseconds.
     local today = os.date("!%Y-%m-%d")
-    local lastSeen = streak.lastResultTimestamp
-    if type(lastSeen) ~= "number" then
-      lastSeen = 0
-    end
+    local lastSeen = Activity.toSeconds(streak.lastResultTimestamp) or 0
 
     local needsFull = force
       or data == nil

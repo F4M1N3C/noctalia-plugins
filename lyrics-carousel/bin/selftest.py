@@ -325,7 +325,7 @@ def check_scroll_offset():
             app.cfg = dict(mod.DEFAULTS)
             app.cfg["offset_ms"] = 500
             app.demo = False
-            app.track = mod.Track("cancion", "artista", duration=300.0, status="Playing")
+            app.track = mod.Track("song", "artist", duration=300.0, status="Playing")
             app.track.position = 10.0
             app.track.stamp = time.monotonic()
             app.stop_requested = False
@@ -362,7 +362,7 @@ def check_lyrics_search():
             mod.load_lyrics_settings = lambda: {"sources": ["lrclib"]}
             marked_tracks = []
             mod.mark_missing = lambda track: marked_tracks.append(track)
-            track = mod.Track("cancion", "artista", duration=120.0)
+            track = mod.Track("song", "artist", duration=120.0)
 
             # A provider that does not answer: the deadline expires and the
             # negative cache is NOT marked (the lyrics may arrive later).
@@ -409,7 +409,7 @@ def check_lyrics_retry():
             app.demo = False
             app._player = None
             app.state = "empty"
-            app.track = mod.Track("cancion", "artista")
+            app.track = mod.Track("song", "artist")
             app.last_cfg = time.monotonic()
             app.last_reload = time.monotonic()
             app.theme = mod.Theme()
@@ -568,7 +568,7 @@ def check_karaoke_image_pixel_by_pixel():
         check("the image karaoke can be measured (Pillow)", False, "without Pillow")
         return
 
-    text = "cantando suave la linea"
+    text = "singing softly along the line"
     sung = (0, 200, 0)
     pending = (0, 90, 0)
 
@@ -848,7 +848,7 @@ def render_handover(
     }
     app.lines = [_SceneLine(text) for text in texts]
     app.karaoke = karaoke
-    app.next_timed_start = lambda indice: None
+    app.next_timed_start = lambda idx: None
     app.karaoke_amount = lambda *args: amount if karaoke else 0.0
     app.scroll_state = lambda scroll_position: state_value or (1, 2, progress)
     renderer = mod.ImageRenderer.__new__(mod.ImageRenderer)
@@ -887,7 +887,7 @@ def opaque_color(image):
     colors = region.getcolors(maxcolors=200000) or []
     if not colors:
         return (0, 0, 0)
-    cuenta, pixel = max(colors, key=lambda par: par[1][3])
+    count, pixel = max(colors, key=lambda pair: pair[1][3])
     return pixel[:3]
 
 
@@ -1183,11 +1183,11 @@ def check_karaoke_without_glow():
     # Outside the text box (with 2 px of tolerance for the antialiasing
     # of the glyph itself) not a single pixel may remain: that is where the halo used to live.
     outside = 0
-    for indice, px in enumerate(pixels(image)):
+    for idx, px in enumerate(pixels(image)):
         if px[3] == 0:
             continue
-        px_x = indice % image.size[0]
-        px_y = indice // image.size[0]
+        px_x = idx % image.size[0]
+        px_y = idx // image.size[0]
         if (
             px_x < box[0] - 2
             or px_x > box[2] + 2
@@ -1347,14 +1347,14 @@ def check_karaoke_smooth_edge():
 
     # Per column, the further from the pending tone, the more sung it is.
     saturation = {}
-    for indice, px in enumerate(pixels(image)):
+    for idx, px in enumerate(pixels(image)):
         if px[3] != 255:
             continue
         color = px[:3]
         if color == BACKGROUND:
             continue
         setting_value = distance(color, PENDING) - distance(color, SUNG)
-        x = indice % image.size[0]
+        x = idx % image.size[0]
         saturation[x] = max(saturation.get(x, 0), setting_value)
 
     sung_lines = {x: v for x, v in saturation.items() if v > 0}
@@ -1439,11 +1439,11 @@ def check_sung_text_is_crisp():
     x = (image.size[0] - brush.textlength(text, font=font)) / 2
     box = brush.textbbox((x, 40), text, font=font, anchor="lm")
     outside_box = 0
-    for indice, px in enumerate(pixels(image)):
+    for idx, px in enumerate(pixels(image)):
         if px[3] == 0:
             continue
-        px_x = indice % image.size[0]
-        px_y = indice // image.size[0]
+        px_x = idx % image.size[0]
+        px_y = idx // image.size[0]
         if (
             px_x < box[0] - 2
             or px_x > box[2] + 2
@@ -1461,12 +1461,12 @@ def check_sung_text_is_crisp():
     # color: what remains is the edge of the fill (tones between sung and
     # pending), not a shadow spilled to the side.
     last = 0
-    for indice, px in enumerate(pixels(image)):
+    for idx, px in enumerate(pixels(image)):
         if px[3] > 0 and px[:3] == sung:
-            last = max(last, indice % image.size[0])
+            last = max(last, idx % image.size[0])
     beyond = 0
-    for indice, px in enumerate(pixels(image)):
-        x = indice % image.size[0]
+    for idx, px in enumerate(pixels(image)):
+        x = idx % image.size[0]
         if x <= last or px[3] == 0:
             continue
         red, green, blue = px[:3]
@@ -1580,7 +1580,7 @@ def check_instrumental_gap_detection():
             app.demo = False
             app.state = "lyrics"
             app.synced = True
-            app.track = mod.Track("Tema", "Artista", duration=40.0)
+            app.track = mod.Track("Song", "Artist", duration=40.0)
             app.lines = [
                 mod.LyricLine(6.0, 2.0, "primera"),
                 mod.LyricLine(14.0, 2.0, "segunda"),
@@ -2222,7 +2222,7 @@ def check_reload_by_signal():
             app = object.__new__(mod.LyricsCarousel)
             app.cfg = dict(mod.DEFAULTS)
             app.demo = False
-            app.track = mod.Track("Tema", "Artista")
+            app.track = mod.Track("Song", "Artist")
             app.reload_requested = False
             calls = []
             app.reload_lyrics = lambda force=False: calls.append(force)
@@ -2534,7 +2534,7 @@ def check_empty_title_does_not_search_again():
                     start_calls.append(track.key)
 
             app.fetcher = FakeFetcher()
-            song = mod.Track("", "Artista", "Album", 100.0)
+            song = mod.Track("", "Artist", "Album", 100.0)
             for _ in range(5):
                 app._apply_track(song)
             check(
@@ -2568,7 +2568,7 @@ def check_adapter_timeout():
             try:
                 lines, source = mod.run_adapter(
                     "splayer",
-                    mod.Track("cancion", "artista", duration=200.0),
+                    mod.Track("song", "artist", duration=200.0),
                     {},
                     lambda message: None,
                 )
@@ -2608,9 +2608,9 @@ def check_lines_are_sorted():
             app = object.__new__(mod.LyricsCarousel)
             app.cfg = dict(mod.DEFAULTS)
             app.lines = [
-                mod.LyricLine(-1.0, 0.0, "sin tiempo"),
+                mod.LyricLine(-1.0, 0.0, "no timing"),
                 mod.LyricLine(10.0, 0.0, "suena"),
-                mod.LyricLine(-1.0, 0.0, "sin tiempo 2"),
+                mod.LyricLine(-1.0, 0.0, "no timing 2"),
                 mod.LyricLine(20.0, 0.0, "final"),
             ]
             index, _, _ = app.scroll_state(15.0)
@@ -2674,7 +2674,7 @@ def check_only_the_winner_writes_the_cache():
 
             mod.fetch_lrclib = lrclib
             mod.run_adapter = adapter
-            mod.fetch_lyrics(mod.Track("cancion", "artista", duration=100.0), True, lambda m: None)
+            mod.fetch_lyrics(mod.Track("song", "artist", duration=100.0), True, lambda m: None)
             # The losing thread stays alive for a moment: the cache can only
             # have been written once, with the winner.
             time.sleep(0.6)
@@ -2747,17 +2747,17 @@ def check_fetch_prefers_the_word_timing():
                 return line
 
             def lrclib(track, log):
-                return [lyric_line("letra por linea")], None
+                return [lyric_line("line lyric")], None
 
             def adapter(source, track, settings, log):
                 time.sleep(0.35)
-                return [lyric_line("letra por palabra", True)], None
+                return [lyric_line("word lyric", True)], None
 
             mod.fetch_lrclib = lrclib
             mod.run_adapter = adapter
             updates = []
             lines, source, synced = mod.fetch_lyrics(
-                mod.Track("cancion", "artista", duration=100.0),
+                mod.Track("song", "artist", duration=100.0),
                 True,
                 lambda message: None,
                 on_update=lambda *args: updates.append(args),
@@ -2806,7 +2806,7 @@ def check_word_fetch_does_not_wait():
             mod.WORD_GRACE = 3.0
             mod.save_cache = lambda *args: None
 
-            text = "letra por palabra"
+            text = "word lyric"
             line = mod.LyricLine(1.0, 2.0, text)
             line.chars = [1.0 + index * 0.1 for index in range(len(text))]
 
@@ -2821,7 +2821,7 @@ def check_word_fetch_does_not_wait():
             mod.run_adapter = adapter
             start_value = time.monotonic()
             lines, source, synced = mod.fetch_lyrics(
-                mod.Track("cancion", "artista", duration=100.0),
+                mod.Track("song", "artist", duration=100.0),
                 True,
                 lambda message: None,
             )
@@ -2896,11 +2896,11 @@ def check_lyrics_without_accents():
 
             def lyric_lines(texts, with_chars=False):
                 output = []
-                for indice, text in enumerate(texts):
-                    line = mod.LyricLine(1.0 + indice * 4.0, 3.0, text)
+                for idx, text in enumerate(texts):
+                    line = mod.LyricLine(1.0 + idx * 4.0, 3.0, text)
                     if with_chars:
                         line.chars = [
-                            1.0 + indice * 4.0 + time_step * 0.05
+                            1.0 + idx * 4.0 + time_step * 0.05
                             for time_step in range(len(text))
                         ]
                     output.append(line)
@@ -3017,14 +3017,14 @@ def check_improvement_does_not_overwrite_the_cache():
             mod.WORD_GRACE = 0.2
             mod.save_cache = lambda *args: None
             mod.fetch_lrclib = lambda track, log: (
-                [mod.LyricLine(1.0, 2.0, "letra por linea")],
+                [mod.LyricLine(1.0, 2.0, "line lyric")],
                 None,
             )
             mod.run_adapter = lambda source, track, settings, log: ([], None)
             saved_values = []
             mod.save_cache = lambda *args: saved_values.append(args)
             mod.fetch_lyrics(
-                mod.Track("cancion", "artista", duration=100.0),
+                mod.Track("song", "artist", duration=100.0),
                 True,
                 lambda message: None,
                 upgrade=True,
@@ -3041,7 +3041,7 @@ def check_cache_is_upgraded_in_the_background():
     with tempfile.TemporaryDirectory(prefix="lyrics-carousel-cache-") as cache:
         with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
-            line = mod.LyricLine(1.0, 2.0, "letra por linea")
+            line = mod.LyricLine(1.0, 2.0, "line lyric")
             original_cache = mod.load_cache
             original_recent = getattr(mod, "word_checked_recent", None)
             mod.load_cache = lambda track: ([line], "lrclib", True)
@@ -3059,7 +3059,7 @@ def check_cache_is_upgraded_in_the_background():
 
             try:
                 app = _config_app(mod)
-                app.track = mod.Track("cancion", "artista", duration=100.0)
+                app.track = mod.Track("song", "artist", duration=100.0)
                 app.lines = []
                 app.source = ""
                 app.synced = False
@@ -3082,7 +3082,7 @@ def check_cache_is_upgraded_in_the_background():
                 # repeated on every start of the song.
                 mod.word_checked_recent = lambda track: True
                 app = _config_app(mod)
-                app.track = mod.Track("cancion", "artista", duration=100.0)
+                app.track = mod.Track("song", "artist", duration=100.0)
                 app.lines = []
                 app.source = ""
                 app.synced = False
@@ -3112,8 +3112,8 @@ def check_result_does_not_overwrite_the_same_lyrics():
             mod.mark_word_checked = lambda track: None
             try:
                 app = object.__new__(mod.LyricsCarousel)
-                app.track = mod.Track("cancion", "artista", duration=100.0)
-                current = mod.LyricLine(1.0, 2.0, "letra por linea")
+                app.track = mod.Track("song", "artist", duration=100.0)
+                current = mod.LyricLine(1.0, 2.0, "line lyric")
                 app.lines = [current]
                 app.source = "lrclib"
                 app.synced = True
@@ -3123,7 +3123,7 @@ def check_result_does_not_overwrite_the_same_lyrics():
                 if apply is None:
                     check("applying a result does not overwrite the current lyrics", False, "_apply_fetched is missing")
                     return
-                another = mod.LyricLine(1.0, 2.0, "otra letra por linea")
+                another = mod.LyricLine(1.0, 2.0, "another line lyric")
                 check(
                     "lyrics of the same quality are not applied again",
                     apply([another], "netease", True) is False
@@ -3131,7 +3131,7 @@ def check_result_does_not_overwrite_the_same_lyrics():
                     and app.lines == [current],
                     "source=%s" % (app.source,),
                 )
-                word = mod.LyricLine(1.0, 2.0, "letra por palabra")
+                word = mod.LyricLine(1.0, 2.0, "word lyric")
                 word.chars = [1.0 + index * 0.1 for index in range(len(word.text))]
                 check(
                     "lyrics with word timings do replace",
@@ -3206,14 +3206,14 @@ def check_lrclib_prefers_the_enhanced_lyrics():
             original = mod._http_json
             candidates = [
                 {
-                    "trackName": "cancion",
-                    "artistName": "artista",
+                    "trackName": "song",
+                    "artistName": "artist",
                     "duration": 100,
                     "syncedLyrics": "[00:01.00]hola\n[00:05.00]mundo",
                 },
                 {
-                    "trackName": "cancion",
-                    "artistName": "artista",
+                    "trackName": "song",
+                    "artistName": "artist",
                     "duration": 100,
                     "syncedLyrics": "[00:01.00]<00:01.00>hola <00:01.50>mundo",
                 },
@@ -3221,7 +3221,7 @@ def check_lrclib_prefers_the_enhanced_lyrics():
             mod._http_json = lambda *args, **kwargs: candidates
             try:
                 lines, error = mod.fetch_lrclib(
-                    mod.Track("cancion", "artista", duration=100.0),
+                    mod.Track("song", "artist", duration=100.0),
                     lambda message: None,
                 )
             finally:
@@ -3323,7 +3323,7 @@ def check_karaoke_uses_real_times():
             app = object.__new__(mod.LyricsCarousel)
             app.lines = [
                 mod.LyricLine(10.0, 0, "primera"),
-                mod.LyricLine(-1, 0, "sin tiempo"),
+                mod.LyricLine(-1, 0, "no timing"),
                 mod.LyricLine(20.0, 0, "tercera"),
             ]
             next_timed_start_fn = getattr(app, "next_timed_start", None)
@@ -3461,9 +3461,9 @@ def check_estimated_times_do_not_advance_untimed_lines():
 
             # Reviewer case: the line without a time goes last.
             lines = [
-                mod.LyricLine(30.0, 0, "con tiempo"),
-                mod.LyricLine(60.0, 0, "con tiempo"),
-                mod.LyricLine(-1, 0, "sin tiempo"),
+                mod.LyricLine(30.0, 0, "with timing"),
+                mod.LyricLine(60.0, 0, "with timing"),
+                mod.LyricLine(-1, 0, "no timing"),
             ]
             mod.estimate_times(lines, 200.0)
             check(
@@ -3480,7 +3480,7 @@ def check_estimated_times_do_not_advance_untimed_lines():
             # A line without a time in the middle stays between its neighbours.
             lines = [
                 mod.LyricLine(10.0, 0, "primera"),
-                mod.LyricLine(-1, 0, "sin tiempo"),
+                mod.LyricLine(-1, 0, "no timing"),
                 mod.LyricLine(20.0, 0, "tercera"),
             ]
             mod.estimate_times(lines, 200.0)
@@ -3530,8 +3530,8 @@ def check_estimated_times_stay_inside_the_song():
             # A line without a time at the end: it stays four seconds after
             # the last real one, inside the song.
             lines = [
-                mod.LyricLine(30.0, 0, "con tiempo"),
-                mod.LyricLine(-1, 0, "sin tiempo"),
+                mod.LyricLine(30.0, 0, "with timing"),
+                mod.LyricLine(-1, 0, "no timing"),
             ]
             mod.estimate_times(lines, 200.0)
             check(
@@ -3549,9 +3549,9 @@ def check_estimated_times_stay_inside_the_song():
             # next real one comes earlier in time, so the intermediate gap
             # is useless).
             lines = [
-                mod.LyricLine(30.0, 0, "con tiempo"),
-                mod.LyricLine(-1, 0, "sin tiempo"),
-                mod.LyricLine(10.0, 0, "con tiempo"),
+                mod.LyricLine(30.0, 0, "with timing"),
+                mod.LyricLine(-1, 0, "no timing"),
+                mod.LyricLine(10.0, 0, "with timing"),
             ]
             mod.estimate_times(lines, 200.0)
             check(
@@ -3563,7 +3563,7 @@ def check_estimated_times_stay_inside_the_song():
             # Several lines without a time at the end: all of them inside the
             # song and without overlapping.
             lines = [
-                mod.LyricLine(180.0, 0, "con tiempo"),
+                mod.LyricLine(180.0, 0, "with timing"),
                 mod.LyricLine(-1, 0, "a"),
                 mod.LyricLine(-1, 0, "b"),
                 mod.LyricLine(-1, 0, "c"),
@@ -3587,9 +3587,9 @@ def check_estimated_times_stay_inside_the_song():
             # estimated ones cannot end at second 104 of a
             # 100 s song.
             lines = [
-                mod.LyricLine(100.0, 0, "con tiempo"),
-                mod.LyricLine(-1, 0, "sin tiempo"),
-                mod.LyricLine(-1, 0, "sin tiempo 2"),
+                mod.LyricLine(100.0, 0, "with timing"),
+                mod.LyricLine(-1, 0, "no timing"),
+                mod.LyricLine(-1, 0, "no timing 2"),
             ]
             mod.estimate_times(lines, 100.0)
             starts = [line.start for line in lines]
@@ -3602,9 +3602,9 @@ def check_estimated_times_stay_inside_the_song():
             # Between two real ones, the next may be beyond the end of the
             # song: the gap is clipped to the duration.
             lines = [
-                mod.LyricLine(10.0, 0, "con tiempo"),
-                mod.LyricLine(-1, 0, "sin tiempo"),
-                mod.LyricLine(200.0, 0, "con tiempo"),
+                mod.LyricLine(10.0, 0, "with timing"),
+                mod.LyricLine(-1, 0, "no timing"),
+                mod.LyricLine(200.0, 0, "with timing"),
             ]
             mod.estimate_times(lines, 100.0)
             check(
@@ -3616,9 +3616,9 @@ def check_estimated_times_stay_inside_the_song():
             # The first real line at second 0 leaves no gap before it: the
             # estimated ones stay at the origin, they do not jump past it.
             lines = [
-                mod.LyricLine(-1, 0, "sin tiempo"),
-                mod.LyricLine(-1, 0, "sin tiempo 2"),
-                mod.LyricLine(0.0, 0, "con tiempo"),
+                mod.LyricLine(-1, 0, "no timing"),
+                mod.LyricLine(-1, 0, "no timing 2"),
+                mod.LyricLine(0.0, 0, "with timing"),
             ]
             mod.estimate_times(lines, 100.0)
             starts = [line.start for line in lines]
@@ -3634,7 +3634,7 @@ def check_estimated_times_stay_inside_the_song():
             # would already have been sung).
             lines = [
                 mod.LyricLine(10.0, 0, "primera"),
-                mod.LyricLine(-1, 0, "sin tiempo"),
+                mod.LyricLine(-1, 0, "no timing"),
                 mod.LyricLine(10.0, 0, "segunda"),
             ]
             mod.estimate_times(lines, 200.0)
@@ -3646,7 +3646,7 @@ def check_estimated_times_stay_inside_the_song():
 
             # Without any anchor the duration also rules: a short song
             # cannot leave lines at second 13.
-            lines = [mod.LyricLine(-1, 0, "línea %d" % indice) for indice in range(10)]
+            lines = [mod.LyricLine(-1, 0, "line %d" % idx) for idx in range(10)]
             mod.estimate_times(lines, 10.0)
             starts = [line.start for line in lines]
             check(
@@ -3844,7 +3844,7 @@ def check_cache_json_is_not_an_object():
         with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             mod.CACHE_DIR = cache
-            track = mod.Track("cancion", "artista", duration=100.0)
+            track = mod.Track("song", "artist", duration=100.0)
             path = os.path.join(cache, mod.cache_key(track) + ".json")
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write("[]")
@@ -3865,7 +3865,7 @@ def check_pause_key_survives_playerctl_failure():
         with temporary_env({"XDG_CACHE_HOME": cache}):
             mod = script_module()
             app = object.__new__(mod.LyricsCarousel)
-            app.track = mod.Track("cancion", "artista", player="mpv")
+            app.track = mod.Track("song", "artist", player="mpv")
             app._player = None
             original = mod.subprocess.run
 

@@ -4,7 +4,11 @@ Synced lyrics in a floating kitty window, in the spirit of `cava`, `lavat` or `u
 
 ## Install
 
-Add this repository as a plugin source and enable the plugin:
+Install **Lyrics Carousel** from Noctalia's plugin catalog: open
+**Settings → Plugins**, find *Lyrics Carousel* and enable it.
+
+To try the development snapshot before a release reaches the catalog, add the
+author's source instead:
 
 ```sh
 noctalia msg plugins source add dev path https://github.com/F4M1N3C/noctalia-plugins
@@ -20,7 +24,7 @@ the plugin; right clicking opens the lyrics window directly.
 | Field | Value |
 | --- | --- |
 | ID | `faminec/lyrics-carousel` |
-| Entries | Bar widget: `widget`; panel: `panel`; event bridge: `service` |
+| Entries | Bar widget: `widget`; panel: `panel`; service: `service` |
 
 ## Requirements
 
@@ -40,6 +44,8 @@ The following executables must be installed and available on `PATH`:
 | `playerctl` | `playerctl` | Reads the active MPRIS player so the plugin knows what is playing. |
 | `python3` | `python` | Runs the carousel script (`bin/lyrics-carousel`) and the settings helper (`bin/set-setting.py`). |
 | `fc-match` | `fontconfig` | Resolves the configured font family to a file for Pillow (image mode accepts any installed font). |
+| `pkill` | `procps-ng` | Stops the previous lyrics window before opening a new one. |
+| `sleep` | `coreutils` | Short delay between stopping the old window and creating the new one. |
 
 `python3` needs Pillow (`python-pillow`) for the image renderer. The plugin never
 installs anything: every dependency has to be there before the plugin is enabled.
@@ -195,7 +201,7 @@ noctalia msg plugin faminec/lyrics-carousel:widget all refresh
 
 | Event | `panel` | `widget` |
 | --- | --- | --- |
-| `launch` | Opens the lyrics window (starts the script). | Toggles the panel. |
+| `launch` | Opens the lyrics window (starts the script). | Opens the lyrics window (starts the script). |
 | `toggle <key>` | Flips a switch. | Flips a switch. |
 | `set <key> <value> [type]` | Sets a setting. | Sets a setting. |
 | `refresh` | Re-reads the settings and the track, and redraws the panel. | Redraws the bar icon. |
@@ -523,64 +529,6 @@ could land after the test had finished and end up applied to the real
 settings the next time the panel is closed.
 
 `--diagnostics` prints the same information for the running script as JSON.
-Both are used by `tools/verify-plugins.py`.
-
-The verifier itself has a regression battery, which simulates failures
-(a broken `.luau`, a self-test that fails without naming the plugin, a
-validator that crashes, a missing compiler, a missing log, no shared
-validators) and checks that each one is reported and blocks the pass.
-It works on temporary copies of the repository, the deployment and the
-state, so it never touches the real installation.
-
-The battery reads the verifier's result in JSON (`--json`), so it checks
-the behaviour (which failures, of which plugin, blocking or not) and not
-the wording of the messages. Each scenario isolates its cause: a PATH with the usual tools minus the one
-it wants to be missing, so a scenario about a missing compiler does not
-also break the validators. No assertion can pass in the void: if the
-verifier does not return JSON, or the self-tests did not run, the battery
-says so instead of taking it for a pass. It also checks that the exit code
-and the code reported in the JSON always agree:
-
-A `.luau` that only uses Luau syntax is not an error: type annotations are
-stripped first (the shared normaliser mangles them) and the rest is
-normalised with the shared `noctalia_api` module and compiled again. If it
-still does not compile, but the file has type annotations, it is reported
-as a warning (not a failure): it may be Luau syntax the normaliser does
-not cover yet.
-
-For this plugin that ambiguity does not exist: the self-test checks that
-every `.luau` compiles as it is, so a syntax error is always unambiguous
-and is caught statically (and by the self-test too, so there are two
-independent ways of noticing it).
-
-The verifier always states what it could and could not check: how many
-`.luau` compiled, how many only use Luau syntax, how many are inconclusive,
-and it fails (instead of passing) when a check could not be run at all
-(missing validator, missing compiler, missing log, Noctalia not
-responding). A file that cannot be read (invalid UTF-8) is reported, not
-skipped, and the verifier never dies with a traceback: if something
-escapes, it says so and exits with an error.
-
-The runtime part is checked too: the panel is opened and closed, the
-widget is asked to open it, and a setting is written through the widget.
-Every step is checked: the answer must be `dispatched 1`, otherwise the
-event was lost and the step did not happen — and even a delivered event
-is not enough, so the overrides file is checked too: if the helper fails,
-the event is delivered and nothing is written. The write goes through the
-widget because it is always instantiated, while the panel entry only
-exists while the panel is open and takes a few seconds to be ready (sending
-the event too early loses it without a trace).
-
-If the panel has pending changes (the overrides file exists), the verifier
-does not write anything: it would overwrite them. It says so instead.
-
-Two more cases are reported instead of being passed over: if the log was
-rotated while the verification was running (nothing could be reviewed) and
-if the deployed copy is out of date (its self-test is missing).
-
-```sh
-python3 ~/.local/share/noctalia/plugins/lyrics-carousel/tools/check-verifier.py
-```
 
 ## Notes
 
@@ -598,14 +546,14 @@ python3 ~/.local/share/noctalia/plugins/lyrics-carousel/tools/check-verifier.py
 - **Files written:** the lyrics cache and the debug log under
   `~/.cache/lyrics-carousel`, and the plugin data directory (`overrides.json`,
   `window.pid`). The settings are written to Noctalia's `settings.toml`.
-- **Commands spawned:** `kitty` (the lyrics window, launched through the Hyprland
-  Lua API), `python3` (the carousel script, the settings helper, the source
-  adapter, `window-control.py` for stopping the previous window by PID and
-  `hold-repeat.py` for the press-and-hold steppers), `playerctl` (player metadata
-  and play/pause), `hyprctl` (`clients -j`, `dispatch` for the geometry and the
-  pin) and `sleep` (the delay between creating the window and applying its
-  geometry). `fc-match` resolves the font family for Pillow. No `pkill -f`
-  pattern is used: the previous window is stopped by its PID.
+- **Commands spawned:** `kitty` (the lyrics window, which runs
+  `sh -lc python3 …`, launched through the Hyprland Lua API), `python3` (the
+  carousel script, the settings helper, the source adapter, `window-control.py`
+  for the theme and stop signals and `hold-repeat.py` for the press-and-hold
+  steppers), `playerctl` (player metadata and play/pause), `hyprctl`
+  (`clients -j`, `dispatch` for the geometry and the pin), `fc-match` (font
+  resolution for Pillow), `pkill` (stops the previous window, matched on its
+  class and title) and `sleep` (the short delay before creating the new window).
 
 ### Limitations
 

@@ -330,7 +330,7 @@ class ImageRenderer:
             soft_mask = Image.new("L", (limit, height), 255)
             ramp_span = min(ramp, limit)
             ramp_values = [
-                int(255 * (ramp_span - indice) / float(ramp_span)) for indice in range(ramp_span)
+                int(255 * (ramp_span - idx) / float(ramp_span)) for idx in range(ramp_span)
             ]
             ramp_column = Image.new("L", (ramp_span, 1))
             ramp_column.putdata(ramp_values)

@@ -471,7 +471,7 @@ local function rotatorRow(key, label, glyph, valueKey, glyphs, tooltipKey)
       key = "btn-" .. valueKey:gsub("_", "-"),
       glyph = glyphs[current + 1],
       variant = "secondary",
-      controlSize = "xs",
+      controlSize = "sm",
       glyphSize = 11,
       width = 18,
       height = 18,
@@ -510,7 +510,7 @@ local function instrumentalRow()
       key = "btn-instrumental-icon",
       glyph = "music",
       variant = "secondary",
-      controlSize = "xs",
+      controlSize = "sm",
       glyphSize = 11,
       width = 18,
       height = 18,
@@ -523,7 +523,7 @@ local function instrumentalRow()
       key = "btn-instrumental-custom",
       glyph = "typography",
       variant = custom and "secondary" or "ghost",
-      controlSize = "xs",
+      controlSize = "sm",
       glyphSize = 11,
       width = 18,
       height = 18,
@@ -1035,7 +1035,7 @@ render = function()
           -- Small: a big button here made the row taller and pushed the
           -- whole panel down. The explicit size keeps it below the height
           -- of the switch, so the row does not grow when it appears.
-          controlSize = "xs",
+          controlSize = "sm",
           glyphSize = 11,
           width = 18,
           height = 18,

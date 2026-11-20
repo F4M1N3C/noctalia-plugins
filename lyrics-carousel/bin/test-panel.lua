@@ -1258,7 +1258,7 @@ noctalia.getConfig = realGetConfig
 local brainButton = findByKey("button", "btn-karaoke-brain")
 check(brainButton ~= nil, "the panel has the brain button")
 if brainButton ~= nil then
-  eq(brainButton.props.controlSize, "xs", "the brain button is small")
+  eq(brainButton.props.controlSize, "sm", "the brain button is small")
   eq(brainButton.props.glyphSize, 11, "the brain button glyph is small")
   eq(brainButton.props.width, 18, "the brain button is narrow")
   eq(brainButton.props.height, 18, "the brain button is low")
@@ -1305,7 +1305,7 @@ local customButton = findByKey("button", "btn-instrumental-custom")
 check(iconButton ~= nil, "the instrumental icon button is shown")
 check(customButton ~= nil, "the instrumental custom button is shown")
 if iconButton ~= nil then
-  eq(iconButton.props.controlSize, "xs", "the instrumental icon button is small")
+  eq(iconButton.props.controlSize, "sm", "the instrumental icon button is small")
   iconButton.props.onClick()
   eq(overrides.instrumental_icon, 1, "the instrumental button rotates the icon")
 end
@@ -1355,7 +1355,7 @@ onOpen()
 local markerButton = findByKey("button", "btn-marker-style")
 check(markerButton ~= nil, "the marker style button is shown with the marker on")
 if markerButton ~= nil then
-  eq(markerButton.props.controlSize, "xs", "the marker style button is small")
+  eq(markerButton.props.controlSize, "sm", "the marker style button is small")
   eq(markerButton.props.glyphSize, 11, "the marker style glyph is small")
   eq(markerButton.props.width, 18, "the marker style button is narrow")
   eq(markerButton.props.height, 18, "the marker style button is low")
@@ -1375,7 +1375,7 @@ end
 local headerButton = findByKey("button", "btn-header-pos")
 check(headerButton ~= nil, "the header position button is shown with the header on")
 if headerButton ~= nil then
-  eq(headerButton.props.controlSize, "xs", "the header position button is small")
+  eq(headerButton.props.controlSize, "sm", "the header position button is small")
   eq(headerButton.props.width, 18, "the header position button is narrow")
   headerButton.props.onClick()
   eq(overrides.header_pos, 1, "the header button rotates the alignment")

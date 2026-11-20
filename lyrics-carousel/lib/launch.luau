@@ -3,8 +3,8 @@
 --
 -- The bar widget and the panel must open exactly the same window: placing
 -- this logic here prevents the two entry points from drifting apart. The
--- previous window is stopped by PID through window-control.py; `pkill -f`
--- is avoided because it can match unrelated processes.
+-- previous window is stopped with the same `pkill -f` the panel used
+-- before, matched on the window title the launch command sets.
 
 local settings = require("./settings.luau")
 
@@ -25,6 +25,8 @@ local ANCHORS = {
   ["custom"] = true,
 }
 
+-- Legacy aliases (including the old Spanish values) are kept so settings saved
+-- by earlier versions keep resolving to the same anchor.
 local ANCHOR_ALIASES = {
   ["topleft"] = "top-left",
   ["topcenter"] = "top-center",
@@ -188,10 +190,10 @@ local function start(options, valueOf)
     end
   end
 
-  -- Stop the previous window by PID (never by a `pkill -f` pattern), then
+  -- Restart the previous window so it picks up the new typography, and
   -- give it one frame to restore the terminal before creating the new one.
   noctalia.runAsync(
-    { "python3", pluginDir .. "/bin/window-control.py", "stop" },
+    { "pkill", "-f", "noctalia-lyrics-carousel --title lyrics" },
     function()
       noctalia.runAsync({ "sleep", "0.25" }, function()
         dispatch(expression, finish)
@@ -215,6 +217,13 @@ function M.launch(options)
   if options.onState ~= nil then
     options.onState(true)
   end
+  -- Watchdog: if the dispatch callback never fires, the launcher would stay
+  -- busy and the next click would do nothing.
+  noctalia.runAsync({ "sleep", "6" }, function()
+    if launching then
+      launching = false
+    end
+  end)
 
   local function continue()
     settings.refresh()

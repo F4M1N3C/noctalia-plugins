@@ -1,6 +1,6 @@
 -- Unit tests for the pure modules of `faminec/monkeytype-activity`.
 --
---   lua5.4 test-units.lua
+--   lua5.4 tests/test-units.lua
 --
 -- No Noctalia, no network: activity.luau, monkeytype.luau and settings.luau are
 -- plain Lua once the Luau-only bits (math.clamp) are avoided, which they are.
@@ -13,7 +13,20 @@ local function scriptDir()
   return "."
 end
 
-local DIR = scriptDir()
+-- The tests live in `tests/`, so the plugin root is the directory above them.
+local function pluginRoot()
+  local dir = scriptDir()
+  local parent = dir:match("^(.*)[/\\]tests$")
+  if parent and parent ~= "" then
+    return parent
+  end
+  if dir == "tests" or parent == "" then
+    return "."
+  end
+  return dir
+end
+
+local DIR = pluginRoot()
 local loaded = {}
 local function pluginRequire(path)
   local relative = path:gsub("^%./", "")

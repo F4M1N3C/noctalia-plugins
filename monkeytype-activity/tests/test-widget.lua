@@ -1,7 +1,7 @@
 -- Behaviour tests for the bar widget, driven through a mock of the Noctalia
 -- runtime and the `barWidget.*` namespace.
 --
---   lua5.4 test-widget.lua
+--   lua5.4 tests/test-widget.lua
 
 local function scriptDir()
   local source = debug.getinfo(1, "S").source
@@ -11,7 +11,20 @@ local function scriptDir()
   return "."
 end
 
-local DIR = scriptDir()
+-- The tests live in `tests/`, so the plugin root is the directory above them.
+local function pluginRoot()
+  local dir = scriptDir()
+  local parent = dir:match("^(.*)[/\\]tests$")
+  if parent and parent ~= "" then
+    return parent
+  end
+  if dir == "tests" or parent == "" then
+    return "."
+  end
+  return dir
+end
+
+local DIR = pluginRoot()
 local loaded = {}
 local function pluginRequire(path)
   local relative = path:gsub("^%./", "")

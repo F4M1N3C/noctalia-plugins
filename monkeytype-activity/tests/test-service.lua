@@ -1,7 +1,7 @@
 -- Behaviour tests for the sync service, driven through a mock of the Noctalia
 -- runtime. Nothing here touches the network or the real shell.
 --
---   lua5.4 test-service.lua
+--   lua5.4 tests/test-service.lua
 --
 -- The mock reproduces the two details that shape the service: `noctalia.http`
 -- delivers `{ ok, status, body }` to a callback, and `noctalia.json.decode`
@@ -15,7 +15,20 @@ local function scriptDir()
   return "."
 end
 
-local DIR = scriptDir()
+-- The tests live in `tests/`, so the plugin root is the directory above them.
+local function pluginRoot()
+  local dir = scriptDir()
+  local parent = dir:match("^(.*)[/\\]tests$")
+  if parent and parent ~= "" then
+    return parent
+  end
+  if dir == "tests" or parent == "" then
+    return "."
+  end
+  return dir
+end
+
+local DIR = pluginRoot()
 local loaded = {}
 local function pluginRequire(path)
   local relative = path:gsub("^%./", "")

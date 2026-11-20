@@ -10,23 +10,24 @@ built from the official MonkeyType API instead of scraping the profile page.
 
 | Field | Value |
 | --- | --- |
-| Plugin ID | `faminec/monkeytype-activity` |
+| ID | `faminec/monkeytype-activity` |
 | Entries | Bar widget: `activity`; panel: `calendar`; service: `sync` |
-| Minimum Noctalia plugin API | `43` (Noctalia v5.0.0-beta.9 or newer) |
+| Minimum Noctalia plugin API | `43` (container color roles) |
 
 ## Requirements
 
-| Requirement | Why |
-| --- | --- |
-| A MonkeyType **Ape Key** | All per-user endpoints of the API require one. It is free and created on the website. |
-| `xdg-open` (`xdg-utils` on Arch) | Opens your MonkeyType profile from the panel. |
+- A MonkeyType **Ape Key**. Every per-user endpoint of the API needs one; it is
+  free and created on the website.
+- `xdg-open` (`xdg-utils` on Arch) to open your profile and the Ape Keys page
+  from the panel.
 
 Create the key in MonkeyType under **Account settings**, then the **ape keys**
 tab, and paste it into this plugin's settings. New keys start **disabled**: the
 `active` column of that table has to be switched on, or every request answers
-`471 ApeKey is inactive` and the panel offers a shortcut back to that page. The key is read-only for the endpoints this plugin
-uses and is sent in an `Authorization` header by the native HTTP client, so it
-never appears in a process command line.
+`471 ApeKey is inactive` and the panel offers a shortcut back to that page. The
+key is only used for the four read endpoints listed under [Notes](#notes) and is
+sent in an `Authorization` header by the native HTTP client, so it never appears
+in a process command line.
 
 ## Usage
 
@@ -40,59 +41,64 @@ never appears in a process command line.
 
 The panel can also be opened from the command line:
 
-```bash
+```sh
 noctalia msg panel-toggle faminec/monkeytype-activity:calendar
 ```
 
 ## Settings
 
-| Setting | Options | Default |
-| --- | --- | --- |
-| Ape Key | text | empty |
-| Refresh interval | 10, 15, 30, or 60 minutes | 30 minutes |
-| Profile username | text, optional | empty |
-| Widget display | Icon and value, or icon only | Icon and value |
-| Widget metric | Today's tests, current streak, last WPM, or tests in the last year | Today's tests |
-| Show today's tests | On or off | On |
-| Show current streak | On or off | On |
-| Show best streak | On or off | On |
-| Show yearly total | On or off | On |
-| Show last test | On or off | On |
-| Show profile button | On or off | On |
+| Setting | Type | Default | Description |
+| --- | --- | --- | --- |
+| `ape_key` | string | empty | The MonkeyType Ape Key. Saved by Noctalia like any other plugin setting and sent only to `api.monkeytype.com`. |
+| `refresh_interval_minutes` | select | `30` | How often the account is checked: 10, 15, 30 or 60 minutes. Applies immediately. |
+| `profile_username` | string | empty | Optional MonkeyType username, used in the panel caption and for the profile button. The Ape Key already identifies the account. |
+| `display_mode` (widget) | select | `icon_and_value` | `icon_only` shows just the keyboard glyph, `icon_and_value` adds the metric. |
+| `display_metric` (widget) | select | `today` | Value next to the glyph: `today`, `current_streak`, `last_wpm` or `year_total`. |
+| `show_today` (panel) | bool | `true` | Show today's test count below the calendar. |
+| `show_current_streak` (panel) | bool | `true` | Show the current streak below the calendar. |
+| `show_best_streak` (panel) | bool | `true` | Show the longest streak below the calendar. |
+| `show_year_total` (panel) | bool | `true` | Show the number of tests in the calendar window. |
+| `show_last_test` (panel) | bool | `true` | Show the WPM and accuracy of the last saved test. |
+| `show_profile_button` (panel) | bool | `true` | Show the button that opens your MonkeyType profile. |
 
 Widget display and metric belong to each bar-widget instance, so two copies can
 show different values. The panel content choices are shared by the calendar
-panel. Changing the interval applies it immediately.
-
-The profile username is only used for the button and the panel caption; the Ape
-Key already identifies the account.
+panel. The streak number comes from MonkeyType's own streak endpoint, so it
+follows the streak hour offset configured on the website rather than the local
+clock.
 
 ## Notes
 
-- **No external CLI.** Requests go through Noctalia's native HTTP client; the
-  plugin itself never spawns `curl`, `gh` or `jq`.
-- **Adaptive polling.** Every tick asks `/users/streak` first. The three heavier
-  endpoints (test activity, lifetime stats, last result) only run when a new
-  result or a new day can change something, so an idle bar costs one request per
-  interval instead of four.
-- **Respectful of the API limits.** `/results` is never polled: with an Ape Key
-  MonkeyType allows 30 requests per day for it. Manual refreshes are debounced
-  and a rate-limit answer (`429`/`479`) backs off for up to an hour.
+- **Network.** Four HTTPS requests to `api.monkeytype.com`, each with the header
+  `Authorization: ApeKey <key>`: `GET /users/streak`, `GET
+  /users/currentTestActivity`, `GET /users/stats` and `GET /results/last`.
+  `/results` is never requested because an Ape Key only allows 30 calls per day
+  for it. Every tick asks `/users/streak` first; the other three run only when a
+  new result or a new UTC day can change the answer, so an idle bar costs one
+  request per interval instead of four. Nothing is sent anywhere else.
+- **Files.** The last payload is written to `activity.json` in this plugin's
+  data directory (`<Noctalia data dir>/plugins/data/faminec/monkeytype-activity/`)
+  and read back at start, so the panel and the widget render before the first
+  request of the session finishes. Nothing else on disk is touched.
+- **Processes.** `xdg-open <url>` is the only process this plugin spawns, as an
+  argument array, to open your profile or the Ape Keys page. No shell is
+  involved.
+- **Rate limits.** A rate-limit answer (`429`/`479`) backs off exponentially for
+  up to an hour, and manual refreshes are debounced.
 - **UTC day buckets.** MonkeyType counts daily activity in UTC, so the calendar
-  matches the heatmap on monkeytype.com/profile. The streak number comes from
-  `/users/streak`, which honours your own streak hour offset.
-- **Millisecond timestamps.** MonkeyType reports `lastDay` and
-  `lastResultTimestamp` in milliseconds while the date helpers work in seconds;
-  both are normalised before bucketing, so the calendar never drifts eras.
-- **Offline friendly.** The last payload is cached in the plugin data directory
-  and rendered before the first request of the session finishes.
-- **Privacy.** The only data crossing the network are the requests to
-  `api.monkeytype.com`; nothing is sent anywhere else.
+  matches the heatmap on monkeytype.com/profile.
+- **Timestamps.** MonkeyType reports `lastDay` and `lastResultTimestamp` in
+  milliseconds; both are normalised before bucketing.
+- **Troubleshooting.** `471` means the key exists but the `active` toggle is off.
+  `470`/`472` mean the key is unknown or malformed. The panel names the case and
+  keeps rendering cached data when it has any.
 
 ## Development
 
+Plain Lua 5.4, no test framework and no network:
+
 ```bash
-lua5.4 test-units.lua    # pure modules: dates, levels, API mapping, settings
-lua5.4 test-service.lua  # sync service against a mock of the Noctalia runtime
-lua5.4 test-widget.lua   # bar widget against a mock of noctalia/barWidget
+lua5.4 tests/test-units.lua    # dates, levels, API mapping, settings
+lua5.4 tests/test-service.lua  # sync service against a mock of the runtime
+lua5.4 tests/test-widget.lua   # bar widget against a mock of noctalia
 ```

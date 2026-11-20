@@ -361,6 +361,60 @@ class PanelContractTests(unittest.TestCase):
         )
         self.assertTrue("table.insert" in body)
 
+    def test_a_typed_command_survives_a_state_refresh(self):
+        # The panel re-seeds the rules from the daemon every 500 ms: the
+        # daemon has the last saved value, so the text of the field has to
+        # come from the panel's own draft or the user's text is replaced (and
+        # a Test or a toggle then saves the old value over it).
+        body = function_body(self.panel, "ruleCard")
+        self.assertTrue(
+            "ruleCommand(rule)" in body,
+            "the command field shows the saved value instead of what was typed",
+        )
+        self.assertTrue(
+            "ruleDrafts[ruleId] = value" in body,
+            "the typed text is not kept: the next state refresh loses it",
+        )
+        save = function_body(self.panel, "saveRule")
+        self.assertTrue(
+            "ruleCommand(rule)" in save,
+            "saving a rule sends the old command over the typed one",
+        )
+
+    def test_the_test_button_shows_its_result(self):
+        # The result of a test went to the connection card of the System tab
+        # (and only when it failed): pressing Test looked like nothing
+        # happened at all.
+        body = function_body(self.panel, "ruleCard")
+        for marker in (
+            "ruleTests[ruleId]",
+            "shortcut.test_ok",
+            "shortcut.test_empty",
+            "C.error_text(data.error, data.error_detail)",
+        ):
+            self.assertTrue(
+                marker in body,
+                "the test button does not report its result (%s)" % marker,
+            )
+
+    def test_a_rule_without_a_command_is_flagged(self):
+        body = function_body(self.panel, "ruleCard")
+        self.assertTrue(
+            'tr("shortcut.no_command")' in body,
+            "a rule with no command looks exactly like a working one",
+        )
+
+    def test_the_header_does_not_say_connected_on_a_link_error(self):
+        # A half-open RFCOMM socket keeps 'connected' true while every
+        # command times out: the header has to show the error.
+        body = function_body(self.panel, "header")
+        self.assertTrue(
+            "link_lost" in body,
+            "the header shows a green Connected while the link is dead",
+        )
+        self.assertTrue("status.error" in body)
+
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

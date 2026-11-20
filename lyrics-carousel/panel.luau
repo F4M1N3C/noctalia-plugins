@@ -538,7 +538,8 @@ local function instrumentalRow()
         setSetting("instrumental_custom", not boolOf("instrumental_custom"))
       end,
       onRightClick = function()
-        instrumentalEditing = true
+        -- A second right click closes the editor again.
+        instrumentalEditing = not instrumentalEditing
         render()
       end,
     }))
@@ -561,7 +562,9 @@ end
 
 local function instrumentalEditor()
   if not instrumentalEditing then
-    return ui.column({})
+    -- No node at all: an empty column still adds the parent's gap before
+    -- and after it, which left a visibly larger space before the hints.
+    return nil
   end
   return ui.input({
     key = "instrumental-text-editor",
@@ -1059,8 +1062,8 @@ render = function()
     instrumentalRow(),
     (boolOf("instrumental_marks")
       and sliderRow("silence_threshold", tr("silence_threshold"), 1, 15, 1, true)
-      or ui.column({})),
-    instrumentalEditor(),
+      or false),
+    instrumentalEditor() or false,
     toggleRow("hints", tr("hints"), "keyboard"),
 
     -- Lyrics --------------------------------------------------------------
@@ -1089,7 +1092,7 @@ render = function()
         if accent == "custom" then
           return inputRow("custom_color", tr("custom_color"), tr("color_placeholder"))
         end
-        return ui.column({})
+        return false
       end)(),
     }),
 
@@ -1103,7 +1106,7 @@ render = function()
       if customFont then
         return inputRow("font_family", tr("font_custom_name"), tr("font_placeholder"))
       end
-      return ui.column({})
+      return false
     end)(),
 
     -- Window ------------------------------------------------------------
@@ -1142,7 +1145,7 @@ render = function()
           coordinateInput("custom_y", tr("custom_y")),
         })
       end
-      return ui.column({})
+      return false
     end)(),
     ui.row({ gap = 10 }, {
       ui.column({ flexGrow = 1, gap = 4 }, {
@@ -1162,8 +1165,16 @@ render = function()
     table.insert(rows, ui.label({ text = lastError, fontSize = 10, color = "error" }))
   end
 
+  -- Optional rows are `false` placeholders: dropping them here keeps the
+  -- gap between the remaining rows exactly the same everywhere.
+  local visible = {}
+  for _, row in ipairs(rows) do
+    if row then
+      visible[#visible + 1] = row
+    end
+  end
   panel.render(ui.column({ flexGrow = 1, gap = 8, align = "stretch" }, {
-    ui.scroll({ flexGrow = 1, gap = 8 }, rows),
+    ui.scroll({ flexGrow = 1, gap = 8 }, visible),
   }))
 end
 
@@ -1215,9 +1226,10 @@ function onIpc(event, payload)
   if event == "launch" then
     launch()
   elseif event == "toggle" then
-    -- Toggles a boolean setting: toggle marker
-    if type(payload) == "string" and settingsLib.BOOL_KEYS[payload] then
-      toggleKey(payload)
+    -- Toggles a boolean setting: toggle marker (or its old alias).
+    local key = settingsLib.normalizeKey(payload)
+    if type(payload) == "string" and settingsLib.BOOL_KEYS[key] then
+      toggleKey(key)
     end
   elseif event == "set" then
     -- Sets a setting: "set font_size=26 int" or "set font_size 26 int"

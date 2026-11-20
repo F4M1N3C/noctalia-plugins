@@ -107,12 +107,14 @@ by then, the lookup is retried a minute later. The result is cached in
 | `f` | Show / hide the footer (time and progress bar) |
 | `t` | Keyboard hints on / off |
 | `c` | Cycle the accent colour |
-| `+` / `=` | Grow the lyrics one pixel |
-| `-` / `_` | Shrink the lyrics one pixel |
+| `=` | Increase the font size |
+| `-` | Decrease the font size |
+| `Shift` + `+` | Show more context lines above and below |
+| `Shift` + `-` | Show fewer context lines above and below |
 | `r` | Look the lyrics up again |
 
-The hints row at the bottom shows every shortcut that fits in the window (the
-longest list first, then shorter ones). `d`, `k`, `h`, `m`, `g`, `f`, `t`, `c`
+The hints row at the bottom wraps the full shortcut list so every key stays
+visible, however narrow the window is. `d`, `k`, `h`, `m`, `g`, `f`, `t`, `c`
 and the font size write their value to `settings.toml`, so the change survives a
 restart and shows up in the settings page. Writing that file makes Noctalia reload
 the configuration, so a panel that happened to be open at that moment is closed.
@@ -207,7 +209,8 @@ noctalia msg plugin faminec/lyrics-carousel:widget all refresh
 | `refresh` | Re-reads the settings and the track, and redraws the panel. | Redraws the bar icon. |
 
 `toggle` only works with the switches — `marker`, `karaoke`, `karaoke_brain`, `footer`, `hints`,
-`header` and `ghost` — because flipping a number makes no sense.
+`header`, `ghost`, `instrumental_marks`, `instrumental_custom` and `pin` — because flipping a
+number makes no sense. The old alias `instrumental` still reaches `instrumental_marks`.
 
 The value of `set` can also be written as `key=value`. Its type (`bool`, `int`,
 `float` or `string`) is optional: without it, the type is deduced from the setting,
@@ -218,9 +221,10 @@ noctalia msg plugin faminec/lyrics-carousel:widget all set font_size 26 int
 noctalia msg plugin faminec/lyrics-carousel:widget all set font_family="Departure Mono"
 ```
 
-`set` and `toggle` write to the same overrides file the panel uses, so the change is
-poured into `settings.toml` when the panel is closed and is visible in the settings
-page afterwards.
+`set` and `toggle` write to the same overrides file the panel uses, so the window
+picks the change up at once and the panel flushes it into `settings.toml` when it
+closes. Open and close the panel once (or change the same value there) if the
+settings page has to show it immediately.
 
 The `service` entry is not meant to be driven by hand: it listens for the
 `colors-changed` and `theme-applied` events and sends `SIGUSR2` to the running
@@ -250,6 +254,18 @@ enabled costs nothing.
 
 ## Changelog
 
+### 2.8.1
+
+- **Uniform panel spacing**: optional rows no longer leave an empty
+  placeholder, so the space before the keyboard hints matches every other row.
+- **Instrumental text editor toggles**: a second right click on the custom text
+  button closes the inline editor again.
+- **Footer and hints no longer overlap**: the time bar moves above the keyboard
+  hints block and the lyrics area is reduced so both can be shown together.
+- **Visible context lines shortcut**: `Shift` + `+` and `Shift` + `-` change how
+  many lines are shown above and below the active line. Font size now uses
+  `=` and `-`.
+
 ### 2.8.0
 
 - **Right click opens the window**: the bar widget opens the lyrics window with a
@@ -259,8 +275,8 @@ enabled costs nothing.
   `service` entry, which sends `SIGUSR2` to the running window; it reloads the
   generated Kitty theme and repaints at once. The blind 15 s reload is gone. See
   [Live colors](#live-colors).
-- **Every shortcut is in the hints**: the hints row lists the 13 implemented keys,
-  falling back to a shorter list when the window is narrow, and the README table
+- **Every shortcut is in the hints**: the hints row wraps the 13 implemented keys
+  so all of them stay visible even in a narrow window, and the README table
   matches the real key map.
 - **Marker styles and header position**: `marker_style` (six vector shapes, so the
   marker does not depend on the font) and `header_pos` (left, centered, right,
@@ -317,7 +333,7 @@ enabled costs nothing.
   opacity of its distance to the centre, so it does not lose it in one
   frame at the hand-off.
 - **Native resolution**: the lyrics are drawn at the window's own size
-  (1200×820 by default) with no upscaling.
+  (1200×880 by default) with no upscaling.
 
 ### 2.6.0
 

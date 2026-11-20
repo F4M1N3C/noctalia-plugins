@@ -789,7 +789,7 @@ if accentCustom ~= nil then
   if colorInput ~= nil then
     colorInput.props.onChange("#12ab34")
     eq(overrides.custom_color, "#12ab34", "a valid hex is stored")
-    colorInput.props.onChange("rojo")
+    colorInput.props.onChange("not-a-color")
     eq(overrides.custom_color, "#12ab34", "an invalid colour is not stored")
     colorInput.props.onChange("#12AB3")
     eq(overrides.custom_color, "#12ab34", "a short hex is not stored")
@@ -975,7 +975,7 @@ widgetOnIpc("set", "glyph music_note")
 eq(overrides.glyph, nil, "the widget IPC does not store a glyph with an underscore")
 widgetOnIpc("set", "glyph headphones")
 eq(overrides.glyph, "headphones", "the widget IPC stores a valid glyph")
-widgetOnIpc("set", "custom_color rojo")
+widgetOnIpc("set", "custom_color not-a-color")
 eq(overrides.custom_color, nil, "the widget IPC does not store an invalid colour")
 widgetOnIpc("set", "custom_color #12ab34")
 eq(overrides.custom_color, "#12ab34", "the widget IPC stores a valid colour")
@@ -1322,6 +1322,17 @@ if customButton ~= nil then
     editor.props.onChange(string.rep("x", 30))
     eq(#overrides.instrumental_text, 24, "the editor limits the custom text to 24 characters")
   end
+  -- The right click is a toggle: a second one closes the editor.
+  customButton.props.onRightClick()
+  check(
+    findByKey("input", "instrumental-text-editor") == nil,
+    "right click again hides the custom text editor"
+  )
+  customButton.props.onRightClick()
+  check(
+    findByKey("input", "instrumental-text-editor") ~= nil,
+    "a third right click opens the editor again"
+  )
   customButton = findByKey("button", "btn-instrumental-custom")
   if customButton ~= nil then
     customButton.props.onClick()
@@ -1444,6 +1455,20 @@ if pinToggle ~= nil then
   eq(pinToggle.props.checked, false, "the pin toggle follows the saved value")
   pinToggle.props.onChange(false)
 end
+
+-- 31. Optional rows do not leave empty placeholder columns -------------------
+--
+-- An empty column is still laid out: the parent adds its gap before and after
+-- it, which made the space before the hints row visibly larger.
+
+onOpen()
+local emptyColumns = 0
+for _, node in ipairs(collect(tree, "column")) do
+  if #(node.children or {}) == 0 then
+    emptyColumns = emptyColumns + 1
+  end
+end
+eq(emptyColumns, 0, "no empty placeholder columns between the rows")
 
 -- Result ------------------------------------------------------------------
 

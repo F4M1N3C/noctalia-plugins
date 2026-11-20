@@ -20,3 +20,7 @@ __pycache__/
 
 # Worktrees de git (ramas de trabajo aisladas)
 .worktrees/
+
+# Scratch images from cmf-buds experiments (not part of the plugin)
+cmf-buds/reordered.png
+cmf-buds/ro.png

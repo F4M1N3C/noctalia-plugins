@@ -31,6 +31,8 @@ local localDevices = {}
 -- The rules whose command was typed but not saved yet. They are saved
 -- when the panel is closed: the text is not stored anywhere else.
 local pendingCommands = {}
+-- Rule writes in flight (a toggle, a select, a deletion). See syncLocal.
+local rulesInFlight = 0
 -- Text of the command field per rule. The rules are re-seeded from the
 -- daemon state every 500 ms and the daemon has the last saved value: without
 -- this draft, the text the user typed would be replaced by the old one (and
@@ -155,7 +157,11 @@ local function syncLocal()
   if actions == nil then
     return
   end
-  if actions.rules ~= nil then
+  -- While a rule is being written, the file can still hold the previous
+  -- version (the daemon publishes it after saving): re-seeding the list from
+  -- it would put the old value back into the toggle, and the next change
+  -- would save that old value. The answer of the request brings the new one.
+  if actions.rules ~= nil and rulesInFlight == 0 then
     localRules = actions.rules
   end
   if actions.last_event ~= nil then
@@ -739,7 +745,11 @@ local function volumeCard()
   -- multipoint, the speakers...) no gesture ever reaches the engine, and the
   -- rule looks broken. Saying where the audio is going explains it.
   local mac = st and st.device and st.device.mac or ""
-  local budsSink = mac ~= "" and sink:find("bluez_output." .. (mac:gsub(":", "_")), 1, true) ~= nil
+  -- 'sink' above is the text for the user (the description when there is
+  -- one): the comparison needs the technical sink name.
+  local sinkName = tostring(v.sink or "")
+  local budsSink = mac ~= ""
+    and sinkName:find("bluez_output." .. (mac:gsub(":", "_")), 1, true) ~= nil
   if st ~= nil and st.connected == true and not budsSink then
     table.insert(children, ui.row({
       gap = 6,
@@ -1055,7 +1065,10 @@ local function saveRule(rule)
     rule.forbid = nil
   end
   pendingCommands[tostring(rule.id)] = nil
-  rpc({ cmd = "local_rule_set", rule = rule })
+  rulesInFlight = rulesInFlight + 1
+  rpc({ cmd = "local_rule_set", rule = rule }, function()
+    rulesInFlight = math.max(0, rulesInFlight - 1)
+  end)
 end
 
 -- Save the commands that were typed but not submitted: the text is not
@@ -1078,7 +1091,10 @@ local function removeRule(id)
   pendingCommands[tostring(id)] = nil
   ruleDrafts[tostring(id)] = nil
   ruleTests[tostring(id)] = nil
-  rpc({ cmd = "local_rule_delete", id = id })
+  rulesInFlight = rulesInFlight + 1
+  rpc({ cmd = "local_rule_delete", id = id }, function()
+    rulesInFlight = math.max(0, rulesInFlight - 1)
+  end)
 end
 
 local function newRule()
@@ -1166,22 +1182,29 @@ local function ruleCard(rule)
       color = "on_surface",
       flexGrow = 1,
     }),
-    ui.toggle({
-      checked = rule.enabled ~= false,
-      onChange = function(value)
-        rule.enabled = truthy(value)
-        saveRule(rule)
-      end,
-    }),
-    ui.button({
-      glyph = "trash",
-      variant = "ghost",
-      controlSize = "sm",
-      glyphSize = 15,
-      tooltip = tr("shortcut.delete"),
-      onClick = function()
-        removeRule(rule.id)
-      end,
+    -- The toggle and the delete button travel together on the right: a row
+    -- whose children take their natural width re-flows when the switch
+    -- changes size, and the delete button grew while the toggle moved.
+    ui.row({ gap = 6, align = "center", justify = "end" }, {
+      ui.toggle({
+        checked = rule.enabled ~= false,
+        onChange = function(value)
+          rule.enabled = truthy(value)
+          saveRule(rule)
+        end,
+      }),
+      ui.button({
+        glyph = "trash",
+        variant = "ghost",
+        controlSize = "sm",
+        glyphSize = 15,
+        width = 30,
+        height = 30,
+        tooltip = tr("shortcut.delete"),
+        onClick = function()
+          removeRule(rule.id)
+        end,
+      }),
     }),
   })
 
@@ -1804,9 +1827,10 @@ end
 
 local function tickRefresh()
   local now = nowSec()
-  if now < dragUntil then
-    return
-  end
+  -- The value of a slider is written on the next tick, also while the user
+  -- keeps moving it: waiting for a second without movement (the old
+  -- behaviour) made the wheel and the drag feel one second behind. The tick
+  -- runs twice a second and only sends when there is something pending.
   if pendingVolume ~= nil then
     local target = pendingVolume
     pendingVolume = nil
@@ -1816,6 +1840,9 @@ local function tickRefresh()
     local c = pendingEq
     pendingEq = nil
     rpc({ cmd = "custom_eq", bass = c.bass, mid = c.mid, treble = c.treble })
+  end
+  if now < dragUntil then
+    return
   end
   -- The state that comes from the file: a change is redrawn, and a tick that
   -- finds the same file does not touch the tree at all.

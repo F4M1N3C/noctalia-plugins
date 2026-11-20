@@ -22,7 +22,7 @@ import sys
 TABLER = "/usr/share/noctalia/assets/fonts/tabler.json"
 
 # Variantes que Noctalia acepta en ui.button (las usa el resto de plugins).
-VARIANTS = {"ghost", "primary", "secondary", "destructive"}
+VARIANTS = {"default", "ghost", "primary", "secondary", "destructive", "outline"}
 
 GLYPH_RE = re.compile(r'ui\.glyph\(\s*\{[^}]*?name\s*=\s*"([^"]+)"', re.S)
 GLYPH_ANY_RE = re.compile(r'name\s*=\s*"([a-z0-9-]+)"')
@@ -85,8 +85,21 @@ def main(argv):
     # Claves de traducción: cada plugin declara sus claves en
     # translations/en.json; si el panel pide una que no existe, Noctalia
     # avisa en el log y muestra la clave en vez del texto.
-    plugin_dirs = sorted({os.path.dirname(os.path.dirname(f)) for f in files})
+    # El plugin de un fichero es el ancestro que contiene plugin.toml, no "dos
+    # niveles hacia arriba": eso solo acertaba en plugins con subcarpetas.
+    def plugin_root(path):
+        current = os.path.dirname(os.path.abspath(path))
+        while True:
+            if os.path.isfile(os.path.join(current, "plugin.toml")):
+                return current
+            parent = os.path.dirname(current)
+            if parent == current:
+                return None
+            current = parent
+
+    plugin_dirs = sorted({root for root in (plugin_root(f) for f in files) if root is not None})
     for directory in plugin_dirs:
+        prefix_path = directory + os.sep
         translation = os.path.join(directory, "translations", "en.json")
         if not os.path.isfile(translation):
             continue
@@ -98,7 +111,7 @@ def main(argv):
         # no tienen por qué estar en translations/en.json.
         own_i18n = False
         for candidate in sorted(files):
-            if not candidate.startswith(directory + os.sep):
+            if not os.path.abspath(candidate).startswith(prefix_path):
                 continue
             body = open(candidate, encoding="utf-8", errors="replace").read()
             if re.search(r"function\s+M\.tr\s*\(", body):
@@ -112,13 +125,15 @@ def main(argv):
         def collect(prefix, value):
             if isinstance(value, dict):
                 for key, item in value.items():
-                    collect(prefix + key + "." if prefix else key, item)
+                    collect(prefix + key + ".", item)
             else:
-                available.add(prefix)
+                # `prefix` carries a trailing dot down the recursion; the leaf is
+                # the dotted path without it.
+                available.add(prefix.rstrip("."))
 
         collect("", data)
         for path in sorted(files):
-            if not path.startswith(directory + os.sep):
+            if not os.path.abspath(path).startswith(prefix_path):
                 continue
             body = open(path, encoding="utf-8", errors="replace").read()
             for match in TR_RE.finditer(body):
